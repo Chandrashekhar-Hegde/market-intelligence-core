@@ -9,8 +9,12 @@ const webPort = process.env.PW_WEB_PORT ?? '5174'
 const apiUrl = `http://127.0.0.1:${apiPort}`
 const webUrl = `http://127.0.0.1:${webPort}`
 
+// @live specs hit real Yahoo through the local API; only `npm run test:e2e:live` runs them.
+const live = process.env.PW_LIVE === '1'
+
 export default defineConfig({
   testDir: './tests/e2e',
+  ...(live ? { grep: /@live/ } : { grepInvert: /@live/ }),
   timeout: 60_000,
   expect: {
     timeout: 12_000,
@@ -21,7 +25,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: `cargo run -p gm-api -- --host 127.0.0.1 --port ${apiPort}`,
+      command: `cargo run -p gm-api -- --host 127.0.0.1 --port ${apiPort} --cors-origins ${webUrl}`,
       cwd: repoRoot,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

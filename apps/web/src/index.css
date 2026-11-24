@@ -163,6 +163,8 @@ ol {
 }
 
 .status-box strong {
+  /* The tone colour lives on the dot; tone text on the dark sidebar fails WCAG contrast. */
+  color: #f3f6f5;
   font-size: 0.92rem;
 }
 
@@ -407,8 +409,13 @@ ol {
   background: #f2fbf8;
 }
 
+.event-title-cell {
+  min-width: 0;
+}
+
 .event-title-button {
   display: grid;
+  width: 100%;
   gap: 3px;
   min-width: 0;
   padding: 0;
@@ -1203,5 +1210,178 @@ ol {
 
   .evidence-row > span {
     justify-self: start;
+  }
+}
+
+/* ---- Markets view ----------------------------------------------------------------------- */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.view-tabs {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.view-tabs button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 9px 10px;
+  color: #d7dedb;
+  font-weight: 800;
+  text-align: left;
+  background: transparent;
+  border: 1px solid #3a4240;
+  border-radius: 6px;
+}
+
+.view-tabs button[aria-selected='true'] {
+  color: #fff;
+  background: #1f7a68;
+  border-color: #1f7a68;
+}
+
+.view-tabs button:hover,
+.view-tabs button:focus-visible {
+  color: #fff;
+}
+
+.lab-banner {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  color: #6b4a00;
+  background: #fff6dd;
+  border: 1px solid #f0d99a;
+  border-radius: 8px;
+}
+
+.markets-search-panel,
+.quote-panel {
+  grid-column: span 6;
+}
+
+.instrument-search {
+  display: grid;
+  gap: 6px;
+}
+
+.instrument-search label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.instrument-search input {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #cfd7d3;
+  border-radius: 6px;
+}
+
+.search-results {
+  display: grid;
+  max-height: 260px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.search-results button {
+  width: 100%;
+  padding: 8px 6px;
+  text-align: left;
+}
+
+.quick-picks,
+.range-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.range-picker {
+  margin-top: 0;
+}
+
+.quick-picks .ghost-button,
+.range-picker .ghost-button {
+  min-height: 32px;
+  padding: 4px 10px;
+}
+
+.ghost-button[aria-pressed='true'] {
+  color: #fff;
+  background: #1f7a68;
+  border-color: #1f7a68;
+}
+
+.quote-price {
+  margin: 8px 0 4px;
+  font-size: 2rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.quote-price span {
+  font-size: 1rem;
+}
+
+.candle-chart {
+  height: 340px;
+}
+
+.tradingview summary {
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.tradingview-widget-container {
+  height: 460px;
+  margin-top: 12px;
+}
+
+.tradingview-widget-container:empty {
+  height: 0;
+}
+
+@media (max-width: 1120px) {
+  .markets-search-panel,
+  .quote-panel {
+    grid-column: span 12;
+  }
+}
+
+.plain-list {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0;
+  padding-left: 20px;
+}
+
+@media (max-width: 760px) {
+  /* Toggle chips stay compact; the generic mobile rule stretches every button. */
+  .quick-picks .ghost-button,
+  .range-picker .ghost-button {
+    width: auto;
+  }
+
+  .section-heading .status-chip {
+    align-self: flex-start;
   }
 }

@@ -1,7 +1,11 @@
 import { expect, test } from '@playwright/test'
 
+import { mockMarketData, openEventLab } from './marketMocks'
+
 test('submits the decision fixture and renders the evidence audit trail', async ({ page }) => {
+  await mockMarketData(page)
   await page.goto('/')
+  await openEventLab(page)
 
   await expect(page.getByText('Online')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Normalized review queue' })).toBeVisible()

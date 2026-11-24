@@ -1,8 +1,12 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
 
+import { mockMarketData, openEventLab } from './marketMocks'
+
 test('primary operator screens have no serious accessibility violations', async ({ page }) => {
+  await mockMarketData(page)
   await page.goto('/')
+  await openEventLab(page)
   await expect(page.getByText('Online')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Normalized review queue' })).toBeVisible()
 
@@ -23,4 +27,20 @@ test('primary operator screens have no serious accessibility violations', async 
   )
 
   expect(blockingViolations).toEqual([])
+})
+
+test('Markets view has no serious accessibility violations', async ({ page }) => {
+  await mockMarketData(page)
+  await page.goto('/')
+  await expect(page.getByTestId('quality-badge')).toBeVisible()
+  await page.getByLabel(/search nse \/ bse/i).fill('reliance')
+  await expect(page.getByRole('button', { name: /RELIANCE\.NS/ })).toBeVisible()
+
+  const results = await new AxeBuilder({ page })
+    .include('main')
+    .include('aside')
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze()
+  const blocking = results.violations.filter((v) => ['critical', 'serious'].includes(v.impact ?? ''))
+  expect(blocking.map((v) => `${v.id}: ${v.nodes.map((n) => n.target).join(' | ')}`)).toEqual([])
 })
