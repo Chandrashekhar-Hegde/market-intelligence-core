@@ -32,6 +32,17 @@ struct Args {
         default_value = "local_webhook_signing_key"
     )]
     razorpay_webhook_secret: String,
+    /// Shared private-beta token. Unset = open (local dev).
+    #[arg(long, env = "GM_ACCESS_TOKEN", hide_env_values = true)]
+    access_token: Option<String>,
+    /// Comma-separated origins allowed cross-origin. Defaults cover local Vite dev; set to
+    /// "none" in a same-origin deployment.
+    #[arg(
+        long,
+        env = "GM_CORS_ORIGINS",
+        default_value = "http://127.0.0.1:5173,http://localhost:5173"
+    )]
+    cors_origins: String,
 }
 
 #[tokio::main]
@@ -46,10 +57,24 @@ async fn main() -> anyhow::Result<()> {
         payment_key_id: args.razorpay_key_id,
         payment_checkout_secret: args.razorpay_key_secret,
         payment_webhook_secret: args.razorpay_webhook_secret,
+        access_token: args.access_token,
+        cors_origins: args
+            .cors_origins
+            .split(',')
+            .map(str::trim)
+            .filter(|o| !o.is_empty() && *o != "none")
+            .map(String::from)
+            .collect(),
+        ..ApiConfig::default()
     })
     .await?;
 
-    let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
+    // Railway (and most PaaS) inject PORT; it wins over GM_PORT.
+    let port = match std::env::var("PORT") {
+        Ok(port) => port.parse()?,
+        Err(_) => args.port,
+    };
+    let addr: SocketAddr = format!("{}:{}", args.host, port).parse()?;
     tracing::info!(%addr, "starting gm-api");
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;

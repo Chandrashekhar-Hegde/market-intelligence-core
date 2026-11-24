@@ -1,11 +1,15 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::BTreeSet, convert::Infallible, path::PathBuf, sync::Arc};
 
 use axum::{
-    Json, Router,
+    Form, Json, Router,
     body::Bytes,
-    extract::{Path, State},
-    http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
+    extract::{Path, Query, Request, State},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    middleware::{self, Next},
+    response::{
+        Html, IntoResponse, Redirect, Response,
+        sse::{Event, KeepAlive, Sse},
+    },
     routing::{get, post},
 };
 use gm_domain::{
@@ -17,14 +21,23 @@ use gm_integrations::{
     CheckoutRequest, CheckoutSession, CheckoutVerification, CheckoutVerificationRequest,
     MockPaymentProvider, PaymentProvider, ProviderError, ProviderStatus, WebhookPayload,
     WebhookVerification,
+    yahoo::{ChartData, YahooClient, validate_symbol},
+    yahoo_stream::{MAX_SYMBOLS, YahooStream},
 };
 use gm_persistence::{PaymentEventRecord, PaymentOrderRecord, PgStore};
 use serde::{Deserialize, Serialize};
-use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
+use tower_http::{
+    cors::{Any, CorsLayer},
+    services::ServeDir,
+    trace::TraceLayer,
+};
 use uuid::Uuid;
 
 const SERVICE_NAME: &str = "gm-api";
 const RAZORPAY_SIGNATURE_HEADER: &str = "x-razorpay-signature";
+const ACCESS_COOKIE: &str = "gm_access";
+/// Benchmark whose trading days stand in for the NSE/BSE calendar in data-quality checks.
+const CALENDAR_PROXY: &str = "^NSEI";
 
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
@@ -35,6 +48,14 @@ pub struct ApiConfig {
     pub payment_key_id: String,
     pub payment_checkout_secret: String,
     pub payment_webhook_secret: String,
+    /// Private-beta gate: when set, every route except `/health`, `/access` and the signed
+    /// Razorpay webhook needs this token as a bearer header or `gm_access` cookie.
+    pub access_token: Option<String>,
+    /// Extra origins allowed to call the API cross-origin (local Vite dev). Empty = same-origin only.
+    pub cors_origins: Vec<String>,
+    /// Override Yahoo endpoints (tests point these at local stubs).
+    pub yahoo_base_url: Option<String>,
+    pub yahoo_stream_url: Option<String>,
 }
 
 impl Default for ApiConfig {
@@ -47,6 +68,10 @@ impl Default for ApiConfig {
             payment_key_id: "rzp_test_local".to_string(),
             payment_checkout_secret: "local_checkout_signing_key".to_string(),
             payment_webhook_secret: "local_webhook_signing_key".to_string(),
+            access_token: None,
+            cors_origins: Vec::new(),
+            yahoo_base_url: None,
+            yahoo_stream_url: None,
         }
     }
 }
@@ -57,6 +82,9 @@ struct AppState {
     thresholds: DecisionThresholds,
     store: Option<PgStore>,
     payment_provider: Arc<MockPaymentProvider>,
+    yahoo: YahooClient,
+    stream: YahooStream,
+    access_token: Option<Arc<str>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -254,9 +282,8 @@ impl ApiError {
             ProviderError::VerificationFailed(_) | ProviderError::InvalidRequest(_) => {
                 StatusCode::BAD_REQUEST
             }
-            ProviderError::SymbolNotFound(_) | ProviderError::UnsupportedMode(_) => {
-                StatusCode::BAD_REQUEST
-            }
+            ProviderError::SymbolNotFound(_) => StatusCode::NOT_FOUND,
+            ProviderError::UnsupportedMode(_) => StatusCode::BAD_REQUEST,
         };
         Self {
             status,
@@ -295,7 +322,24 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
             config.payment_checkout_secret,
             config.payment_webhook_secret,
         )),
+        yahoo: config
+            .yahoo_base_url
+            .map(YahooClient::new)
+            .unwrap_or_default(),
+        stream: config
+            .yahoo_stream_url
+            .map(YahooStream::new)
+            .unwrap_or_default(),
+        access_token: config
+            .access_token
+            .filter(|token| !token.trim().is_empty())
+            .map(Arc::from),
     };
+    let cors_origins = config
+        .cors_origins
+        .iter()
+        .map(|origin| HeaderValue::from_str(origin.trim()))
+        .collect::<Result<Vec<_>, _>>()?;
 
     let router = Router::new()
         .route("/health", get(health))
@@ -314,14 +358,244 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
         .route("/payments/orders", post(create_payment_order))
         .route("/payments/verify", post(verify_payment))
         .route("/payments/webhooks/razorpay", post(razorpay_webhook))
-        .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive())
-        .with_state(state);
-
-    Ok(match config.web_assets {
+        .route("/api/v1/instruments/search", get(search_instruments))
+        .route("/api/v1/bars", get(bars))
+        .route("/api/v1/quote", get(quote))
+        .route("/api/v1/stream", get(stream))
+        .route("/access", post(grant_access));
+    let router = match config.web_assets {
         Some(web_assets) => router.fallback_service(ServeDir::new(web_assets)),
         None => router,
+    };
+    // Gate wraps the static fallback too, so the bundle is private as well.
+    let router = router
+        .layer(middleware::from_fn_with_state(state.clone(), access_gate))
+        .layer(TraceLayer::new_for_http());
+    let router = if cors_origins.is_empty() {
+        router
+    } else {
+        router.layer(
+            CorsLayer::new()
+                .allow_origin(cors_origins)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
+    };
+    Ok(router.with_state(state))
+}
+
+// ---- private-beta access gate ----------------------------------------------------------------
+
+// ponytail: one shared token, no accounts. Real auth arrives with portfolios in Phase 2.
+async fn access_gate(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    let Some(token) = state.access_token.as_deref() else {
+        return next.run(request).await;
+    };
+    let path = request.uri().path();
+    // Health for the platform probe; the webhook carries its own HMAC; /access is the login form.
+    let exempt = matches!(path, "/health" | "/access" | "/payments/webhooks/razorpay");
+    if exempt || presented_token(request.headers()).is_some_and(|t| constant_time_eq(t, token)) {
+        return next.run(request).await;
+    }
+    access_form(StatusCode::UNAUTHORIZED, "")
+}
+
+fn presented_token(headers: &HeaderMap) -> Option<&str> {
+    let bearer = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    bearer.or_else(|| {
+        headers
+            .get_all(header::COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .flat_map(|v| v.split(';'))
+            .find_map(|pair| pair.trim().strip_prefix("gm_access="))
     })
+}
+
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    a.len() == b.len()
+        && a.bytes()
+            .zip(b.bytes())
+            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+            == 0
+}
+
+fn access_form(status: StatusCode, message: &str) -> Response {
+    let page = format!(
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Private beta</title></head>
+<body style="font-family:system-ui;max-width:24rem;margin:4rem auto;padding:0 1rem">
+<h1>Private beta</h1><p>{message}</p>
+<form method="post" action="/access"><label for="token">Access token</label><br>
+<input id="token" name="token" type="password" autocomplete="current-password" required style="width:100%;margin:.5rem 0">
+<button type="submit">Enter</button></form></body></html>"#
+    );
+    (status, Html(page)).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct AccessForm {
+    token: String,
+}
+
+async fn grant_access(State(state): State<AppState>, Form(form): Form<AccessForm>) -> Response {
+    let Some(token) = state.access_token.as_deref() else {
+        return Redirect::to("/").into_response();
+    };
+    if !constant_time_eq(form.token.trim(), token) {
+        return access_form(StatusCode::UNAUTHORIZED, "That token is not valid.");
+    }
+    let cookie =
+        format!("{ACCESS_COOKIE}={token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000");
+    match HeaderValue::from_str(&cookie) {
+        Ok(cookie) => ([(header::SET_COOKIE, cookie)], Redirect::to("/")).into_response(),
+        Err(_) => access_form(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Server token is not cookie-safe.",
+        ),
+    }
+}
+
+// ---- /api/v1 market data ---------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct SearchQuery {
+    q: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct BarsQuery {
+    symbol: String,
+    range: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuoteQuery {
+    symbol: String,
+}
+
+async fn search_instruments(
+    State(state): State<AppState>,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let hits = state
+        .yahoo
+        .search(&query.q)
+        .await
+        .map_err(ApiError::provider)?;
+    Ok(Json(serde_json::json!({ "results": hits })))
+}
+
+async fn bars(
+    State(state): State<AppState>,
+    Query(query): Query<BarsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let range = query.range.as_deref().unwrap_or("1y");
+    let chart = state
+        .yahoo
+        .chart(&query.symbol, range)
+        .await
+        .map_err(ApiError::provider)?;
+    // Indian listings are checked for gaps against NIFTY's trading days. If NIFTY itself can't
+    // be fetched, the report falls back to a calendar-day staleness check rather than failing.
+    let reference = if chart.meta.currency.as_deref() == Some("INR") {
+        state.yahoo.chart(CALENDAR_PROXY, range).await.ok()
+    } else {
+        None
+    };
+    let reference_days = reference
+        .as_deref()
+        .map(|nifty| nifty.bars.iter().map(|b| b.date).collect::<Vec<_>>());
+    let quality = quality_report(&chart, reference_days.as_deref());
+    Ok(Json(
+        serde_json::json!({ "chart": &*chart, "quality": quality }),
+    ))
+}
+
+fn quality_report(
+    chart: &ChartData,
+    reference_days: Option<&[chrono::NaiveDate]>,
+) -> gm_domain::quality::QualityReport {
+    let action_days = chart
+        .corporate_actions
+        .iter()
+        .map(|a| a.date())
+        .collect::<Vec<_>>();
+    gm_domain::quality::assess(
+        &chart.bars,
+        reference_days,
+        &action_days,
+        chart.fetched_at.date_naive(),
+    )
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamQuery {
+    symbols: String,
+}
+
+/// Server-Sent Events of live ticks for up to `MAX_SYMBOLS` symbols. The last known tick per
+/// symbol is sent first so the UI isn't blank between trades.
+async fn stream(
+    State(state): State<AppState>,
+    Query(query): Query<StreamQuery>,
+) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>, ApiError> {
+    let symbols = query
+        .symbols
+        .split(',')
+        .filter(|s| !s.trim().is_empty())
+        .map(validate_symbol)
+        .collect::<Result<BTreeSet<_>, _>>()
+        .map_err(ApiError::provider)?;
+    if symbols.is_empty() || symbols.len() > MAX_SYMBOLS {
+        return Err(ApiError::bad_request(format!(
+            "symbols must list 1-{MAX_SYMBOLS} instruments"
+        )));
+    }
+    let initial = symbols
+        .iter()
+        .filter_map(|s| state.stream.last(s))
+        .collect::<Vec<_>>();
+    let subscription = state.stream.subscribe(symbols);
+    let live = futures_util::stream::unfold(subscription, |mut sub| async move {
+        loop {
+            match sub.ticks.recv().await {
+                Ok(tick) if sub.symbols.contains(&tick.symbol) => return Some((tick, sub)),
+                // Lagged: a slow client skipped ticks; the next one is still current.
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    });
+    let events = futures_util::StreamExt::map(
+        futures_util::StreamExt::chain(futures_util::stream::iter(initial), live),
+        |tick| {
+            Ok(Event::default()
+                .event("tick")
+                .json_data(&tick)
+                .unwrap_or_else(|_| Event::default().comment("unserializable tick")))
+        },
+    );
+    Ok(Sse::new(events).keep_alive(KeepAlive::default()))
+}
+
+async fn quote(
+    State(state): State<AppState>,
+    Query(query): Query<QuoteQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let chart = state
+        .yahoo
+        .chart(&query.symbol, "5d")
+        .await
+        .map_err(ApiError::provider)?;
+    Ok(Json(serde_json::json!({
+        "quote": chart.meta,
+        "source": chart.source,
+        "fetched_at": chart.fetched_at,
+        "delayed": true,
+    })))
 }
 
 async fn health() -> Json<HealthResponse> {
@@ -973,6 +1247,54 @@ async fn openapi() -> Json<serde_json::Value> {
                     }
                 }
             },
+            "/api/v1/instruments/search": {
+                "get": {
+                    "summary": "Search NSE/BSE stocks and indices (Yahoo search)",
+                    "parameters": [{ "name": "q", "in": "query", "required": true, "schema": { "type": "string" } }],
+                    "responses": {
+                        "200": { "description": "Matching NSE/BSE listings" },
+                        "400": { "description": "Query empty or longer than 64 characters" },
+                        "503": { "description": "Upstream data provider unavailable" }
+                    }
+                }
+            },
+            "/api/v1/bars": {
+                "get": {
+                    "summary": "Adjusted daily bars, corporate actions and a data-quality report",
+                    "parameters": [
+                        { "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" } },
+                        { "name": "range", "in": "query", "required": false, "schema": { "type": "string", "enum": ["5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"], "default": "1y" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Chart data with provenance and quality report" },
+                        "400": { "description": "Invalid symbol or range" },
+                        "404": { "description": "Unknown symbol" },
+                        "503": { "description": "Upstream data provider unavailable" }
+                    }
+                }
+            },
+            "/api/v1/quote": {
+                "get": {
+                    "summary": "Delayed last price and instrument metadata",
+                    "parameters": [{ "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" } }],
+                    "responses": {
+                        "200": { "description": "Delayed quote" },
+                        "400": { "description": "Invalid symbol" },
+                        "404": { "description": "Unknown symbol" },
+                        "503": { "description": "Upstream data provider unavailable" }
+                    }
+                }
+            },
+            "/api/v1/stream": {
+                "get": {
+                    "summary": "Live price ticks as Server-Sent Events (Yahoo streamer)",
+                    "parameters": [{ "name": "symbols", "in": "query", "required": true, "description": "Comma-separated, 1-20 symbols", "schema": { "type": "string" } }],
+                    "responses": {
+                        "200": { "description": "text/event-stream of `tick` events" },
+                        "400": { "description": "Empty, invalid, or more than 20 symbols" }
+                    }
+                }
+            },
             "/rules": {
                 "get": {
                     "summary": "Built-in scoring rules",
@@ -1543,5 +1865,334 @@ mod tests {
         assert_eq!(payload["verification"]["event"], "payment.captured");
         assert_eq!(payload["event"]["provider_payment_id"], "pay_test_webhook");
         assert_eq!(payload["event"]["provider_order_id"], "order_test_webhook");
+    }
+
+    async fn gated_app() -> Router {
+        build_app(ApiConfig {
+            access_token: Some("beta-secret".to_string()),
+            ..ApiConfig::default()
+        })
+        .await
+        .unwrap()
+    }
+
+    async fn status_of(app: Router, request: Request<Body>) -> (StatusCode, HeaderMap) {
+        let response = app.oneshot(request).await.unwrap();
+        (response.status(), response.headers().clone())
+    }
+
+    fn get_req(uri: &str) -> axum::http::request::Builder {
+        Request::builder().method("GET").uri(uri)
+    }
+
+    #[tokio::test]
+    async fn access_gate_blocks_without_token_and_admits_bearer_or_cookie() {
+        let (status, _) = status_of(
+            gated_app().await,
+            get_req("/version").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        let (status, _) = status_of(
+            gated_app().await,
+            get_req("/health").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "platform health probe stays open");
+
+        let wrong = get_req("/version")
+            .header("authorization", "Bearer nope")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            status_of(gated_app().await, wrong).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+
+        let bearer = get_req("/version")
+            .header("authorization", "Bearer beta-secret")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(status_of(gated_app().await, bearer).await.0, StatusCode::OK);
+
+        let cookie = get_req("/version")
+            .header("cookie", "a=b; gm_access=beta-secret")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(status_of(gated_app().await, cookie).await.0, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn access_form_sets_cookie_only_for_the_right_token() {
+        let form = |token: &str| {
+            Request::builder()
+                .method("POST")
+                .uri("/access")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(format!("token={token}")))
+                .unwrap()
+        };
+        let (status, headers) = status_of(gated_app().await, form("nope")).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert!(headers.get("set-cookie").is_none());
+
+        let (status, headers) = status_of(gated_app().await, form("beta-secret")).await;
+        assert!(status.is_redirection());
+        let cookie = headers.get("set-cookie").unwrap().to_str().unwrap();
+        assert!(cookie.starts_with("gm_access=beta-secret;") && cookie.contains("HttpOnly"));
+    }
+
+    #[tokio::test]
+    async fn market_data_routes_reject_bad_input_before_the_network() {
+        for uri in [
+            "/api/v1/bars?symbol=RELIANCE.NS&range=1h",
+            "/api/v1/bars?symbol=..%2Fetc",
+            "/api/v1/quote?symbol=",
+            "/api/v1/instruments/search?q=",
+        ] {
+            let (status, payload) = get_json(app().await, uri).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {payload}");
+        }
+    }
+
+    #[tokio::test]
+    async fn openapi_lists_market_data_paths() {
+        let (_, payload) = get_json(app().await, "/openapi.json").await;
+        for path in [
+            "/api/v1/instruments/search",
+            "/api/v1/bars",
+            "/api/v1/quote",
+        ] {
+            assert!(payload["paths"].get(path).is_some(), "{path}");
+        }
+    }
+
+    // ---- market data against in-process Yahoo stubs (no network) -------------------------
+
+    const CHART: &str =
+        include_str!("../../gm-integrations/tests/fixtures/yahoo_chart_reliance_1y.json");
+    const NOT_FOUND: &str =
+        include_str!("../../gm-integrations/tests/fixtures/yahoo_chart_not_found.json");
+    const SEARCH: &str =
+        include_str!("../../gm-integrations/tests/fixtures/yahoo_search_nifty.json");
+    const FRAMES: &str =
+        include_str!("../../gm-integrations/tests/fixtures/yahoo_stream_frames.txt");
+
+    /// Recorded chart/search responses on an ephemeral port. `fail` answers 500 to everything.
+    async fn yahoo_stub(fail: bool) -> String {
+        let chart = move |Path(symbol): Path<String>| async move {
+            match (fail, symbol.as_str()) {
+                (true, _) => (StatusCode::INTERNAL_SERVER_ERROR, String::new()),
+                // ^NSEI doubles as the trading calendar; the RELIANCE fixture has the same days.
+                (false, "RELIANCE.NS" | "^NSEI") => (StatusCode::OK, CHART.to_string()),
+                (false, _) => (StatusCode::NOT_FOUND, NOT_FOUND.to_string()),
+            }
+        };
+        let search = move || async move {
+            if fail {
+                (StatusCode::INTERNAL_SERVER_ERROR, String::new())
+            } else {
+                (StatusCode::OK, SEARCH.to_string())
+            }
+        };
+        let stub = Router::new()
+            .route("/v8/finance/chart/{symbol}", get(chart))
+            .route("/v1/finance/search", get(search));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+        format!("http://{addr}")
+    }
+
+    /// WebSocket stub: per connection, wait for a subscribe message, replay the recorded frames,
+    /// then hang up, so the client must reconnect to see them again.
+    async fn stream_stub() -> String {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+                    while let Some(Ok(msg)) = ws.next().await {
+                        if msg.to_text().unwrap_or_default().contains("subscribe") {
+                            break;
+                        }
+                    }
+                    for frame in FRAMES.lines() {
+                        ws.send(Message::text(frame)).await.unwrap();
+                    }
+                    let _ = ws.close(None).await;
+                });
+            }
+        });
+        format!("ws://{addr}")
+    }
+
+    async fn market_app(fail: bool, access_token: Option<&str>) -> Router {
+        build_app(ApiConfig {
+            yahoo_base_url: Some(yahoo_stub(fail).await),
+            yahoo_stream_url: Some(stream_stub().await),
+            access_token: access_token.map(str::to_string),
+            ..ApiConfig::default()
+        })
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn bars_return_adjusted_history_with_quality_report() {
+        let (status, body) = get_json(
+            market_app(false, None).await,
+            "/api/v1/bars?symbol=RELIANCE.NS&range=1y",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let bars = body["chart"]["bars"].as_array().unwrap();
+        assert_eq!(bars.len(), 248);
+        assert!(bars.iter().all(|b| b["adj_close"].as_f64().unwrap() > 0.0));
+        assert_eq!(body["chart"]["source"], "yahoo-chart-v8");
+        assert!(body["chart"]["fetched_at"].is_string());
+        assert_eq!(body["chart"]["corporate_actions"][0]["kind"], "dividend");
+        assert_eq!(body["quality"]["passed"], true);
+        assert_eq!(body["quality"]["n_bars"], 248);
+        assert_eq!(body["quality"]["missing_days"], serde_json::json!([]));
+        assert_eq!(body["quality"]["is_stale"], false);
+    }
+
+    #[tokio::test]
+    async fn quote_returns_delayed_last_price_and_market_state() {
+        let (status, body) = get_json(
+            market_app(false, None).await,
+            "/api/v1/quote?symbol=reliance.ns",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["quote"]["symbol"], "RELIANCE.NS");
+        assert_eq!(body["quote"]["currency"], "INR");
+        assert!(body["quote"]["last_price"].as_f64().unwrap() > 0.0);
+        assert_eq!(body["quote"]["market_open"], false);
+        assert_eq!(body["delayed"], true);
+    }
+
+    #[tokio::test]
+    async fn unknown_symbol_is_404_and_upstream_failure_is_503() {
+        let (status, body) = get_json(
+            market_app(false, None).await,
+            "/api/v1/quote?symbol=NOPE.NS",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+        let failing = market_app(true, None).await;
+        let (status, body) = get_json(failing.clone(), "/api/v1/bars?symbol=RELIANCE.NS").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("500"));
+        let (status, _) = get_json(failing, "/api/v1/instruments/search?q=nifty").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn search_lists_only_indian_listings() {
+        let (status, body) = get_json(
+            market_app(false, None).await,
+            "/api/v1/instruments/search?q=nifty",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let results = body["results"].as_array().unwrap();
+        assert!(!results.is_empty());
+        assert!(
+            results
+                .iter()
+                .all(|r| matches!(r["exchange"].as_str(), Some("NSE" | "BSE" | "Bombay")))
+        );
+    }
+
+    #[tokio::test]
+    async fn market_data_is_behind_the_access_gate() {
+        let app = market_app(false, Some("beta-secret")).await;
+        let (status, _) = status_of(
+            app.clone(),
+            get_req("/api/v1/quote?symbol=RELIANCE.NS")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let (status, _) = status_of(
+            app,
+            get_req("/api/v1/quote?symbol=RELIANCE.NS")
+                .header("authorization", "Bearer beta-secret")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn stream_rejects_bad_symbol_lists() {
+        let too_many = (0..21)
+            .map(|i| format!("S{i}.NS"))
+            .collect::<Vec<_>>()
+            .join(",");
+        for uri in [
+            "/api/v1/stream?symbols=".to_string(),
+            "/api/v1/stream?symbols=..%2Fetc".to_string(),
+            format!("/api/v1/stream?symbols={too_many}"),
+        ] {
+            let (status, payload) = get_json(app().await, &uri).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {payload}");
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_relays_decoded_ticks_and_survives_upstream_reconnects() {
+        use futures_util::StreamExt;
+        let response = market_app(false, None)
+            .await
+            .oneshot(
+                get_req("/api/v1/stream?symbols=ETH-USD")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-type"], "text/event-stream");
+        let mut body = response.into_body().into_data_stream();
+        let mut text = String::new();
+        // The stub hangs up after each replay, so a second tick proves the reconnect (~1 s backoff).
+        let read = async {
+            while text.matches("event: tick").count() < 2 {
+                let chunk = body.next().await.unwrap().unwrap();
+                text.push_str(std::str::from_utf8(&chunk).unwrap());
+            }
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(10), read)
+            .await
+            .expect("two ticks within 10 s");
+        let first = text.lines().find_map(|l| l.strip_prefix("data: ")).unwrap();
+        let tick: Value = serde_json::from_str(first).unwrap();
+        assert_eq!(tick["symbol"], "ETH-USD");
+        assert!(tick["price"].as_f64().unwrap() > 1000.0);
+        assert_eq!(tick["source"], "yahoo-streamer");
+        assert!(
+            !text.contains("EURUSD"),
+            "unsubscribed symbols are filtered out"
+        );
+    }
+
+    /// Regression: gm-api links both rustls backends; without an explicit provider the first
+    /// wss:// handshake to Yahoo panicked and killed the live stream.
+    #[test]
+    fn tls_client_config_builds_with_every_linked_backend() {
+        gm_integrations::yahoo_stream::install_crypto_provider();
+        let _ = rustls::ClientConfig::builder()
+            .with_root_certificates(rustls::RootCertStore::empty())
+            .with_no_client_auth();
     }
 }
