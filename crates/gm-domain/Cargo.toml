@@ -6,8 +6,12 @@ publish = false
 
 [dependencies]
 chrono.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+rand_distr.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+statrs.workspace = true
 thiserror.workspace = true
 uuid.workspace = true

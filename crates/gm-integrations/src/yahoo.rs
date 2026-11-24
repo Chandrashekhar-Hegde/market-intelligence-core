@@ -35,6 +35,8 @@ pub struct InstrumentMeta {
     /// Regular session in progress at fetch time. Yahoo keeps the previous session's window on
     /// exchange holidays, so this is also false on holidays without a calendar of our own.
     pub market_open: bool,
+    /// TradingView's name for this listing, when known (for the embedded live chart).
+    pub tradingview_symbol: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -321,6 +323,7 @@ pub fn parse_chart(body: &str, now: DateTime<Utc>) -> Result<ChartData, Provider
                 .regular_market_time
                 .and_then(|ts| DateTime::from_timestamp(ts, 0)),
             market_open,
+            tradingview_symbol: crate::markets::tradingview_symbol(&meta.symbol),
         },
         bars,
         corporate_actions,
@@ -330,14 +333,30 @@ pub fn parse_chart(body: &str, now: DateTime<Utc>) -> Result<ChartData, Provider
     })
 }
 
-/// Parse a search response, keeping only Indian exchange listings (NSE = "NSI", BSE = "BSE").
+/// Instrument types the analysis engine can work with (any exchange). Options are excluded:
+/// their prices are driven by the underlying and expiry, not a return process of their own.
+const ANALYSABLE_TYPES: [&str; 7] = [
+    "EQUITY",
+    "ETF",
+    "INDEX",
+    "MUTUALFUND",
+    "CRYPTOCURRENCY",
+    "CURRENCY",
+    "FUTURE",
+];
+
+/// Parse a search response: every exchange, analysable instrument types only.
 pub fn parse_search(body: &str) -> Result<Vec<SearchHit>, ProviderError> {
     let envelope: SearchEnvelope = serde_json::from_str(body)
         .map_err(|e| ProviderError::Unavailable(format!("malformed search response: {e}")))?;
     Ok(envelope
         .quotes
         .into_iter()
-        .filter(|q| matches!(q.exchange.as_deref(), Some("NSI" | "BSE")))
+        .filter(|q| {
+            q.quote_type
+                .as_deref()
+                .is_some_and(|t| ANALYSABLE_TYPES.contains(&t))
+        })
         .filter_map(|q| {
             Some(SearchHit {
                 name: q
@@ -577,17 +596,20 @@ mod tests {
     }
 
     #[test]
-    fn search_keeps_only_indian_listings() {
+    fn search_covers_every_exchange() {
         let hits = parse_search(SEARCH).unwrap();
         assert!(
             hits.iter()
                 .any(|h| h.symbol == "^NSEI" && h.exchange == "NSE")
         );
+        // A US-listed ETF on NIFTY is a valid result now; the app is global.
         assert!(
             hits.iter()
-                .all(|h| h.exchange == "NSE" || h.exchange == "BSE")
+                .any(|h| h.symbol == "NFTY" && h.quote_type == "ETF")
         );
-        assert!(!hits.iter().any(|h| h.symbol == "NFTY"));
+        assert_eq!(hits.len(), 7);
+        let options = r#"{"quotes":[{"symbol":"AAPL261218C00200000","quoteType":"OPTION","exchange":"OPR"}]}"#;
+        assert!(parse_search(options).unwrap().is_empty());
     }
 
     #[test]
