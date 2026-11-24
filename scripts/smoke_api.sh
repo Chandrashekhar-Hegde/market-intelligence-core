@@ -250,6 +250,8 @@ assert report["n_returns"] > 1000, report["n_returns"]
 assert report["volatility"]["garch"] is not None, "GARCH not fitted"
 assert len(report["projections"]) == 2 and len(report["projections"][1]["fan"]) == 63
 assert report["findings"], "no findings"
+v = report["validation"]
+assert v and v["n_forecasts"] > 500 and len(v["models"]) == 3, v and v["n_forecasts"]
 if bench:
     assert payload["benchmark"]["symbol"] == bench and payload["benchmark"]["used"], payload["benchmark"]
     assert 0.0 < report["benchmark"]["beta"] < 3.0, report["benchmark"]

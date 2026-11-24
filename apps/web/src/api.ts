@@ -526,7 +526,31 @@ export type AnalysisReport = {
     correlation: number
     idiosyncratic_vol_annual: number
   }
+  validation: Validation | null
   findings: string[]
+}
+
+export type Validation = {
+  n_forecasts: number
+  first_forecast_index: number
+  baseline: string
+  models: {
+    model: 'historical_sim' | 'ewma_normal' | 'garch_t'
+    mean_pinball: number
+    vs_baseline: TestResult | null
+    coverage_90: number
+    var_backtests: {
+      level: number
+      expected_rate: number
+      exceptions: number
+      rate: number
+      kupiec: TestResult
+      christoffersen: TestResult
+      pass: boolean
+    }[]
+    direction: { n: number; hits: number; accuracy: number; binomial: TestResult } | null
+    verdict: string
+  }[]
 }
 
 export type AnalyzeResponse = {

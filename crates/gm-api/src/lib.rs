@@ -2377,6 +2377,10 @@ mod tests {
         assert!(!report["findings"].as_array().unwrap().is_empty());
         // 247 returns is below GARCH's 250 minimum: EWMA and GBM only, said plainly.
         assert!(report["volatility"]["garch"].is_null());
+        assert!(
+            report["validation"].is_null(),
+            "1y is too short to validate"
+        );
         assert_eq!(report["projections"].as_array().unwrap().len(), 1);
         assert_eq!(
             report["projections"][0]["fan"].as_array().unwrap().len(),

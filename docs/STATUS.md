@@ -35,9 +35,9 @@ uncalibrated constants; don't trade on it. Tracked in Phase 1.
   ticks (#68; needs your Upstox/Angel/Breeze/Dhan account and keys).
 - **TradingView**: no data API exists. We embed its free widget for viewing only; its data
   can't be used in our analysis.
-- **Forecasts are not yet validated out of sample.** The fans show the range a model implies;
-  whether a model *beats a random walk* on unseen data is milestone 0.3 (walk-forward scoring,
-  VaR backtests). Until then the app says so and treats forecasts as risk ranges.
+- **Validation covers 1-day forecasts.** Every analysis with 600+ returns walks forward and
+  scores the 1-day forecast distributions against historical simulation, with VaR backtests.
+  The multi-day fans are not yet scored separately; they come from the same models.
 - **Single instrument at a time.** Multi-ticker comparison (correlation, cointegration) is 0.4.
 - **No accounts**: one shared beta token. No database on Railway (nothing needs one yet).
 - Railway deploys from `main` automatically (#43 done).
@@ -47,7 +47,8 @@ uncalibrated constants; don't trade on it. Tracked in Phase 1.
 | Milestone | Scope |
 |---|---|
 | 0.1 Data foundation | Remaining: NSE stream measurement (#44), bhavcopy cross-check (#45), chrono replacement (#71) |
-| 0.2 Analysis engine | Done in this release |
+| 0.2 Analysis engine | Done |
+| 0.3 Validation harness | Done: walk-forward pinball loss, Diebold–Mariano, Kupiec and Christoffersen backtests, coverage, direction, per-model verdict |
 | 0.3 Validation harness | Walk-forward scoring vs baselines, Diebold–Mariano, VaR backtests |
 | 0.4 Multi-instrument | Correlation, Ledoit–Wolf, PCA, cointegration |
 | 0.5 Analyze web app | Fan charts, analysis panels, comparison view, methodology page |

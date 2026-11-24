@@ -25,6 +25,7 @@ test('search, pick an instrument, and see quote, candles, quality and TradingVie
   await expect(page.getByTestId('var-table')).toContainText('2.90%')
   await expect(page.getByRole('heading', { name: 'Against NIFTY 50 (^NSEI)' })).toBeVisible()
   await expect(page.getByTestId('benchmark')).toContainText('Beta 1.08')
+  await expect(page.getByTestId('validation-table')).toContainText('Earns its place')
   // Nothing on the page (tables, charts) may push it wider than the viewport, phone included.
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
   expect(overflow).toBeLessThanOrEqual(0)

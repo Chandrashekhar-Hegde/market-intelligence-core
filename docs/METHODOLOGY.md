@@ -73,6 +73,35 @@ honest finding (Fama 1970).
 - **Caveat.** The drift μ is the historical average, and its standard error is printed next to
   it. The width of the fan is the reliable part; where the centre sits is not.
 
+## Out-of-sample validation
+
+Does any model forecast better than a simple baseline, on days it never saw? This is where models
+earn their place. Validation runs when there are at least 600 daily returns.
+
+- **Walk-forward.** The first 500 days are warm-up. After that, every day's 1-day return
+  distribution is forecast from earlier data only.
+- **Models.**
+  - *Historical simulation* (the baseline): empirical quantiles of the last 500 returns.
+  - *EWMA-normal*: RiskMetrics, zero mean, λ = 0.94.
+  - *GARCH-t*: re-estimated every 63 days on all data so far, and filtered daily in between.
+- **Pinball loss.** Mean of (p − 1{y < q})(y − q) over the 1, 5, 25, 50, 75, 95 and 99%
+  quantiles. This is a proper scoring rule for quantile forecasts (Gneiting & Raftery 2007).
+- **Diebold–Mariano.** Tests the daily loss difference against the baseline, using a Newey–West
+  variance (Bartlett lag ⌊4(T/100)^{2/9}⌋) (Diebold & Mariano 1995).
+- **VaR backtests at 99% and 95%.** Kupiec's proportion-of-failures LR test (Kupiec 1995) and
+  Christoffersen's independence LR test (Christoffersen 1998), each against χ²(1). A level
+  passes when neither test rejects at 5%.
+- **Interval coverage.** The share of outcomes inside the forecast's central 90% interval.
+- **Direction.** The sign of the forecast median against the sign of the outcome, with an exact
+  two-sided binomial test against 50%. It is undefined for zero-median models.
+- **Verdict.** A model *earns its place* only if its loss is significantly below the baseline's
+  (DM, 5%) **and** both VaR levels pass. Being sharper but failing a VaR backtest is reported
+  separately, as "don't use its tail numbers".
+
+Verification: Kupiec, Christoffersen, DM and the binomial p-values match numpy/scipy computations
+on fixed sequences. On simulated GARCH-t data, the harness rates GARCH-t as earning its place,
+with 90% coverage within 2 points.
+
 ## Risk
 
 - **One-day VaR and expected shortfall** at 95% and 99%, shown as positive losses. Losses are
@@ -119,4 +148,5 @@ Fama (1970) J. Finance 25; Hill (1975) Ann. Statist. 3; Jarque & Bera (1980) Eco
 Jensen (1968) J. Finance 23; J.P. Morgan/Reuters (1996) RiskMetrics Technical Document; Ljung & Box
 (1978) Biometrika 65; Lo (2002) FAJ 58; Lo & MacKinlay (1988) RFS 1; MacKinnon (2010) Queen's
 Economics WP 1227; McNeil, Frey & Embrechts (2005) Quantitative Risk Management; Nelder & Mead (1965)
-Computer J. 7; Schwert (1989) JBES 7.
+Computer J. 7; Schwert (1989) JBES 7; Christoffersen (1998) IER 39; Diebold & Mariano (1995)
+JBES 13; Gneiting & Raftery (2007) JASA 102; Kupiec (1995) J. Derivatives 3.

@@ -63,6 +63,7 @@ export function AnalysisPanels({ symbol, history }: { symbol: string; history: P
       <ForecastPanel analysis={analysis.data} history={history} />
       <RiskPanel analysis={analysis.data} />
       <VolatilityPanel analysis={analysis.data} />
+      <ValidationPanel analysis={analysis.data} />
       <TestsPanel analysis={analysis.data} />
       <BenchmarkPanel analysis={analysis.data} />
     </>
@@ -358,6 +359,83 @@ function BenchmarkPanel({ analysis }: { analysis: AnalyzeResponse }) {
       <p className="quiet-copy mono">
         Last price {formatPrice(analysis.report.last_price, analysis.data.currency)}
       </p>
+    </section>
+  )
+}
+
+const VALIDATION_LABEL: Record<string, string> = {
+  historical_sim: 'Historical simulation (baseline)',
+  ewma_normal: 'EWMA, normal (RiskMetrics)',
+  garch_t: 'GARCH-t',
+}
+
+/** Out-of-sample scores: does any model beat the baseline on days it never saw? */
+function ValidationPanel({ analysis }: { analysis: AnalyzeResponse }) {
+  const v = analysis.report.validation
+  return (
+    <section className="panel chart-panel" aria-labelledby="validation-heading">
+      <p className="eyebrow">Out-of-sample validation · 1-day forecasts</p>
+      <h3 id="validation-heading">Does any model earn its place?</h3>
+      {v ? (
+        <>
+          <p className="quiet-copy">
+            Walk-forward over {v.n_forecasts.toLocaleString()} trading days: each forecast used only earlier data. Loss is
+            the pinball loss across seven quantiles (lower is better), compared with historical simulation by a
+            Diebold–Mariano test. VaR passes when the Kupiec and Christoffersen tests both hold at 5%.
+          </p>
+          <table className="event-table data-table" data-testid="validation-table">
+            <caption className="visually-hidden">Out-of-sample model scores</caption>
+            <thead>
+              <tr>
+                <th scope="col">Model</th>
+                <th scope="col">Loss vs baseline</th>
+                <th scope="col">90% interval hit rate</th>
+                <th scope="col">99% VaR breaches</th>
+                <th scope="col">95% VaR breaches</th>
+                <th scope="col">Direction</th>
+                <th scope="col">Verdict</th>
+              </tr>
+            </thead>
+            <tbody>
+              {v.models.map((m) => {
+                const base = v.models.find((x) => x.model === v.baseline)
+                const delta = base ? m.mean_pinball / base.mean_pinball - 1 : 0
+                const verdictTone = m.verdict.startsWith('Earns') ? 'green' : m.vs_baseline ? 'neutral' : 'blue'
+                return (
+                  <tr key={m.model}>
+                    <th scope="row">{VALIDATION_LABEL[m.model] ?? m.model}</th>
+                    <td>
+                      {m.vs_baseline
+                        ? `${delta > 0 ? '+' : ''}${formatPct(delta)} (p ${formatP(m.vs_baseline.p_value)})`
+                        : 'reference'}
+                    </td>
+                    <td>{formatPct(m.coverage_90)}</td>
+                    {m.var_backtests.map((b) => (
+                      <td key={b.level}>
+                        {b.exceptions} vs {Math.round(b.expected_rate * v.n_forecasts)} expected{' '}
+                        <span className={`status-chip tone-${b.pass ? 'green' : 'red'}`}>{b.pass ? 'pass' : 'fail'}</span>
+                      </td>
+                    ))}
+                    <td>
+                      {m.direction
+                        ? `${formatPct(m.direction.accuracy)} (p ${formatP(m.direction.binomial.p_value)})`
+                        : 'none forecast'}
+                    </td>
+                    <td>
+                      <span className={`tone-${verdictTone}`}>{m.verdict}</span>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </>
+      ) : (
+        <p className="quiet-copy">
+          Validation needs at least 600 daily returns (two years to warm up, then 100 out-of-sample days). Pick a longer
+          history.
+        </p>
+      )}
     </section>
   )
 }

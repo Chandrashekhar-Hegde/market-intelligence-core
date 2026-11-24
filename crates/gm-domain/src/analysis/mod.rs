@@ -7,6 +7,7 @@ pub mod montecarlo;
 pub mod numeric;
 pub mod predictability;
 pub mod risk;
+pub mod validation;
 pub mod volatility;
 
 use chrono::NaiveDate;
@@ -17,6 +18,7 @@ pub use distribution::Distribution;
 pub use montecarlo::Projection;
 pub use predictability::Predictability;
 pub use risk::{BenchmarkExposure, Risk};
+pub use validation::Validation;
 pub use volatility::Volatility;
 
 /// Below this many daily returns the statistics are too noisy to report.
@@ -75,6 +77,8 @@ pub struct AnalysisReport {
     pub projections: Vec<Projection>,
     pub risk: Risk,
     pub benchmark: Option<BenchmarkExposure>,
+    /// Out-of-sample scores of the 1-day forecasts; None below 600 returns.
+    pub validation: Option<Validation>,
     /// Plain-language conclusions, each tied to a number above.
     pub findings: Vec<String>,
 }
@@ -118,6 +122,8 @@ pub fn analyze(input: &AnalysisInput) -> Result<AnalysisReport, AnalysisError> {
         .benchmark
         .and_then(|(symbol, bars)| risk::exposure(symbol, prices, bars, periods_per_year));
 
+    let validation = validation::validate(&returns);
+
     let mut report = AnalysisReport {
         symbol: input.symbol.to_string(),
         first_date: first,
@@ -131,6 +137,7 @@ pub fn analyze(input: &AnalysisInput) -> Result<AnalysisReport, AnalysisError> {
         projections,
         risk,
         benchmark,
+        validation,
         findings: Vec::new(),
     };
     report.findings = findings(&report);
@@ -229,6 +236,26 @@ fn findings(r: &AnalysisReport) -> Vec<String> {
             pct(b.alpha_annual),
             pct(b.alpha_annual_se)
         ));
+    }
+    if let Some(v) = &r.validation {
+        let winners = v
+            .models
+            .iter()
+            .filter(|m| m.verdict.starts_with("Earns its place"))
+            .map(|m| m.model.as_str())
+            .collect::<Vec<_>>();
+        out.push(if winners.is_empty() {
+            format!(
+                "Out of sample ({} daily forecasts), no model beat historical simulation with VaR that holds up. Treat the fans as plausible ranges only.",
+                v.n_forecasts
+            )
+        } else {
+            format!(
+                "Out of sample ({} daily forecasts), {} beat historical simulation and passed the VaR backtests.",
+                v.n_forecasts,
+                winners.join(" and ")
+            )
+        });
     }
     if !pr.adf.reject_unit_root_5pct {
         out.push("Price behaves like a random walk (ADF does not reject a unit root): past levels don't pull it back.".into());
