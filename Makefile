@@ -1,4 +1,10 @@
-.PHONY: fmt fmt-check clippy test audit check web-install web-build web-test web-e2e web-check perf-check check-all run-api run-worker docker-build docker-up docker-down migrate smoke-api verify-postgres release-check
+.PHONY: gate gate-live fmt fmt-check clippy test audit check web-install web-build web-test web-e2e web-check perf-check check-all run-api run-worker docker-build docker-up docker-down migrate smoke-api verify-postgres release-check
+
+gate:
+	scripts/check.sh
+
+gate-live:
+	scripts/check.sh --live
 
 fmt:
 	cargo fmt --all
