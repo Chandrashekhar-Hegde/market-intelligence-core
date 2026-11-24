@@ -1,0 +1,208 @@
+# AGENTS.md
+
+Operating guide for anyone, human or AI agent, picking this repo up cold. Read this first, then
+`docs/STATUS.md` (what works today) and the
+[project board](https://github.com/users/Chandrashekhar-Hegde/projects/3) (what's next).
+The history of how we got here is in `docs/HISTORY.md`.
+
+## What this is
+
+A hosted market-analysis app. A user types **any stock, index, ETF, fund, crypto or FX symbol on
+any exchange** and gets the following, built on real data:
+- a live quote and daily history, with data-quality checks;
+- an evidence-based analysis: return distribution, predictability tests, GARCH volatility, Monte
+  Carlo forecast ranges, VaR/ES and benchmark beta;
+- **out-of-sample validation** of every forecast model against a baseline.
+
+Forecasts are always distributions, never buy/sell calls.
+
+- **Live:** https://gm-api-production-911a7e90.up.railway.app (private beta, token-gated).
+- **Repo:** https://github.com/Chandrashekhar-Hegde/market-intelligence-core.
+- **License:** PolyForm Noncommercial. No paid features without revisiting the license.
+
+## Principles (non-negotiable)
+
+1. **Distributions, not calls.** Every forecast is quantiles or a fan with a horizon.
+2. **A model earns its place.** It must beat historical simulation out of sample (Diebold–Mariano)
+   and pass VaR backtests (Kupiec, Christoffersen). Otherwise the app says "no evidence".
+3. **Cite or calibrate.** Every constant is estimated from data or cites a source in
+   `docs/METHODOLOGY.md`. No magic numbers.
+4. **Provenance is visible.** Every result shows its source, fetch time and data-quality report.
+5. **The domain is pure.** `gm-domain` never touches the network, the clock or unseeded randomness.
+   Providers fetch, the API passes data in, and Monte Carlo uses seeded ChaCha8 (same seed gives
+   byte-identical output).
+6. **No live order placement.** `ExecutionMode::Live` stays disabled.
+
+## Repo map
+
+```
+crates/
+  gm-domain/          pure logic (no I/O)
+    src/analysis/     the engine: distribution, predictability, volatility (EWMA, GARCH-t),
+                      montecarlo, risk, validation (walk-forward), numeric (OLS, Nelder–Mead)
+    src/quality.rs    data-quality report for bar series
+    src/{features,stochastic,indicators,event_study,model,...}.rs   older decision path (/decide)
+    tests/fixtures/   5y real adjusted closes (AAPL, ^GSPC, ^NSEI) + reference.json
+  gm-integrations/    providers
+    src/yahoo.rs        Yahoo chart/search client (retries, TTL cache), parsing, validation
+    src/yahoo_stream.rs Yahoo live WebSocket → protobuf ticks → broadcast (shared upstream)
+    src/markets.rs      suffix → home-market benchmark + TradingView name (34 exchanges + US)
+    src/lib.rs          provider traits, mock providers, Razorpay test mode
+    tests/fixtures/     recorded Yahoo responses and stream frames
+  gm-api/             Axum HTTP: /api/v1/{instruments/search,bars,quote,stream,analyze},
+                      access gate, CORS, legacy fixture routes (/events, /decide, /payments/*)
+  gm-persistence/     Postgres (optional; nothing in the market path needs it yet)
+  gm-worker/          migration CLI
+apps/web/             React + Vite + TanStack Query + lightweight-charts
+  src/Markets.tsx     home view: search, live quote, candles, quality, TradingView widget
+  src/Analysis.tsx    analysis panels (findings, fan, risk, volatility, validation, tests, beta)
+  src/marketData.ts   pure UI helpers (unit-tested); keep components out of it
+  src/App.tsx         shell; "Event lab (fixtures)" tab holds the old fixture console
+  tests/e2e/          Playwright; marketMocks.ts mocks /api/v1 so CI never hits Yahoo
+scripts/
+  check.sh            the local gate (what the pre-push hook runs)
+  smoke_api.sh        end-to-end API checks; works against Railway with a token
+  gen_reference.py    regenerates analysis reference values with scipy/statsmodels/arch
+.githooks/pre-push    runs scripts/check.sh
+docs/                 STATUS, METHODOLOGY, API, TESTING, HISTORY, ARCHITECTURE, ...
+```
+
+## Setup from a clean clone
+
+Needs Rust 1.96+, Node 24, and (for browser tests) Playwright Chromium.
+
+```bash
+git clone https://github.com/Chandrashekhar-Hegde/market-intelligence-core.git
+cd market-intelligence-core
+git config core.hooksPath .githooks        # enables the pre-push gate
+(cd apps/web && npm ci && npx playwright install chromium)
+scripts/check.sh                            # full gate: must print "All checks passed."
+```
+
+Run locally (two terminals):
+
+```bash
+cargo run -p gm-api                         # API on :8000; no DB, no token needed locally
+(cd apps/web && npm run dev)                # UI on :5173 (allowed by default CORS)
+```
+
+Production-like (one origin, gated): build the web app with `VITE_API_BASE_URL=` (empty), then run
+`gm-api` with `WEB_ASSETS_DIR=apps/web/dist GM_ACCESS_TOKEN=... GM_CORS_ORIGINS=none`.
+
+## Commands you'll use
+
+| Goal | Command |
+|---|---|
+| Full gate (same as CI minus Docker) | `scripts/check.sh` or `make gate` |
+| Quick iteration (skip Playwright) | `scripts/check.sh --fast` |
+| Before a deploy: also hit real Yahoo | `scripts/check.sh --live` or `make gate-live` |
+| One Rust test | `cargo test -p gm-domain analysis::tests::aapl` |
+| Web unit tests | `cd apps/web && npm run test` |
+| Browser tests (mocked data) | `cd apps/web && npx playwright test` |
+| Browser test on real data | `cd apps/web && npm run test:e2e:live` |
+| Smoke a running API | `BASE_URL=http://127.0.0.1:8000 scripts/smoke_api.sh` |
+| Smoke production | `BASE_URL=https://gm-api-production-911a7e90.up.railway.app GM_ACCESS_TOKEN=$(railway variable list --service gm-api --json \| jq -r .GM_ACCESS_TOKEN) scripts/smoke_api.sh` |
+| Measure NSE stream lag (09:15–15:30 IST) | `LIVE_STREAM_SYMBOL=RELIANCE.NS cargo test -p gm-integrations -- --ignored live_stream --nocapture` |
+| Regenerate analysis references | `uv venv .refenv && VIRTUAL_ENV=.refenv uv pip install numpy scipy statsmodels arch pandas && .refenv/bin/python scripts/gen_reference.py` |
+
+## Workflow (how work lands)
+
+1. Pick an issue from the board (Todo first, then Backlog by milestone order). Move it to
+   **In Progress**.
+2. Branch from `main` (`phaseX.Y-short-name`). Never commit to `main` directly.
+3. Build with tests at every layer you touch (see "Testing rules"). Update docs in the same change:
+   - `docs/STATUS.md` when what works changes;
+   - `docs/METHODOLOGY.md` for any new statistic;
+   - `docs/API.md` and the `/openapi.json` handler for any route.
+4. `git push` runs the full gate through the pre-push hook. Don't bypass it with `--no-verify`.
+5. Open a PR with "Closes #N". CI (`.github/workflows/ci.yml`) must be green.
+6. Merge with a merge commit. **Railway deploys `main` automatically.** Wait for that deployment
+   to reach SUCCESS (`railway deployment list --service gm-api --json`), then run the production
+   smoke command above.
+7. Closed issues move to Done on the board automatically. Partially done issues get a comment
+   saying what's left.
+8. Commit messages: imperative subject, a body that says why. **No AI co-author trailers and no
+   "Generated with" lines** in commits or PRs (owner's standing rule).
+
+## Testing rules
+
+- **Domain maths.** Every statistic is checked against an independent implementation
+  (`reference.json`, tolerances in `analysis/tests.rs`). It also gets a behavioural test on
+  simulated data where the truth is known (for example GARCH parameter recovery, or the harness
+  rating the true model as earning its place).
+- **Determinism.** The same seed must give byte-identical projections.
+- **API.** Tests run against in-process Yahoo stubs (`yahoo_stub`, `stream_stub` in
+  `gm-api/src/lib.rs`). No network in non-ignored tests. Live checks are `#[ignore]` with a
+  `live` name.
+- **Web.**
+  - Vitest with mocked `fetch` and a fake `EventSource` (`Markets.test.tsx`).
+  - Playwright with `tests/e2e/marketMocks.ts`, on desktop and phone width. It includes an axe
+    accessibility check and a "no horizontal overflow" check.
+  - `@live` specs only run via `npm run test:e2e:live`.
+- **Lint.** oxlint with warnings as errors (react, react-hooks, jsx-a11y, typescript, vitest).
+  `react-in-jsx-scope` and `prefer-tag-over-role` are off on purpose (see `.oxlintrc.json`).
+
+## Deployment and secrets
+
+- **Railway:**
+  - Project `market-intelligence-core`, service `gm-api`, environment `production`.
+  - It is connected to GitHub `main` and builds from the `Dockerfile`.
+  - No database is attached; nothing needs one yet.
+- **Environment variables:** `GM_ACCESS_TOKEN` (the beta gate) and `RUST_LOG`. The Dockerfile sets
+  `GM_CORS_ORIGINS=none`. Railway injects `PORT`, which the server reads before `GM_PORT`.
+- **The access token lives only in Railway.** Read it with `railway variable list --service gm-api`.
+  Never commit it, print it in logs, or paste it into issues or PRs.
+- **Railway CLI login:** `railway login`. If the browser OAuth times out, the human runs it with `!`.
+- **GitHub:** `gh` is authenticated with the `project` scope.
+  - The board is user project #3, node `PVT_kwHOAydiks4Bs_d6`.
+  - Its Status field is `PVTSSF_lAHOAydiks4Bs_d6zhrK-6w`, with options Backlog `3537a9a7`,
+    Todo `5e35da4d`, In Progress `d963a666`, In Review `daf0f9f5`, Done `1cf45f5c`.
+
+## Gotchas we already paid for
+
+- **rustls provider.** Both rustls backends are linked (sqlx brings ring, reqwest brings
+  aws-lc-rs). `yahoo_stream::install_crypto_provider()` must run before any `wss://` connect, or
+  the stream task panics. A regression test exists.
+- **statrs Student-t quantile.** It never returns for huge ν (from near-normal data).
+  `risk.rs` and `validation.rs` switch to the normal above ν = 200. Keep that guard on any new
+  t-quantile call.
+- **macOS has a case-insensitive filesystem.** `Markets.tsx` and `markets.ts` collide, which is
+  why the helpers live in `marketData.ts`.
+- **macOS has no `timeout`.** Use `perl -e 'alarm N; exec @ARGV' cargo test ...`. A test that
+  hangs keeps spinning after cargo dies; `pkill -f gm_domain-` cleans it up.
+- **Yahoo trading periods.**
+  - Holidays and weekends show the previous session's `currentTradingPeriod`, so
+    `market_open` is computed from it (no holiday calendar needed).
+  - 24 Nov 2026 was an NSE holiday.
+  - NSE live-tick coverage of the Yahoo streamer is still unmeasured (#44). Crypto and FX ticks
+    arrive with 1–3 s lag.
+- **Yahoo is unofficial.** It can rate-limit or block. The fallbacks are NSE bhavcopy for
+  end-of-day data (#45) and a broker feed for licensed live ticks (#68, which needs the owner's
+  account). The NSE website JSON API is off-limits: its terms forbid automated access.
+- **TradingView has no data API.** We only embed its widget for display.
+- **Analysis on short histories.**
+  - Under 60 returns the request is rejected with 400.
+  - Under 250 there is no GARCH (the UI says so).
+  - Under 600 there is no validation.
+  - Ranges `1y` and below are too short for validation; the default is `5y`.
+- **`gm-api` test helper names.** In `gm-api` tests the request helper is `get_req`, not `get`,
+  because `get` shadows axum's router function.
+
+## Where we are and what's next
+
+Shipped:
+- **0.1:** live data, the Markets view, the local gate, deploys from `main`.
+- **0.2:** the global analysis engine.
+- **0.3:** out-of-sample validation.
+
+Next, in order:
+- **0.4 multi-instrument** (#57–#60): align returns on common days, Pearson/Spearman and rolling
+  correlation, Ledoit–Wolf covariance, PCA market factor (will add `nalgebra`), Engle–Granger
+  cointegration with OU half-life, relative performance. Then the comparison view and multi-select
+  chips (#61, #62).
+- **Open 0.1 items:** #44 (measure NSE stream lag in market hours), #45 (bhavcopy cross-check),
+  #71 (replace chrono, whose RUSTSEC advisory is ignored in `.cargo/audit.toml`).
+- **#63:** an in-app Methodology page.
+- **Phase 1:** real events and news, a market-model event study, calibrate or retire `/decide`,
+  fundamentals.
+- **Phase 2:** broker live ticks, accounts, portfolio analytics.

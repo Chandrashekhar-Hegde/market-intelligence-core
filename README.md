@@ -53,10 +53,14 @@ read-only integrations, Razorpay test mode, and no live broker order placement.
 
 ## Quick Start
 
+Agents and new contributors: read [AGENTS.md](AGENTS.md) first.
+
 ```bash
-cp .env.example .env
-make check
-make run-api
+git config core.hooksPath .githooks          # pre-push quality gate
+(cd apps/web && npm ci && npx playwright install chromium)
+scripts/check.sh                             # full gate, same as CI minus Docker
+make run-api                                 # API on :8000
+(cd apps/web && npm run dev)                 # UI on :5173
 ```
 
 In another terminal:
@@ -108,7 +112,9 @@ migration directory is mounted somewhere other than `/app/migrations`.
 
 ## Documentation
 
+- [Agent guide](AGENTS.md)
 - [Status](docs/STATUS.md)
+- [History and decisions](docs/HISTORY.md)
 - [Methodology](docs/METHODOLOGY.md)
 - [API](docs/API.md)
 - [Architecture](docs/ARCHITECTURE.md)
