@@ -3,20 +3,46 @@
 Testing focuses on proving that the domain math is deterministic and that the
 runtime paths work locally.
 
-## Local Gates
+## Local Gate (runs before every push)
 
 ```bash
-make check
+git config core.hooksPath .githooks   # once per clone: enables the pre-push hook
+scripts/check.sh                      # what the hook runs; same checks as CI minus Docker
+scripts/check.sh --fast               # skip Playwright while iterating
+scripts/check.sh --live               # also hit real Yahoo (run before a deploy)
 ```
 
-This runs:
+`scripts/check.sh` runs, and stops at the first failure:
 
-```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo audit --deny warnings
-```
+| Step | Command |
+|---|---|
+| Rust format | `cargo fmt --all -- --check` |
+| Rust lint | `cargo clippy --workspace --all-targets --all-features -- -D warnings` |
+| Rust tests | `cargo test --workspace --all-features` |
+| Dependency audit | `cargo audit --deny warnings` (skipped if not installed; CI always runs it) |
+| Web lint | `npm run lint` (oxlint with react, react-hooks, jsx-a11y, typescript, vitest rules; warnings fail) |
+| Web types + build | `npm run build` (`tsc -b && vite build`) |
+| Web unit tests | `npm run test` (Vitest + Testing Library) |
+| Browser tests | `npx playwright test` (desktop + mobile Chrome, axe accessibility, p95 budget) |
+
+Browser tests mock `/api/v1/*` (`tests/e2e/marketMocks.ts`), so they never depend on Yahoo.
+Real-network checks are opt-in:
+
+- `cargo test --workspace -- --ignored live` hits Yahoo chart, search and the streamer.
+  Set `LIVE_STREAM_SYMBOL=RELIANCE.NS` in NSE hours (09:15–15:30 IST) to measure NSE lag.
+- `npm run test:e2e:live` (`@live` specs) drives the UI against a local API on real data.
+
+### What the market-data tests cover
+
+- Provider parsing on recorded Yahoo responses: adjustment, null rows, partial session bar,
+  splits, not-found, search filtering, input validation.
+- Stream decoding on recorded protobuf frames, plus an in-process WebSocket stub that hangs
+  up after each replay to prove reconnects. A regression test makes sure TLS works with
+  both rustls backends linked (sqlx brings ring, reqwest brings aws-lc-rs).
+- API behaviour against in-process Yahoo stubs: bars + quality report, quote and market
+  state, 404 / 503 mapping, search filtering, access gate on market routes, stream limits.
+- UI: live/delayed/closed logic, tick-to-candle merging across exchange dates, TradingView
+  symbol mapping, search → select flow, readable errors, failing quality reports.
 
 ## API Smoke Test
 
@@ -123,3 +149,4 @@ Current unit tests cover:
 - repository read integration tests against PostgreSQL
 - replay tests that rebuild projections from append-only facts
 - live broker execution state-machine tests
+- NSE tick coverage and lag of the Yahoo stream in market hours (#44)

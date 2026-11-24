@@ -1,33 +1,19 @@
 # Roadmap
 
-This project is a standalone market intelligence core. The near-term goal is to
-keep the engine small, deterministic, and easy to verify before adding more data
-sources or execution adapters.
+The roadmap lives on GitHub so it stays current:
 
-## Implemented
+- [Project board](https://github.com/users/Chandrashekhar-Hegde/projects/3): Backlog → Todo → In Progress → In Review → Done
+- [Milestones](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/milestones): 0.1 Data foundation, 0.2 Analysis engine, 0.3 Validation harness, 0.4 Multi-instrument, 0.5 Analyze web app, Phase 1 Events & fundamentals, Phase 2 Portfolio & live data
+- [Status](STATUS.md): what works today, what runs on fixtures, and known limits
 
-- Deterministic event scoring with keyword rules and event classification.
-- Bounded macro-context blending by sector.
-- Technical indicators and as-of feature snapshots.
-- GBM plus flow-adjusted prediction records.
-- Deterministic decision generation with as-of price injection.
-- PostgreSQL migration support for append-only ledgers.
-- Axum HTTP API for health, rules, scoring, decisions, features, prediction,
-  and macro context.
-- Local smoke scripts for API and PostgreSQL migration checks.
+Principles for every model added:
 
-## Next
-
-- Build the operator UI and Decision Workbench.
-- Add the knowledge-base ontology for global, political, regulatory, medical,
-  company-structure, conflict, and market events.
-- Replace direct threshold-like behavior with evidence-backed impact estimates.
-- Persist API decisions and rule traces through repository interfaces.
-- Add fixture-based HTTP contract tests.
-- Add market-data ingestion jobs with source-level circuit breakers.
-- Add replay tests that rebuild derived projections from append-only facts.
-- Add paper execution after risk checks are fully covered by tests.
-- Add a release image workflow only when publishing is needed.
+1. Distributions, not calls: forecasts are quantiles or fan charts with a horizon.
+2. A model earns its place by beating a random-walk or historical-simulation baseline
+   out of sample; otherwise the app says "no evidence of predictability".
+3. Every constant is estimated from data or cites a published source.
+4. Data provenance (source, fetch time, quality checks) is visible on every result.
+5. The domain layer stays pure: providers fetch, `gm-domain` computes.
 
 ## Operating Rule
 

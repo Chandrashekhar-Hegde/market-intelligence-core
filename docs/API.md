@@ -23,6 +23,46 @@ optional for local domain and smoke-test workflows. When `DATABASE_URL` is set,
 the API connects to PostgreSQL at startup, applies migrations by default, and
 `/ready` verifies that the database remains reachable.
 
+## Market Data Endpoints
+
+Live NSE/BSE data from Yahoo Finance (free end-of-day data and quotes delayed by about 15 minutes; unofficial
+endpoints). Responses are cached in-process for 60 s (`5d`/`1mo`) or 15 min.
+
+- `GET /api/v1/instruments/search?q=` returns `{results: [{symbol, name, exchange,
+  quote_type}]}`, limited to NSE/BSE listings. `q` is 1-64 characters.
+- `GET /api/v1/bars?symbol=&range=` returns `{chart, quality}`. `range` is one of
+  `5d 1mo 3mo 6mo 1y 2y 5y 10y max` (default `1y`). `chart.bars` are completed
+  daily bars, oldest first: `close` is split-adjusted and `adj_close` is split- and
+  dividend-adjusted. If the session is still open, the forming bar is dropped.
+  `chart` also carries `corporate_actions`, `source` and `fetched_at`. `quality` is
+  the data-quality report: OHLC consistency, non-positive prices, zero-volume days,
+  missing days versus NIFTY's trading days (INR listings only), staleness, and
+  return outliers above a robust z of 8.
+- `GET /api/v1/quote?symbol=` returns `{quote, source, fetched_at, delayed: true}`.
+  `quote.market_open` is true only during the regular session; it uses Yahoo's trading
+  period, so it is also false on exchange holidays.
+- `GET /api/v1/stream?symbols=A,B` is a Server-Sent Events stream of `tick` events
+  `{symbol, price, change, change_pct, day_high, day_low, day_volume, currency, exchange,
+  tick_time, source}` from Yahoo's live streamer. It takes 1–20 symbols. The last known
+  tick per symbol is sent first, and keep-alive comments are sent while idle. NSE
+  coverage is still being measured; see `docs/STATUS.md`.
+
+Symbols use Yahoo suffixes: `RELIANCE.NS`, `RELIANCE.BO`, `^NSEI`, `^BSESN`.
+Invalid input returns `400`, an unknown symbol `404`, and an upstream failure `503`.
+
+## Access Gate
+
+When `GM_ACCESS_TOKEN` is set, every route except `GET /health`, `POST /access`
+and the signed Razorpay webhook requires the token. Send it as
+`Authorization: Bearer <token>` or as the `gm_access` cookie. Browsers without the
+token get a `401` login form, which posts to `/access`. A correct token sets an
+`HttpOnly; Secure; SameSite=Lax` cookie that lasts 30 days.
+
+CORS is off unless `GM_CORS_ORIGINS` lists origins. It defaults to the local Vite dev
+origins, and the Dockerfile sets it to `none` because the deployed bundle is
+same-origin. The server listens on `PORT` when it is set (Railway), otherwise on
+`GM_PORT`.
+
 ## Decision Endpoint
 
 `POST /decide` accepts:
