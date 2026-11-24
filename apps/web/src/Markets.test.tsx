@@ -142,6 +142,31 @@ function analysis(overrides: Partial<AnalyzeResponse['report']> = {}): AnalyzeRe
         sharpe: 0.63, sharpe_se: 0.45, sortino: 0.88,
       },
       benchmark: null,
+      validation: {
+        n_forecasts: 753,
+        first_forecast_index: 500,
+        baseline: 'historical_sim',
+        models: [
+          {
+            model: 'historical_sim', mean_pinball: 0.0021, vs_baseline: null, coverage_90: 0.896,
+            var_backtests: [
+              { level: 0.99, expected_rate: 0.01, exceptions: 12, rate: 0.016, kupiec: result(2.1, 0.15), christoffersen: result(0.4, 0.53), pass: true },
+              { level: 0.95, expected_rate: 0.05, exceptions: 40, rate: 0.053, kupiec: result(0.2, 0.65), christoffersen: result(9.8, 0.002), pass: false },
+            ],
+            direction: { n: 750, hits: 397, accuracy: 0.529, binomial: result(397, 0.11) },
+            verdict: 'Baseline: what any model has to beat.',
+          },
+          {
+            model: 'garch_t', mean_pinball: 0.00195, vs_baseline: result(-3.1, 0.002), coverage_90: 0.9,
+            var_backtests: [
+              { level: 0.99, expected_rate: 0.01, exceptions: 8, rate: 0.011, kupiec: result(0.1, 0.8), christoffersen: result(0.2, 0.7), pass: true },
+              { level: 0.95, expected_rate: 0.05, exceptions: 37, rate: 0.049, kupiec: result(0.0, 0.9), christoffersen: result(0.5, 0.5), pass: true },
+            ],
+            direction: null,
+            verdict: 'Earns its place: forecasts beat historical simulation out of sample and its VaR holds up.',
+          },
+        ],
+      },
       findings: [
         'Annualised volatility 17.4% over 1253 trading days.',
         'No evidence of predictability in returns: Ljung–Box p = 0.164 and no variance ratio is significant.',
@@ -481,5 +506,28 @@ describe('analysis panels', () => {
     renderMarkets()
     expect(await screen.findByText(/Invalid request: need at least 60 daily returns, got 12/)).toBeInTheDocument()
     expect(await screen.findByTestId('quality-badge')).toBeInTheDocument()
+  })
+})
+
+describe('validation panel', () => {
+  test('scores each model against the baseline with VaR backtests and a verdict', async () => {
+    mockApi()
+    renderMarkets()
+    const table = await screen.findByTestId('validation-table')
+    const garch = within(table).getByRole('row', { name: /^GARCH-t/ })
+    expect(garch).toHaveTextContent('-7.1% (p 0.002)')
+    expect(garch).toHaveTextContent('8 vs 8 expected')
+    expect(garch).toHaveTextContent('Earns its place')
+    expect(garch).toHaveTextContent('none forecast')
+    const base = within(table).getByRole('row', { name: /^Historical simulation/ })
+    expect(base).toHaveTextContent('reference')
+    expect(within(base).getAllByText('fail')).toHaveLength(1)
+    expect(screen.getByText(/Walk-forward over 753 trading days/)).toBeInTheDocument()
+  })
+
+  test('short histories say why there is no validation', async () => {
+    mockApi({ '/api/v1/analyze': () => Response.json(analysis({ validation: null })) })
+    renderMarkets()
+    expect(await screen.findByText(/Validation needs at least 600 daily returns/)).toBeInTheDocument()
   })
 })

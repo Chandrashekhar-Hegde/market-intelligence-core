@@ -18,5 +18,7 @@ test.describe('@live real Yahoo data', () => {
     await expect(page.getByTestId('findings')).toBeVisible({ timeout: 30_000 })
     await expect(page.getByTestId('fan-chart').locator('canvas').first()).toBeVisible()
     await expect(page.getByTestId('benchmark')).toContainText('Beta')
+    // Five years is enough history for walk-forward validation.
+    await expect(page.getByTestId('validation-table')).toContainText('Historical simulation (baseline)')
   })
 })

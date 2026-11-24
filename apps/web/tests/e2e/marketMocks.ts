@@ -175,6 +175,27 @@ function analysis(symbol: string) {
       benchmark: isEquity
         ? { symbol: '^NSEI', n_common_days: 60, beta: 1.08, beta_se: 0.09, alpha_annual: 0.01, alpha_annual_se: 0.2, r_squared: 0.48, correlation: 0.69, idiosyncratic_vol_annual: 0.15 }
         : null,
+      validation: {
+        n_forecasts: 753,
+        first_forecast_index: 500,
+        baseline: 'historical_sim',
+        models: ['historical_sim', 'ewma_normal', 'garch_t'].map((model, i) => ({
+          model,
+          mean_pinball: 0.002 - i * 0.0001,
+          vs_baseline: i === 0 ? null : result(-1.2 * i, i === 2 ? 0.01 : 0.2),
+          coverage_90: 0.9,
+          var_backtests: [0.99, 0.95].map((level) => ({
+            level, expected_rate: 1 - level, exceptions: Math.round((1 - level) * 753), rate: 1 - level,
+            kupiec: result(0.1, 0.8), christoffersen: result(0.2, 0.7), pass: true,
+          })),
+          direction: model === 'ewma_normal' ? null : { n: 750, hits: 390, accuracy: 0.52, binomial: result(390, 0.29) },
+          verdict: i === 0
+            ? 'Baseline: what any model has to beat.'
+            : i === 2
+              ? 'Earns its place: forecasts beat historical simulation out of sample and its VaR holds up.'
+              : 'No significant difference from historical simulation out of sample.',
+        })),
+      },
       findings: [
         'Annualised volatility 22.0% over 59 trading days.',
         'No evidence of predictability in returns: Ljung–Box p = 0.520 and no variance ratio is significant.',
