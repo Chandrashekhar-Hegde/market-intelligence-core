@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Blocks `git push` unless the full local gate passes. Enable once per clone:
+#   git config core.hooksPath .githooks
+# Emergency bypass (CI still runs everything): git push --no-verify
+exec "$(git rev-parse --show-toplevel)/scripts/check.sh"

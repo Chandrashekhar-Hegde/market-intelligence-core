@@ -9,6 +9,9 @@ use sha2::Sha256;
 use thiserror::Error;
 use uuid::Uuid;
 
+pub mod yahoo;
+pub mod yahoo_stream;
+
 type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

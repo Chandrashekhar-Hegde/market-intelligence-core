@@ -1,9 +1,13 @@
 import { expect, test } from '@playwright/test'
 
+import { mockMarketData, openEventLab } from './marketMocks'
+
 const UI_DECISION_P95_MAX_MS = Number(process.env.UI_DECISION_P95_MAX_MS ?? '2500')
 
 test('decision workflow p95 stays inside the release budget', async ({ page }) => {
+  await mockMarketData(page)
   await page.goto('/')
+  await openEventLab(page)
   await expect(page.getByText('Online')).toBeVisible()
 
   const samples: number[] = []

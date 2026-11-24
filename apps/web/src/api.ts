@@ -316,3 +316,130 @@ export function createDecision(payload: DecisionRequest): Promise<Decision> {
 export function getApiBaseUrl(): string {
   return apiBaseUrl
 }
+
+// ---- market data (/api/v1) -------------------------------------------------------------
+
+export type SearchHit = {
+  symbol: string
+  name: string
+  exchange: string
+  quote_type: string
+}
+
+export type InstrumentMeta = {
+  symbol: string
+  name: string | null
+  currency: string | null
+  exchange: string | null
+  instrument_type: string | null
+  timezone: string | null
+  last_price: number | null
+  last_trade_at: string | null
+  market_open: boolean
+}
+
+export type PriceBar = {
+  symbol: string
+  date: string
+  open: number
+  high: number
+  low: number
+  close: number
+  adj_close: number | null
+  volume: number
+  source: string
+}
+
+export type CorporateAction =
+  | { kind: 'dividend'; date: string; amount: number }
+  | { kind: 'split'; date: string; numerator: number; denominator: number }
+
+export type ReturnOutlier = {
+  date: string
+  log_return: number
+  robust_z: number
+  near_corporate_action: boolean
+}
+
+export type QualityReport = {
+  passed: boolean
+  n_bars: number
+  first_date: string | null
+  last_date: string | null
+  ohlc_violations: string[]
+  non_positive_prices: string[]
+  zero_volume_days: number
+  missing_days: string[]
+  is_stale: boolean
+  outliers: ReturnOutlier[]
+  warnings: string[]
+}
+
+export type ChartData = {
+  meta: InstrumentMeta
+  bars: PriceBar[]
+  corporate_actions: CorporateAction[]
+  dropped_partial_bar: boolean
+  source: string
+  fetched_at: string
+}
+
+export type BarsResponse = { chart: ChartData; quality: QualityReport }
+
+export type QuoteResponse = {
+  quote: InstrumentMeta
+  source: string
+  fetched_at: string
+  delayed: boolean
+}
+
+export type Tick = {
+  symbol: string
+  price: number
+  change: number
+  change_pct: number
+  day_high: number | null
+  day_low: number | null
+  day_volume: number | null
+  currency: string | null
+  exchange: string | null
+  tick_time: string
+  source: string
+}
+
+export const BAR_RANGES = ['1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'max'] as const
+export type BarRange = (typeof BAR_RANGES)[number]
+
+export async function searchInstruments(query: string): Promise<SearchHit[]> {
+  const body = await request<{ results: SearchHit[] }>(
+    `/api/v1/instruments/search?q=${encodeURIComponent(query)}`,
+  )
+  return body.results
+}
+
+export function fetchBars(symbol: string, range: BarRange): Promise<BarsResponse> {
+  return request<BarsResponse>(
+    `/api/v1/bars?symbol=${encodeURIComponent(symbol)}&range=${range}`,
+  )
+}
+
+export function fetchQuote(symbol: string): Promise<QuoteResponse> {
+  return request<QuoteResponse>(`/api/v1/quote?symbol=${encodeURIComponent(symbol)}`)
+}
+
+export function streamUrl(symbols: string[]): string {
+  return `${apiBaseUrl}/api/v1/stream?symbols=${encodeURIComponent(symbols.join(','))}`
+}
+
+/** Turn `request()`'s "404 Not Found: {...}" errors into something a reader can act on. */
+export function describeApiError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  if (message.startsWith('404')) return 'Unknown symbol. Search for it by name instead.'
+  if (message.startsWith('401')) return 'Access token missing or expired. Reload to sign in.'
+  if (message.startsWith('503')) return 'Market data provider is unavailable right now. Try again shortly.'
+  if (message.startsWith('400')) {
+    const detail = message.match(/"error":"([^"]+)"/)?.[1]
+    return detail ? `Invalid request: ${detail}` : 'Invalid request.'
+  }
+  return message
+}

@@ -286,8 +286,15 @@ function renderApp() {
   )
 }
 
+/** The fixture console now lives behind the "Event lab" tab; Markets is the default view. */
+async function renderLab() {
+  const view = renderApp()
+  await userEvent.click(screen.getByRole('tab', { name: /event lab/i }))
+  return view
+}
+
 function mockFetch(decisionPayload?: unknown) {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn<typeof fetch>(async (input) => {
     const url = input.toString()
 
     if (url.endsWith('/health')) {
@@ -333,7 +340,7 @@ function mockFetch(decisionPayload?: unknown) {
 
 test('renders the operator console with live health state', async () => {
   mockFetch()
-  renderApp()
+  await renderLab()
 
   expect(screen.getByRole('heading', { name: 'Command Center' })).toBeInTheDocument()
   expect(screen.getByRole('heading', { name: 'Normalized review queue' })).toBeInTheDocument()
@@ -344,7 +351,7 @@ test('renders the operator console with live health state', async () => {
 
 test('filters event inbox and renders selected review detail', async () => {
   mockFetch()
-  renderApp()
+  await renderLab()
 
   expect((await screen.findAllByText('Quarterly earnings beat estimates')).length).toBeGreaterThan(0)
   expect(await screen.findByRole('option', { name: 'Medical Classification' })).toBeInTheDocument()
@@ -359,7 +366,7 @@ test('filters event inbox and renders selected review detail', async () => {
 
 test('posts the smoke fixture and renders the backend decision', async () => {
   const fetchMock = mockFetch()
-  renderApp()
+  await renderLab()
 
   await userEvent.click(screen.getByRole('button', { name: /run fixture/i }))
 
@@ -384,7 +391,7 @@ test('posts the smoke fixture and renders the backend decision', async () => {
 
 test('runs the Razorpay test-mode payment verification flow', async () => {
   const fetchMock = mockFetch()
-  renderApp()
+  await renderLab()
 
   expect(await screen.findByText('razorpay-test')).toBeInTheDocument()
 
@@ -401,4 +408,18 @@ test('runs the Razorpay test-mode payment verification flow', async () => {
     'http://127.0.0.1:8000/payments/verify',
     expect.objectContaining({ method: 'POST' }),
   )
+})
+
+test('opens on the live Markets view and labels the Event lab as fixture data', async () => {
+  mockFetch()
+  renderApp()
+
+  expect(screen.getByRole('tab', { name: /markets/i })).toHaveAttribute('aria-selected', 'true')
+  expect(screen.getByRole('heading', { name: /live prices, history and data quality/i })).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Normalized review queue' })).not.toBeInTheDocument()
+
+  await userEvent.click(screen.getByRole('tab', { name: /event lab/i }))
+
+  expect(screen.getByRole('note')).toHaveTextContent(/fixture data, not live markets/i)
+  expect(screen.getByRole('heading', { name: 'Normalized review queue' })).toBeInTheDocument()
 })

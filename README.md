@@ -13,6 +13,12 @@ noncommercial use and is not open-source licensed.
 
 ## What Works Now
 
+**Start with [docs/STATUS.md](docs/STATUS.md)**: what is live, what runs on fixtures, and
+known limits. Planned work: [project board](https://github.com/users/Chandrashekhar-Hegde/projects/3).
+
+- Live NSE/BSE market data (Yahoo): search, adjusted daily history, delayed quotes, a
+  Server-Sent Events price stream, and a data-quality report, shown in the **Markets** view.
+
 - Deterministic event scoring and event classification.
 - BUY/SELL/HOLD decision generation from frozen as-of facts.
 - Technical indicators: returns, SMA, EMA, RSI, ATR, volatility, drawdown,
@@ -98,6 +104,7 @@ migration directory is mounted somewhere other than `/app/migrations`.
 
 ## Documentation
 
+- [Status](docs/STATUS.md)
 - [API](docs/API.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Algorithm](docs/ALGORITHM.md)

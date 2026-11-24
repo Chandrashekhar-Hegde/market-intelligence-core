@@ -84,7 +84,10 @@ pub fn gbm_flow_prediction(
         .cloned()
         .collect::<Vec<_>>();
     asof_bars.sort_by_key(|bar| bar.date);
-    let closes = asof_bars.iter().map(|bar| bar.close).collect::<Vec<_>>();
+    let closes = asof_bars
+        .iter()
+        .map(PriceBar::adjusted_close)
+        .collect::<Vec<_>>();
     let (mu, sigma) = calibrate_gbm(&closes);
     let flow_adjustment = flow_drift_adjustment(fii_flow_norm, 0.0005, 0.002);
     let forecast = gbm_forecast(mu + flow_adjustment, sigma, horizon);

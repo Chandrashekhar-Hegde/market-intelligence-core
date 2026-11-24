@@ -31,7 +31,12 @@ pub fn compute_features(symbol: &str, as_of: NaiveDate, bars: &[PriceBar]) -> Fe
         .collect::<Vec<_>>();
     asof_bars.sort_by_key(|bar| bar.date);
 
-    let closes = asof_bars.iter().map(|bar| bar.close).collect::<Vec<_>>();
+    // Return-based features use adjusted closes; ATR needs the same price basis as high/low.
+    let closes = asof_bars
+        .iter()
+        .map(PriceBar::adjusted_close)
+        .collect::<Vec<_>>();
+    let raw_closes = asof_bars.iter().map(|bar| bar.close).collect::<Vec<_>>();
     let highs = asof_bars.iter().map(|bar| bar.high).collect::<Vec<_>>();
     let lows = asof_bars.iter().map(|bar| bar.low).collect::<Vec<_>>();
     let volumes = asof_bars
@@ -43,12 +48,12 @@ pub fn compute_features(symbol: &str, as_of: NaiveDate, bars: &[PriceBar]) -> Fe
         symbol: symbol.to_string(),
         as_of,
         n_bars: asof_bars.len(),
-        close: closes.last().copied(),
+        close: raw_closes.last().copied(),
         momentum_1m: indicators::momentum(&closes, 21),
         momentum_3m: indicators::momentum(&closes, 63),
         momentum_6m: indicators::momentum(&closes, 126),
         rsi_14: indicators::rsi(&closes, 14),
-        atr_14: indicators::atr(&highs, &lows, &closes, 14),
+        atr_14: indicators::atr(&highs, &lows, &raw_closes, 14),
         sma_20: indicators::sma(&closes, 20),
         sma_50: indicators::sma(&closes, 50),
         ema_20: indicators::ema(&closes, 20),

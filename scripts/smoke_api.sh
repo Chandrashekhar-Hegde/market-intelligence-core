@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Usage: BASE_URL=https://host GM_ACCESS_TOKEN=... scripts/smoke_api.sh
+# SMOKE_MARKET_DATA=0 skips the /api/v1 checks (they need Yahoo to be reachable).
 BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
+AUTH=()
+if [ -n "${GM_ACCESS_TOKEN:-}" ]; then
+  AUTH=(-H "Authorization: Bearer $GM_ACCESS_TOKEN")
+  # The gate must actually block requests without the token.
+  code="$(command curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/version")"
+  [ "$code" = "401" ] || { echo "access gate not enforced: /version without token returned $code" >&2; exit 1; }
+fi
+# bash 3.2 (macOS) treats an empty array as unbound under `set -u`, hence the ${AUTH[@]+...} form.
+curl() { command curl ${AUTH[@]+"${AUTH[@]}"} "$@"; }
 
 health="$(curl -fsS "$BASE_URL/health")"
 python3 - "$health" <<'PY'
@@ -187,5 +198,53 @@ assert payload["expected_return"] is not None, payload
 assert payload["downside"] is not None, payload
 assert payload["explanation"]["pipeline"], payload
 PY
+
+if [ "${SMOKE_MARKET_DATA:-1}" = "1" ]; then
+  search="$(curl -fsS "$BASE_URL/api/v1/instruments/search?q=reliance")"
+  python3 - "$search" <<'PY'
+import json
+import sys
+
+hits = json.loads(sys.argv[1])["results"]
+assert any(h["symbol"] == "RELIANCE.NS" for h in hits), hits
+assert all(h["exchange"] in ("NSE", "BSE", "Bombay") for h in hits), hits
+PY
+
+  for symbol in RELIANCE.NS TCS.NS %5ENSEI; do
+    bars="$(curl -fsS "$BASE_URL/api/v1/bars?symbol=$symbol&range=1y")"
+    python3 - "$bars" "$symbol" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+bars = payload["chart"]["bars"]
+assert len(bars) > 200, (sys.argv[2], len(bars))
+assert [b["date"] for b in bars] == sorted(b["date"] for b in bars), "bars out of order"
+assert payload["quality"]["passed"] is True, payload["quality"]
+assert payload["chart"]["source"] == "yahoo-chart-v8", payload["chart"]["source"]
+PY
+  done
+
+  quote="$(curl -fsS "$BASE_URL/api/v1/quote?symbol=RELIANCE.NS")"
+  python3 - "$quote" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+assert payload["quote"]["last_price"] > 0, payload
+assert payload["quote"]["currency"] == "INR", payload
+assert isinstance(payload["quote"]["market_open"], bool), payload
+PY
+
+  code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/api/v1/quote?symbol=NOTAREALTICKER.NS")"
+  [ "$code" = "404" ] || { echo "unknown symbol returned $code, expected 404" >&2; exit 1; }
+
+  # The stream must answer with an event-stream; BTC trades 24/7 so a tick is expected.
+  stream="$(curl -sN --max-time 15 "$BASE_URL/api/v1/stream?symbols=BTC-USD" | head -c 2000 || true)"
+  case "$stream" in
+    *"event: tick"*) ;;
+    *) echo "no tick on /api/v1/stream within 15 s: ${stream:0:200}" >&2; exit 1 ;;
+  esac
+fi
 
 echo "API smoke test passed against $BASE_URL"

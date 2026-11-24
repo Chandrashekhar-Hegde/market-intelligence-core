@@ -30,6 +30,9 @@ Use this checklist before creating a `v0.1.0` tag.
 - [ ] `DATABASE_URL` is configured for persistent environments.
 - [ ] `GM_MIGRATIONS` points at the packaged migrations directory.
 - [ ] `WEB_ASSETS_DIR` points at the packaged web assets directory.
+- [ ] `GM_ACCESS_TOKEN` is set (private beta gate); `/` without it returns `401`.
+- [ ] `PORT` (platform-injected) or `GM_PORT` matches the exposed port.
+- [ ] `GM_CORS_ORIGINS=none` for same-origin deployments (the Dockerfile default).
 - [ ] Production secrets are supplied only through runtime environment or secret
   storage.
 - [ ] Live broker order placement is disabled.

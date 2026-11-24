@@ -1,0 +1,4 @@
+[advisories]
+# chrono is flagged "unmaintained" (advisory only, no vulnerability). It is used across the
+# workspace and by sqlx; the migration is tracked in issue #71. Remove this line when it lands.
+ignore = ["RUSTSEC-2026-0543"]

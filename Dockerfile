@@ -3,7 +3,8 @@ WORKDIR /workspace/apps/web
 COPY apps/web/package.json apps/web/package-lock.json ./
 RUN npm ci
 COPY apps/web ./
-RUN npm run build
+# Empty base URL: the bundle calls the API on its own origin.
+RUN VITE_API_BASE_URL= npm run build
 
 FROM rust:1.96-bookworm AS api-builder
 WORKDIR /workspace
@@ -22,6 +23,7 @@ COPY --from=web-builder /workspace/apps/web/dist /app/web
 COPY migrations /app/migrations
 ENV GM_HOST=0.0.0.0 \
     GM_PORT=8000 \
+    GM_CORS_ORIGINS=none \
     GM_MIGRATIONS=/app/migrations \
     WEB_ASSETS_DIR=/app/web
 USER gm

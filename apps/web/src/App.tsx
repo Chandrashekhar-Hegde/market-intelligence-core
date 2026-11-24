@@ -46,6 +46,7 @@ import {
   type PaymentVerification,
 } from './api'
 import { earningsDecisionRequest, impactSeries } from './fixtures'
+import { Markets } from './Markets'
 
 type StatusTone = 'green' | 'amber' | 'red' | 'blue' | 'neutral'
 
@@ -133,6 +134,7 @@ const integrationRows: IntegrationRow[] = [
 ]
 
 function App() {
+  const [view, setView] = useState<'markets' | 'lab'>('markets')
   const [eventFilters, setEventFilters] = useState({
     region: 'all',
     market: 'all',
@@ -248,6 +250,28 @@ function App() {
           </div>
         </div>
 
+        <div className="view-tabs" role="tablist" aria-label="View">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === 'markets'}
+            onClick={() => setView('markets')}
+          >
+            <LineChart size={18} aria-hidden="true" />
+            Markets
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === 'lab'}
+            onClick={() => setView('lab')}
+          >
+            <Stethoscope size={18} aria-hidden="true" />
+            Event lab (fixtures)
+          </button>
+        </div>
+
+        {view === 'lab' ? (
         <nav className="nav-list" aria-label="Workspace">
           <a href="#command">
             <Activity size={18} aria-hidden="true" />
@@ -270,6 +294,7 @@ function App() {
             Integrations
           </a>
         </nav>
+        ) : null}
 
         <div className={`status-box tone-${apiState.tone}`}>
           <span className="status-dot" aria-hidden="true" />
@@ -280,7 +305,16 @@ function App() {
         </div>
       </aside>
 
+      {view === 'markets' ? (
+        <main className="workspace">
+          <Markets />
+        </main>
+      ) : (
       <main className="workspace">
+        <p className="lab-banner" role="note">
+          <AlertTriangle size={16} aria-hidden="true" /> Event lab runs on fixture data, not live
+          markets. The /decide model is experimental and uncalibrated. Don’t trade on it.
+        </p>
         <header className="topbar">
           <div>
             <p className="eyebrow">MV release console</p>
@@ -364,15 +398,16 @@ function App() {
                       role="row"
                       key={event.event_id}
                     >
-                      <button
-                        className="event-title-button"
-                        type="button"
-                        role="cell"
-                        onClick={() => setSelectedEventId(event.event_id)}
-                      >
-                        <strong>{event.headline}</strong>
-                        <small>{formatDateTime(event.occurred_at)}</small>
-                      </button>
+                      <span role="cell" className="event-title-cell">
+                        <button
+                          className="event-title-button"
+                          type="button"
+                          onClick={() => setSelectedEventId(event.event_id)}
+                        >
+                          <strong>{event.headline}</strong>
+                          <small>{formatDateTime(event.occurred_at)}</small>
+                        </button>
+                      </span>
                       <span role="cell">{event.source ?? '-'}</span>
                       <span role="cell">{formatLabel(event.event_class)}</span>
                       <span role="cell">{event.symbol ?? '-'}</span>
@@ -528,6 +563,7 @@ function App() {
           onRun={() => paymentFlow.mutate()}
         />
       </main>
+      )}
     </div>
   )
 }

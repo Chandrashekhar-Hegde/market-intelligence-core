@@ -10,9 +10,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "oxlint",
+    "lint": "oxlint --deny-warnings",
     "test": "vitest --run",
     "test:e2e": "playwright test",
+    "test:e2e:live": "PW_LIVE=1 playwright test --project=chromium",
     "test:watch": "vitest",
     "check": "npm run lint && npm run test && npm run build",
     "preview": "vite preview"

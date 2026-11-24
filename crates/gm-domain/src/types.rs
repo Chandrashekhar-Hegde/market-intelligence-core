@@ -59,6 +59,14 @@ pub struct PriceBar {
     pub source: String,
 }
 
+impl PriceBar {
+    /// Close adjusted for splits and dividends, so returns across ex-dates are total returns.
+    /// Falls back to `close` when the source supplies no adjustment.
+    pub fn adjusted_close(&self) -> f64 {
+        self.adj_close.unwrap_or(self.close)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Decision {
     pub decision_id: String,
