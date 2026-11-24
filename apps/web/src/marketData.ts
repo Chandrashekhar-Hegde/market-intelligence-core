@@ -3,36 +3,18 @@
 import type { InstrumentMeta, PriceBar, Tick } from './api'
 
 export const QUICK_PICKS = [
+  { symbol: '^GSPC', label: 'S&P 500' },
   { symbol: '^NSEI', label: 'NIFTY 50' },
-  { symbol: '^BSESN', label: 'SENSEX' },
-  { symbol: '^NSEBANK', label: 'BANK NIFTY' },
+  { symbol: 'AAPL', label: 'Apple' },
+  { symbol: 'MSFT', label: 'Microsoft' },
   { symbol: 'RELIANCE.NS', label: 'Reliance' },
-  { symbol: 'TCS.NS', label: 'TCS' },
-  { symbol: 'HDFCBANK.NS', label: 'HDFC Bank' },
-  { symbol: 'INFY.NS', label: 'Infosys' },
+  { symbol: '7203.T', label: 'Toyota' },
+  { symbol: 'SAP.DE', label: 'SAP' },
+  { symbol: 'BTC-USD', label: 'Bitcoin' },
 ] as const
 
 /** A tick older than this is not "live" (exchange time vs this browser's clock). */
 export const LIVE_TICK_MAX_AGE_MS = 120_000
-
-const TRADINGVIEW_INDICES: Record<string, string> = {
-  '^NSEI': 'NSE:NIFTY',
-  '^BSESN': 'BSE:SENSEX',
-  '^NSEBANK': 'NSE:BANKNIFTY',
-  '^CNXIT': 'NSE:CNXIT',
-}
-
-/** Yahoo symbol -> TradingView symbol, or null when we don't know the mapping. */
-export function toTradingViewSymbol(symbol: string): string | null {
-  const s = symbol.trim().toUpperCase()
-  if (s.startsWith('^')) return TRADINGVIEW_INDICES[s] ?? null
-  // TradingView spells M&M and BAJAJ-AUTO as M_M and BAJAJ_AUTO.
-  const code = (yahooCode: string) => yahooCode.replace(/[&-]/g, '_')
-  if (s.endsWith('.NS')) return `NSE:${code(s.slice(0, -3))}`
-  if (s.endsWith('.BO')) return `BSE:${code(s.slice(0, -3))}`
-  // ponytail: other suffixes (.L, .T, ...) need an exchange table; add one with non-Indian markets.
-  return s.includes('.') ? null : s
-}
 
 export type LiveState = {
   kind: 'live' | 'delayed' | 'closed' | 'loading'
@@ -125,4 +107,46 @@ export function formatPrice(value: number | null | undefined, currency: string |
   const digits = value >= 1000 ? 2 : value >= 1 ? 2 : 4
   const formatted = value.toLocaleString('en-IN', { minimumFractionDigits: digits, maximumFractionDigits: digits })
   return currency === 'INR' ? `₹${formatted}` : currency ? `${formatted} ${currency}` : formatted
+}
+
+/**
+ * Calendar dates for the next `days` sessions after `lastDate`. Exchanges skip weekends;
+ * series that trade every day (crypto, ~365 periods a year) don't. Holidays are ignored:
+ * the fan is a distribution over sessions, and the dates only place it on the chart.
+ */
+export function futureSessions(lastDate: string, days: number, periodsPerYear: number): string[] {
+  const everyDay = periodsPerYear > 300
+  const out: string[] = []
+  const d = new Date(`${lastDate}T00:00:00Z`)
+  while (out.length < days) {
+    d.setUTCDate(d.getUTCDate() + 1)
+    const weekday = d.getUTCDay()
+    if (everyDay || (weekday !== 0 && weekday !== 6)) out.push(d.toISOString().slice(0, 10))
+  }
+  return out
+}
+
+export type FanLines = { time: string; value: number }[][]
+
+/** Five quantile lines (5/25/50/75/95%), each starting at the last close so they join the history. */
+export function fanLines(
+  fan: { day: number; price: number[] }[],
+  lastDate: string,
+  lastPrice: number,
+  periodsPerYear: number,
+): FanLines {
+  const dates = futureSessions(lastDate, fan.length, periodsPerYear)
+  return [0, 1, 2, 3, 4].map((q) => [
+    { time: lastDate, value: lastPrice },
+    ...fan.map((point, i) => ({ time: dates[i] ?? lastDate, value: point.price[q] ?? lastPrice })),
+  ])
+}
+
+export function formatPct(value: number | null | undefined, digits = 1): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—'
+  return `${(value * 100).toFixed(digits)}%`
+}
+
+export function formatP(p: number): string {
+  return p < 0.001 ? '< 0.001' : p.toFixed(3)
 }

@@ -1443,6 +1443,24 @@ async fn openapi() -> Json<serde_json::Value> {
                     }
                 }
             },
+            "/api/v1/analyze": {
+                "get": {
+                    "summary": "Full single-instrument analysis for any symbol on any exchange",
+                    "parameters": [
+                        { "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" } },
+                        { "name": "range", "in": "query", "required": false, "schema": { "type": "string", "default": "5y" } },
+                        { "name": "benchmark", "in": "query", "required": false, "description": "auto (home-market index, S&P 500 for US, MSCI ACWI otherwise), none, or a symbol", "schema": { "type": "string", "default": "auto" } },
+                        { "name": "seed", "in": "query", "required": false, "schema": { "type": "integer", "default": 42 } },
+                        { "name": "paths", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 100, "maximum": 20000, "default": 2000 } }
+                    ],
+                    "responses": {
+                        "200": { "description": "report (distribution, predictability, volatility, projections, risk, benchmark exposure, findings), data provenance and quality, benchmark choice" },
+                        "400": { "description": "Invalid input or too little history" },
+                        "404": { "description": "Unknown symbol or requested benchmark" },
+                        "503": { "description": "Upstream data provider unavailable" }
+                    }
+                }
+            },
             "/rules": {
                 "get": {
                     "summary": "Built-in scoring rules",
@@ -2339,5 +2357,74 @@ mod tests {
         let _ = rustls::ClientConfig::builder()
             .with_root_certificates(rustls::RootCertStore::empty())
             .with_no_client_auth();
+    }
+
+    // ---- /api/v1/analyze --------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn analyze_reports_on_any_symbol_with_auto_benchmark_and_provenance() {
+        let (status, body) = get_json(
+            market_app(false, None).await,
+            "/api/v1/analyze?symbol=RELIANCE.NS&range=1y",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let report = &body["report"];
+        assert_eq!(report["symbol"], "RELIANCE.NS");
+        assert_eq!(report["n_returns"], 247);
+        assert!(report["distribution"]["vol_annual"].as_f64().unwrap() > 0.0);
+        assert!(report["predictability"]["ljung_box_returns"]["p_value"].is_number());
+        assert!(!report["findings"].as_array().unwrap().is_empty());
+        // 247 returns is below GARCH's 250 minimum: EWMA and GBM only, said plainly.
+        assert!(report["volatility"]["garch"].is_null());
+        assert_eq!(report["projections"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            report["projections"][0]["fan"].as_array().unwrap().len(),
+            63
+        );
+        // Home-market benchmark chosen automatically; the stub serves identical data, so beta = 1.
+        assert_eq!(body["benchmark"]["symbol"], "^NSEI");
+        assert_eq!(body["benchmark"]["selection"], "auto");
+        assert_eq!(body["benchmark"]["used"], true);
+        assert!((report["benchmark"]["beta"].as_f64().unwrap() - 1.0).abs() < 1e-9);
+        assert_eq!(body["data"]["tradingview_symbol"], "NSE:RELIANCE");
+        assert_eq!(body["data"]["quality"]["passed"], true);
+        assert_eq!(body["data"]["source"], "yahoo-chart-v8");
+    }
+
+    #[tokio::test]
+    async fn analyze_is_deterministic_per_seed_and_benchmark_is_optional() {
+        let app = market_app(false, None).await;
+        let uri = "/api/v1/analyze?symbol=RELIANCE.NS&range=1y&benchmark=none&seed=9&paths=500";
+        let (_, a) = get_json(app.clone(), uri).await;
+        let (_, b) = get_json(app.clone(), uri).await;
+        assert_eq!(a["report"]["projections"], b["report"]["projections"]);
+        assert!(a["benchmark"].is_null() && a["report"]["benchmark"].is_null());
+        assert_eq!(a["report"]["projections"][0]["n_paths"], 500);
+        let (_, c) = get_json(app, &uri.replace("seed=9", "seed=10")).await;
+        assert_ne!(a["report"]["projections"], c["report"]["projections"]);
+    }
+
+    #[tokio::test]
+    async fn analyze_rejects_bad_input_and_maps_unknown_symbols() {
+        let app = market_app(false, None).await;
+        for uri in [
+            "/api/v1/analyze?symbol=RELIANCE.NS&paths=5",
+            "/api/v1/analyze?symbol=RELIANCE.NS&paths=50000",
+            "/api/v1/analyze?symbol=RELIANCE.NS&range=1h",
+            "/api/v1/analyze?symbol=..%2Fetc",
+        ] {
+            let (status, body) = get_json(app.clone(), uri).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {body}");
+        }
+        let (status, _) = get_json(app.clone(), "/api/v1/analyze?symbol=NOPE.NS").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        // A benchmark the caller asked for must exist; an automatic one is best-effort.
+        let (status, _) = get_json(
+            app,
+            "/api/v1/analyze?symbol=RELIANCE.NS&range=1y&benchmark=NOPE.NS",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 }

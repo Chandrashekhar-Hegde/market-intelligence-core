@@ -1385,3 +1385,55 @@ ol {
     align-self: flex-start;
   }
 }
+
+/* Real <table>s (analysis, outliers). .event-table is a div grid; these need table layout. */
+.data-table {
+  display: table;
+  width: 100%;
+  margin: 12px 0;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table caption {
+  padding-bottom: 6px;
+  text-align: left;
+}
+
+.data-table th,
+.data-table td {
+  padding: 7px 10px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid #edf0ef;
+}
+
+.data-table thead th {
+  color: #65716e;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom-color: #dfe4e1;
+}
+
+.data-table tbody th {
+  font-weight: 700;
+}
+
+.findings li + li {
+  margin-top: 4px;
+}
+
+@media (max-width: 760px) {
+  /* Wrap, don't scroll: a scrollable table is a keyboard trap unless made focusable. */
+  .data-table {
+    font-size: 0.82rem;
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: 6px 4px;
+    overflow-wrap: anywhere;
+  }
+}

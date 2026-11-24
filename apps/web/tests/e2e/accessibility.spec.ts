@@ -33,7 +33,8 @@ test('Markets view has no serious accessibility violations', async ({ page }) =>
   await mockMarketData(page)
   await page.goto('/')
   await expect(page.getByTestId('quality-badge')).toBeVisible()
-  await page.getByLabel(/search nse \/ bse/i).fill('reliance')
+  await expect(page.getByTestId('findings')).toBeVisible()
+  await page.getByLabel(/search stocks/i).fill('reliance')
   await expect(page.getByRole('button', { name: /RELIANCE\.NS/ })).toBeVisible()
 
   const results = await new AxeBuilder({ page })

@@ -336,6 +336,8 @@ export type InstrumentMeta = {
   last_price: number | null
   last_trade_at: string | null
   market_open: boolean
+  /** TradingView's name for the listing, when known (server-side table). */
+  tradingview_symbol: string | null
 }
 
 export type PriceBar = {
@@ -384,7 +386,12 @@ export type ChartData = {
   fetched_at: string
 }
 
-export type BarsResponse = { chart: ChartData; quality: QualityReport }
+export type BarsResponse = {
+  chart: ChartData
+  quality: QualityReport
+  /** Home-market index whose trading days were the calendar for gap checks, if any. */
+  calendar_reference: string | null
+}
 
 export type QuoteResponse = {
   quote: InstrumentMeta
@@ -442,4 +449,110 @@ export function describeApiError(error: unknown): string {
     return detail ? `Invalid request: ${detail}` : 'Invalid request.'
   }
   return message
+}
+
+// ---- analysis (/api/v1/analyze) ----------------------------------------------------------
+
+export type TestResult = { statistic: number; p_value: number; reject_5pct: boolean }
+
+export type Projection = {
+  model: 'gbm' | 'garch_t'
+  n_paths: number
+  seed: number
+  fan: { day: number; price: [number, number, number, number, number] }[]
+  horizons: {
+    horizon_days: number
+    return_quantiles: [number, number, number, number, number]
+    prob_gain: number
+    prob_loss_over_10pct: number
+    prob_drawdown_over_10pct: number
+  }[]
+}
+
+export type AnalysisReport = {
+  symbol: string
+  first_date: string
+  last_date: string
+  n_returns: number
+  last_price: number
+  periods_per_year: number
+  distribution: {
+    mean_annual: number
+    mean_annual_se: number
+    vol_annual: number
+    skewness: number
+    excess_kurtosis: number
+    jarque_bera: TestResult
+    hill_tail_index: number | null
+    worst_day: number
+    best_day: number
+  }
+  predictability: {
+    lags: number
+    ljung_box_returns: TestResult
+    ljung_box_squared: TestResult
+    variance_ratios: { q: number; ratio: number; test: TestResult }[]
+    adf: { statistic: number; critical_values: [number, number, number]; reject_unit_root_5pct: boolean }
+  }
+  volatility: {
+    ewma_annual: number
+    garch: null | {
+      alpha: number
+      beta: number
+      nu: number
+      persistence: number
+      half_life_days: number
+      long_run_vol_annual: number
+      current_vol_annual: number
+      term_structure: { horizon_days: number; vol_annual: number }[]
+    }
+  }
+  projections: Projection[]
+  risk: {
+    var_es: { method: 'historical' | 'student_t' | 'garch_t'; confidence: number; var: number; es: number }[]
+    max_drawdown: { max: number; peak_date: string; trough_date: string; recovery_date: string | null; duration_days: number; current: number }
+    sharpe: number
+    sharpe_se: number
+    sortino: number
+  }
+  benchmark: null | {
+    symbol: string
+    n_common_days: number
+    beta: number
+    beta_se: number
+    alpha_annual: number
+    alpha_annual_se: number
+    r_squared: number
+    correlation: number
+    idiosyncratic_vol_annual: number
+  }
+  findings: string[]
+}
+
+export type AnalyzeResponse = {
+  report: AnalysisReport
+  data: {
+    symbol: string
+    name: string | null
+    currency: string | null
+    exchange: string | null
+    instrument_type: string | null
+    tradingview_symbol: string | null
+    range: string
+    source: string
+    fetched_at: string
+    quality: QualityReport
+  }
+  benchmark: null | {
+    symbol: string
+    name: string | null
+    selection: 'auto' | 'requested'
+    used: boolean
+    currency: string | null
+    note: string | null
+  }
+}
+
+export function fetchAnalysis(symbol: string, range = '5y'): Promise<AnalyzeResponse> {
+  return request<AnalyzeResponse>(`/api/v1/analyze?symbol=${encodeURIComponent(symbol)}&range=${range}`)
 }
