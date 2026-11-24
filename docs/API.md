@@ -25,11 +25,12 @@ the API connects to PostgreSQL at startup, applies migrations by default, and
 
 ## Market Data Endpoints
 
-Live NSE/BSE data from Yahoo Finance (free end-of-day data and quotes delayed by about 15 minutes; unofficial
+Live data for any exchange from Yahoo Finance (free end-of-day data and quotes delayed by about 15 minutes; unofficial
 endpoints). Responses are cached in-process for 60 s (`5d`/`1mo`) or 15 min.
 
 - `GET /api/v1/instruments/search?q=` returns `{results: [{symbol, name, exchange,
-  quote_type}]}`, limited to NSE/BSE listings. `q` is 1-64 characters.
+  quote_type}]}` from every exchange. It covers equities, ETFs, indices, funds, crypto, FX and
+  futures; options are excluded. `q` is 1-64 characters.
 - `GET /api/v1/bars?symbol=&range=` returns `{chart, quality}`. `range` is one of
   `5d 1mo 3mo 6mo 1y 2y 5y 10y max` (default `1y`). `chart.bars` are completed
   daily bars, oldest first: `close` is split-adjusted and `adj_close` is split- and
@@ -49,6 +50,26 @@ endpoints). Responses are cached in-process for 60 s (`5d`/`1mo`) or 15 min.
 
 Symbols use Yahoo suffixes: `RELIANCE.NS`, `RELIANCE.BO`, `^NSEI`, `^BSESN`.
 Invalid input returns `400`, an unknown symbol `404`, and an upstream failure `503`.
+
+## Analysis Endpoint
+
+`GET /api/v1/analyze?symbol=&range=5y&benchmark=auto&seed=42&paths=2000` analyses any symbol:
+
+- `report` holds `distribution`, `predictability`, `volatility` (EWMA and GARCH-t),
+  `projections` (Monte Carlo fans for `gbm` and `garch_t`), `risk` (VaR/ES, drawdown,
+  Sharpe), `benchmark` (beta/alpha) and `findings` (plain-language conclusions).
+- `data` carries provenance: source, fetch time, currency, exchange, TradingView symbol and the
+  data-quality report.
+- `benchmark` records which index was used (`selection`: `auto` or `requested`), whether it
+  loaded, and a currency note when currencies differ.
+- **`benchmark=auto`** picks the home-market index from the listing suffix: the S&P 500 for US
+  listings, MSCI ACWI for unknown exchanges, and none for indices, FX, futures and crypto.
+  `none` skips the exposure section; any other value is used as a symbol.
+- **Errors.** `paths` outside 100–20,000, a bad `range`/`symbol`, or too little history (under
+  60 returns) gives `400`. An unknown symbol or an unknown requested benchmark gives `404`.
+- **Determinism.** The same inputs and `seed` give byte-identical projections.
+
+Formulas, sources and verification: [METHODOLOGY.md](METHODOLOGY.md).
 
 ## Access Gate
 

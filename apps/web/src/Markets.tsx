@@ -26,13 +26,13 @@ import {
   liveState,
   mergeTick,
   toCandles,
-  toTradingViewSymbol,
 } from './marketData'
+import { AnalysisPanels } from './Analysis'
 
 const isDomTest = typeof navigator !== 'undefined' && navigator.userAgent.includes('jsdom')
 
 export function Markets() {
-  const [symbol, setSymbol] = useState<string>('^NSEI')
+  const [symbol, setSymbol] = useState<string>('^GSPC')
   const [range, setRange] = useState<BarRange>('1y')
   const now = useNow(5_000)
 
@@ -59,8 +59,8 @@ export function Markets() {
     <>
       <header className="topbar">
         <div>
-          <p className="eyebrow">Markets · NSE / BSE</p>
-          <h2>Live prices, history and data quality</h2>
+          <p className="eyebrow">Markets · any exchange</p>
+          <h2>Live prices, history and analysis</h2>
         </div>
       </header>
 
@@ -165,16 +165,18 @@ export function Markets() {
 
       {bars.data ? (
         <>
-          <QualityPanel report={bars.data.quality} />
+          <QualityPanel report={bars.data.quality} calendar={bars.data.calendar_reference} />
           <CorporateActionsPanel bars={bars.data} />
         </>
       ) : null}
+
+      <AnalysisPanels symbol={symbol} history={bars.data?.chart.bars} />
 
       <section className="panel chart-panel" aria-labelledby="tv-heading">
         <h3 id="tv-heading" className="visually-hidden">
           TradingView chart
         </h3>
-        <TradingViewWidget symbol={symbol} />
+        <TradingViewWidget tvSymbol={meta?.tradingview_symbol ?? null} />
       </section>
     </>
   )
@@ -214,13 +216,13 @@ function InstrumentSearch({ onPick }: { onPick: (symbol: string) => void }) {
   return (
     <div className="instrument-search">
       <label htmlFor="instrument-search">
-        <Search size={16} aria-hidden="true" /> Search NSE / BSE stocks and indices
+        <Search size={16} aria-hidden="true" /> Search stocks, ETFs, indices, crypto and FX
       </label>
       <input
         id="instrument-search"
         type="search"
         autoComplete="off"
-        placeholder="e.g. infosys, tata motors, nifty bank"
+        placeholder="e.g. apple, toyota, infosys, bitcoin"
         value={text}
         onChange={(event) => setText(event.target.value)}
       />
@@ -230,7 +232,7 @@ function InstrumentSearch({ onPick }: { onPick: (symbol: string) => void }) {
             {describeApiError(hits.error)}
           </p>
         ) : hits.data && hits.data.length === 0 ? (
-          <p className="quiet-copy">No NSE/BSE matches for “{query}”.</p>
+          <p className="quiet-copy">No matches for “{query}”.</p>
         ) : (
           <ul className="search-results" aria-label="Search results">
             {(hits.data ?? []).map((hit) => (
@@ -313,7 +315,7 @@ function CandleChart({ bars, tick, label }: { bars: BarsResponse; tick: Tick | n
   )
 }
 
-function QualityPanel({ report }: { report: QualityReport }) {
+function QualityPanel({ report, calendar }: { report: QualityReport; calendar: string | null }) {
   return (
     <section className="panel" aria-labelledby="quality-heading">
       <div className="section-heading">
@@ -335,7 +337,11 @@ function QualityPanel({ report }: { report: QualityReport }) {
           {report.n_bars} sessions{report.first_date ? `, ${report.first_date} → ${report.last_date}` : ''}
         </li>
         <li>{report.is_stale ? 'Stale: the market traded after the last bar' : 'Up to date with the exchange calendar'}</li>
-        <li>{report.missing_days.length} missing trading days (vs NIFTY calendar)</li>
+        <li>
+          {calendar
+            ? `${report.missing_days.length} missing trading days (vs the ${calendar} calendar)`
+            : 'No home-market index calendar; gaps not checked'}
+        </li>
         <li>
           {report.ohlc_violations.length + report.non_positive_prices.length} impossible prices
         </li>
@@ -346,7 +352,7 @@ function QualityPanel({ report }: { report: QualityReport }) {
         ))}
       </ul>
       {report.outliers.length > 0 ? (
-        <table className="event-table">
+        <table className="event-table data-table">
           <caption className="quiet-copy">Extreme daily returns (robust z above 8): check for news or bad prints</caption>
           <thead>
             <tr>
@@ -399,10 +405,9 @@ function CorporateActionsPanel({ bars }: { bars: BarsResponse }) {
 
 const TRADINGVIEW_SCRIPT = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js'
 
-function TradingViewWidget({ symbol }: { symbol: string }) {
+function TradingViewWidget({ tvSymbol }: { tvSymbol: string | null }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
-  const tvSymbol = toTradingViewSymbol(symbol)
 
   useEffect(() => {
     const container = containerRef.current

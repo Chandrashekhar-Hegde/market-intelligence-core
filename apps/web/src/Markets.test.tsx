@@ -3,14 +3,13 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
-import type { BarsResponse, InstrumentMeta, QuoteResponse, Tick } from './api'
+import type { AnalyzeResponse, BarsResponse, InstrumentMeta, QuoteResponse, Tick } from './api'
 import { Markets } from './Markets'
 import {
   displayPrice,
   liveState,
   mergeTick,
   toCandles,
-  toTradingViewSymbol,
 } from './marketData'
 
 // ---- fixtures ---------------------------------------------------------------------------
@@ -19,7 +18,7 @@ const NOW = Date.parse('2026-11-25T06:00:00Z') // 11:30 IST, a Wednesday session
 
 function meta(overrides: Partial<InstrumentMeta> = {}): InstrumentMeta {
   return {
-    symbol: '^NSEI',
+    symbol: '^GSPC',
     name: 'NIFTY 50',
     currency: 'INR',
     exchange: 'NSE',
@@ -28,13 +27,14 @@ function meta(overrides: Partial<InstrumentMeta> = {}): InstrumentMeta {
     last_price: 25349.65,
     last_trade_at: '2026-11-23T09:59:00Z',
     market_open: false,
+    tradingview_symbol: 'SP:SPX',
     ...overrides,
   }
 }
 
 function tick(overrides: Partial<Tick> = {}): Tick {
   return {
-    symbol: '^NSEI',
+    symbol: '^GSPC',
     price: 25410.5,
     change: 60.85,
     change_pct: 0.24,
@@ -50,7 +50,7 @@ function tick(overrides: Partial<Tick> = {}): Tick {
 }
 
 function bar(date: string, close: number) {
-  return { symbol: '^NSEI', date, open: close - 10, high: close + 20, low: close - 30, close, adj_close: close, volume: 0, source: 'yahoo-chart-v8' }
+  return { symbol: '^GSPC', date, open: close - 10, high: close + 20, low: close - 30, close, adj_close: close, volume: 0, source: 'yahoo-chart-v8' }
 }
 
 function barsResponse(overrides: Partial<BarsResponse['quality']> = {}): BarsResponse {
@@ -63,6 +63,7 @@ function barsResponse(overrides: Partial<BarsResponse['quality']> = {}): BarsRes
       source: 'yahoo-chart-v8',
       fetched_at: '2026-11-24T09:00:00Z',
     },
+    calendar_reference: '^GSPC',
     quality: {
       passed: true,
       n_bars: 3,
@@ -87,6 +88,75 @@ const quoteResponse = (overrides: Partial<InstrumentMeta> = {}): QuoteResponse =
   delayed: true,
 })
 
+function analysis(overrides: Partial<AnalyzeResponse['report']> = {}): AnalyzeResponse {
+  const result = (statistic: number, p: number) => ({ statistic, p_value: p, reject_5pct: p < 0.05 })
+  const fan = Array.from({ length: 63 }, (_, i) => ({
+    day: i + 1,
+    price: [0.9, 0.95, 1, 1.05, 1.1].map((f) => 25349.65 * (1 + (f - 1) * Math.sqrt((i + 1) / 63))) as [number, number, number, number, number],
+  }))
+  const horizons = [5, 21, 63].map((h) => ({
+    horizon_days: h,
+    return_quantiles: [-0.08, -0.02, 0.004, 0.03, 0.09] as [number, number, number, number, number],
+    prob_gain: 0.54,
+    prob_loss_over_10pct: 0.03,
+    prob_drawdown_over_10pct: 0.07,
+  }))
+  return {
+    report: {
+      symbol: '^GSPC',
+      first_date: '2021-11-24',
+      last_date: '2026-11-23',
+      n_returns: 1253,
+      last_price: 25349.65,
+      periods_per_year: 251,
+      distribution: {
+        mean_annual: 0.11, mean_annual_se: 0.078, vol_annual: 0.174, skewness: -0.3, excess_kurtosis: 6.1,
+        jarque_bera: result(1950, 0), hill_tail_index: 3.4, worst_day: -0.061, best_day: 0.09,
+      },
+      predictability: {
+        lags: 10,
+        ljung_box_returns: result(14.2, 0.164),
+        ljung_box_squared: result(812, 0),
+        variance_ratios: [{ q: 2, ratio: 0.97, test: result(-0.6, 0.55) }],
+        adf: { statistic: -1.1, critical_values: [-3.44, -2.86, -2.57], reject_unit_root_5pct: false },
+      },
+      volatility: {
+        ewma_annual: 0.19,
+        garch: {
+          alpha: 0.1, beta: 0.88, nu: 7.2, persistence: 0.982, half_life_days: 38, long_run_vol_annual: 0.17,
+          current_vol_annual: 0.21,
+          term_structure: [1, 5, 21, 63].map((h) => ({ horizon_days: h, vol_annual: 0.2 })),
+        },
+      },
+      projections: [
+        { model: 'gbm', n_paths: 2000, seed: 42, fan, horizons },
+        { model: 'garch_t', n_paths: 2000, seed: 42, fan, horizons: horizons.map((h) => ({ ...h, prob_gain: 0.51 })) },
+      ],
+      risk: {
+        var_es: [
+          { method: 'historical', confidence: 0.95, var: 0.0171, es: 0.0254 },
+          { method: 'historical', confidence: 0.99, var: 0.0298, es: 0.0391 },
+          { method: 'garch_t', confidence: 0.99, var: 0.0335, es: 0.0442 },
+        ],
+        max_drawdown: { max: 0.254, peak_date: '2022-01-03', trough_date: '2022-10-12', recovery_date: '2024-01-19', duration_days: 746, current: 0.01 },
+        sharpe: 0.63, sharpe_se: 0.45, sortino: 0.88,
+      },
+      benchmark: null,
+      findings: [
+        'Annualised volatility 17.4% over 1253 trading days.',
+        'No evidence of predictability in returns: Ljung–Box p = 0.164 and no variance ratio is significant.',
+      ],
+      ...overrides,
+    },
+    data: {
+      symbol: '^GSPC', name: 'S&P 500', currency: 'USD', exchange: 'SNP', instrument_type: 'INDEX',
+      tradingview_symbol: 'SP:SPX', range: '5y', source: 'yahoo-chart-v8', fetched_at: '2026-11-24T09:00:00Z',
+      quality: barsResponse().quality,
+    },
+    benchmark: null,
+  }
+}
+
 // ---- harness -----------------------------------------------------------------------------
 
 class FakeEventSource {
@@ -109,11 +179,16 @@ class FakeEventSource {
   }
 }
 
-type Routes = Record<string, () => Response>
+type Routes = Record<string, (url: URL) => Response>
 
 function mockApi(routes: Routes = {}) {
   const defaults: Routes = {
-    '/api/v1/quote': () => Response.json(quoteResponse()),
+    '/api/v1/quote': (url) => {
+      const symbol = url.searchParams.get('symbol') ?? '^GSPC'
+      const tv = symbol === 'INFY.NS' ? 'NSE:INFY' : 'SP:SPX'
+      return Response.json(quoteResponse({ symbol, tradingview_symbol: tv }))
+    },
+    '/api/v1/analyze': () => Response.json(analysis()),
     '/api/v1/bars': () => Response.json(barsResponse()),
     '/api/v1/instruments/search': () =>
       Response.json({
@@ -126,7 +201,7 @@ function mockApi(routes: Routes = {}) {
   const all = { ...defaults, ...routes }
   const fetchMock = vi.fn<typeof fetch>(async (input) => {
     const url = new URL(input.toString())
-    return all[url.pathname]?.() ?? new Response('not found', { status: 404 })
+    return all[url.pathname]?.(url) ?? new Response('not found', { status: 404 })
   })
   vi.stubGlobal('fetch', fetchMock)
   vi.stubGlobal('EventSource', FakeEventSource)
@@ -149,23 +224,6 @@ afterEach(() => {
 })
 
 // ---- pure helpers ------------------------------------------------------------------------
-
-describe('toTradingViewSymbol', () => {
-  test.each([
-    ['RELIANCE.NS', 'NSE:RELIANCE'],
-    ['reliance.bo', 'BSE:RELIANCE'],
-    ['M&M.NS', 'NSE:M_M'],
-    ['BAJAJ-AUTO.NS', 'NSE:BAJAJ_AUTO'],
-    ['^NSEI', 'NSE:NIFTY'],
-    ['^BSESN', 'BSE:SENSEX'],
-    ['^NSEBANK', 'NSE:BANKNIFTY'],
-    ['AAPL', 'AAPL'],
-    ['^UNKNOWN', null],
-    ['VOD.L', null],
-  ])('%s -> %s', (yahoo, tradingView) => {
-    expect(toTradingViewSymbol(yahoo)).toBe(tradingView)
-  })
-})
 
 describe('liveState', () => {
   test('a fresh tick is LIVE with its lag', () => {
@@ -236,12 +294,12 @@ describe('Markets view', () => {
     expect(screen.getByTestId('quality-badge')).toHaveTextContent('Usable')
     expect(screen.getByText(/3 zero-volume days/)).toBeInTheDocument()
     expect(screen.getByText(/Dividend ₹6.00/)).toBeInTheDocument()
-    expect(screen.getByText(/TradingView live chart \(NSE:NIFTY\)/)).toBeInTheDocument()
+    expect(screen.getByText(/TradingView live chart \(SP:SPX\)/)).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining('/api/v1/bars?symbol=%5ENSEI&range=1y'),
+      expect.stringContaining('/api/v1/bars?symbol=%5EGSPC&range=1y'),
       expect.anything(),
     )
-    expect(FakeEventSource.instances[0]?.url).toContain('/api/v1/stream?symbols=%5ENSEI')
+    expect(FakeEventSource.instances[0]?.url).toContain('/api/v1/stream?symbols=%5EGSPC')
   })
 
   test('a live tick turns the pill LIVE and updates price and today’s candle', async () => {
@@ -271,7 +329,7 @@ describe('Markets view', () => {
     renderMarkets()
     await waitFor(() => expect(screen.getByTestId('quote-price')).toHaveTextContent('₹'))
 
-    await userEvent.type(screen.getByLabelText(/search nse \/ bse/i), 'infy')
+    await userEvent.type(screen.getByLabelText(/search stocks/i), 'infy')
     const results = await screen.findByRole('list', { name: 'Search results' })
     await userEvent.click(await within(results).findByRole('button', { name: /INFY\.NS/ }))
 
@@ -346,7 +404,82 @@ describe('Markets view', () => {
   test('empty search results say so', async () => {
     mockApi({ '/api/v1/instruments/search': () => Response.json({ results: [] }) })
     renderMarkets()
-    await userEvent.type(screen.getByLabelText(/search nse \/ bse/i), 'zzzz')
-    expect(await screen.findByText(/No NSE\/BSE matches for “zzzz”/)).toBeInTheDocument()
+    await userEvent.type(screen.getByLabelText(/search stocks/i), 'zzzz')
+    expect(await screen.findByText(/No matches for “zzzz”/)).toBeInTheDocument()
+  })
+})
+
+describe('analysis panels', () => {
+  test('show findings, forecast fan, risk, volatility and tests for the default index', async () => {
+    const fetchMock = mockApi()
+    renderMarkets()
+
+    const findings = await screen.findByTestId('findings')
+    expect(findings).toHaveTextContent('No evidence of predictability')
+    expect(screen.getByTestId('fan-days')).toHaveTextContent('63')
+    // GARCH-t is preferred when it was fitted; GBM is one click away.
+    expect(screen.getByRole('button', { name: 'GARCH-t' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('row', { name: /^21 sessions/ })).toHaveTextContent('51%')
+    await userEvent.click(screen.getByRole('button', { name: 'GBM' }))
+    expect(screen.getByRole('row', { name: /^21 sessions/ })).toHaveTextContent('54%')
+    expect(screen.getByRole('row', { name: /^21 sessions/ })).toHaveTextContent('-8.0% to 9.0%')
+
+    const varTable = screen.getByTestId('var-table')
+    expect(within(varTable).getByRole('row', { name: /GARCH-t/ })).toHaveTextContent('3.35%')
+    expect(screen.getByText(/Worst drawdown 25.4%/)).toHaveTextContent('recovered 2024-01-19')
+    expect(screen.getByText(/shocks halve in 38 sessions/)).toBeInTheDocument()
+    expect(within(screen.getByTestId('tests-table')).getByRole('row', { name: /Volatility clustering/ })).toHaveTextContent('Clusters')
+    // An index is the market itself: no benchmark needed, and the UI says why.
+    expect(screen.getByText(/Indices, currencies, futures and crypto are the market themselves/)).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/analyze?symbol=%5EGSPC&range=5y'), expect.anything())
+  })
+
+  test('shows benchmark exposure and the currency note for a foreign listing', async () => {
+    mockApi({
+      '/api/v1/analyze': () => {
+        const base = analysis({
+          symbol: 'NOKIA.HE',
+          benchmark: {
+            symbol: 'ACWI', n_common_days: 1240, beta: 0.68, beta_se: 0.04, alpha_annual: -0.05, alpha_annual_se: 0.09,
+            r_squared: 0.21, correlation: 0.46, idiosyncratic_vol_annual: 0.33,
+          },
+        })
+        return Response.json({
+          ...base,
+          benchmark: {
+            symbol: 'ACWI', name: 'MSCI ACWI (global)', selection: 'auto', used: true, currency: 'USD',
+            note: 'NOKIA.HE trades in EUR and the benchmark in USD; beta and alpha include currency moves.',
+          },
+        })
+      },
+    })
+    renderMarkets()
+    const exposure = await screen.findByTestId('benchmark')
+    expect(exposure).toHaveTextContent('Beta 0.68 ± 0.04')
+    expect(exposure).toHaveTextContent('chosen automatically')
+    expect(screen.getByRole('heading', { name: 'Against MSCI ACWI (global) (ACWI)' })).toBeInTheDocument()
+    expect(screen.getByText(/beta and alpha include currency moves/)).toBeInTheDocument()
+  })
+
+  test('short history: no GARCH, GBM only, and the reason is stated', async () => {
+    mockApi({
+      '/api/v1/analyze': () => {
+        const base = analysis()
+        base.report.volatility.garch = null
+        base.report.projections = base.report.projections.filter((p) => p.model === 'gbm')
+        return Response.json(base)
+      },
+    })
+    renderMarkets()
+    expect(await screen.findByText(/GARCH needs at least 250 daily returns/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'GBM' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('button', { name: 'GARCH-t' })).not.toBeInTheDocument()
+  })
+
+  test('analysis errors are readable and leave the rest of the page working', async () => {
+    mockApi({ '/api/v1/analyze': () => Response.json({ error: 'need at least 60 daily returns, got 12' }, { status: 400 }) })
+    renderMarkets()
+    expect(await screen.findByText(/Invalid request: need at least 60 daily returns, got 12/)).toBeInTheDocument()
+    expect(await screen.findByTestId('quality-badge')).toBeInTheDocument()
   })
 })

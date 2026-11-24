@@ -207,7 +207,6 @@ import sys
 
 hits = json.loads(sys.argv[1])["results"]
 assert any(h["symbol"] == "RELIANCE.NS" for h in hits), hits
-assert all(h["exchange"] in ("NSE", "BSE", "Bombay") for h in hits), hits
 PY
 
   for symbol in RELIANCE.NS TCS.NS %5ENSEI; do
@@ -235,6 +234,29 @@ assert payload["quote"]["last_price"] > 0, payload
 assert payload["quote"]["currency"] == "INR", payload
 assert isinstance(payload["quote"]["market_open"], bool), payload
 PY
+
+  # The engine on three markets: US stock (auto S&P 500), Japanese stock (auto Nikkei), crypto (none).
+  for spec in "AAPL:^GSPC" "7203.T:^N225" "BTC-USD:"; do
+    symbol="${spec%%:*}"; bench="${spec#*:}"
+    analysis="$(curl -fsS "$BASE_URL/api/v1/analyze?symbol=$symbol&paths=500")"
+    python3 - "$analysis" "$symbol" "$bench" <<'PY'
+import json
+import sys
+
+payload, symbol, bench = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3]
+report = payload["report"]
+assert report["symbol"] == symbol, report["symbol"]
+assert report["n_returns"] > 1000, report["n_returns"]
+assert report["volatility"]["garch"] is not None, "GARCH not fitted"
+assert len(report["projections"]) == 2 and len(report["projections"][1]["fan"]) == 63
+assert report["findings"], "no findings"
+if bench:
+    assert payload["benchmark"]["symbol"] == bench and payload["benchmark"]["used"], payload["benchmark"]
+    assert 0.0 < report["benchmark"]["beta"] < 3.0, report["benchmark"]
+else:
+    assert payload["benchmark"] is None, payload["benchmark"]
+PY
+  done
 
   code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/api/v1/quote?symbol=NOTAREALTICKER.NS")"
   [ "$code" = "404" ] || { echo "unknown symbol returned $code, expected 404" >&2; exit 1; }

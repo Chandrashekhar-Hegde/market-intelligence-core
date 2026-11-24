@@ -415,7 +415,7 @@ test('opens on the live Markets view and labels the Event lab as fixture data', 
   renderApp()
 
   expect(screen.getByRole('tab', { name: /markets/i })).toHaveAttribute('aria-selected', 'true')
-  expect(screen.getByRole('heading', { name: /live prices, history and data quality/i })).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: /live prices, history and analysis/i })).toBeInTheDocument()
   expect(screen.queryByRole('heading', { name: 'Normalized review queue' })).not.toBeInTheDocument()
 
   await userEvent.click(screen.getByRole('tab', { name: /event lab/i }))

@@ -9,6 +9,7 @@ use sha2::Sha256;
 use thiserror::Error;
 use uuid::Uuid;
 
+pub mod markets;
 pub mod yahoo;
 pub mod yahoo_stream;
 

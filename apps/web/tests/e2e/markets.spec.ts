@@ -9,7 +9,7 @@ test('search, pick an instrument, and see quote, candles, quality and TradingVie
   await expect(page.getByRole('tab', { name: /markets/i })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByTestId('candle-chart').locator('canvas').first()).toBeVisible()
 
-  await page.getByLabel(/search nse \/ bse/i).fill('reliance')
+  await page.getByLabel(/search stocks/i).fill('reliance')
   await page.getByRole('button', { name: /RELIANCE\.NS/ }).click()
 
   await expect(page.getByRole('heading', { name: 'Reliance Industries Limited' })).toBeVisible()
@@ -18,6 +18,16 @@ test('search, pick an instrument, and see quote, candles, quality and TradingVie
   await expect(page.getByTestId('quality-badge')).toHaveText(/Usable/)
   await expect(page.getByText(/60 sessions/).first()).toBeVisible()
   await expect(page.getByText(/Dividend ₹5\.50/)).toBeVisible()
+
+  // Analysis of the picked listing: findings, forecast fan, risk, auto benchmark.
+  await expect(page.getByTestId('findings')).toContainText('No evidence of predictability')
+  await expect(page.getByTestId('fan-chart').locator('canvas').first()).toBeVisible()
+  await expect(page.getByTestId('var-table')).toContainText('2.90%')
+  await expect(page.getByRole('heading', { name: 'Against NIFTY 50 (^NSEI)' })).toBeVisible()
+  await expect(page.getByTestId('benchmark')).toContainText('Beta 1.08')
+  // Nothing on the page (tables, charts) may push it wider than the viewport, phone included.
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
+  expect(overflow).toBeLessThanOrEqual(0)
 
   await page.getByRole('button', { name: '5y' }).click()
   await expect(page.getByRole('button', { name: '5y' })).toHaveAttribute('aria-pressed', 'true')

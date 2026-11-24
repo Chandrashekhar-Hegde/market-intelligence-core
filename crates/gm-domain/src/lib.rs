@@ -1,3 +1,4 @@
+pub mod analysis;
 pub mod context;
 pub mod event_study;
 pub mod features;

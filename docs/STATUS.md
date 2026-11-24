@@ -1,6 +1,6 @@
 # Status
 
-Last updated: 2026-11-24. This page is the honest answer to "what actually works?".
+Last updated: 2026-11-24 (analysis engine and global markets). This page is the honest answer to "what actually works?".
 Planned work is tracked on the
 [project board](https://github.com/users/Chandrashekhar-Hegde/projects/3) and in the
 [milestones](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/milestones).
@@ -9,11 +9,12 @@ Planned work is tracked on the
 
 | Area | What you get | Verified by |
 |---|---|---|
-| Market data | NSE/BSE stocks and indices from Yahoo: split- and dividend-adjusted daily bars (up to `max` history), splits/dividends, delayed last price, search limited to NSE/BSE | Rust tests on recorded responses; API tests on in-process stubs; `scripts/smoke_api.sh`; live check |
+| Market data | **Any exchange** via Yahoo: stocks, ETFs, indices, funds, crypto, FX, futures. Split- and dividend-adjusted daily bars (up to `max`), splits/dividends, delayed last price | Rust tests on recorded responses; API tests on in-process stubs; `scripts/smoke_api.sh`; live check |
 | Live prices | `GET /api/v1/stream` pushes ticks from Yahoo's streamer over Server-Sent Events. One shared upstream connection, reconnects, last tick replayed to new viewers | Stub WebSocket test with a forced reconnect; live test (BTC-USD tick, 2 s lag) |
 | Market state | `market_open` from Yahoo's own trading period, so weekends **and exchange holidays** show CLOSED without a holiday calendar | Unit test; confirmed on the 24 Nov 2026 NSE holiday |
-| Data quality | Every bar series is checked: impossible prices, gaps vs NIFTY's trading days, stale data, extreme returns (robust z > 8) | Unit tests; shown in the UI |
-| Web app | **Markets** home: search, quick picks, live/delayed/closed quote pill with measured lag, candlestick history whose last candle moves with ticks, quality badge, corporate actions, opt-in TradingView live chart | 15 Vitest tests, Playwright on desktop + mobile, axe accessibility check |
+| Data quality | Every bar series is checked: impossible prices, gaps vs the home-market index's trading days (34 exchanges + US), stale data, extreme returns (robust z > 8) | Unit tests; shown in the UI |
+| Analysis engine | `GET /api/v1/analyze` for any symbol: return distribution (fat tails, Jarque–Bera, Hill), predictability (Ljung–Box, variance ratios, ADF), EWMA + GARCH(1,1)-t volatility and term structure, seeded Monte Carlo fans (GBM, GARCH-t), VaR/ES three ways, drawdown, Sharpe ± SE, beta/alpha vs an automatically chosen home-market benchmark, and plain-language findings. See [METHODOLOGY.md](METHODOLOGY.md) | Matches scipy/statsmodels/arch on 5y of AAPL, S&P 500, NIFTY (`scripts/gen_reference.py`); GARCH parameter recovery on simulated data; determinism per seed; API tests on stubs; live checks across 9 markets |
+| Web app | **Markets** home for any exchange: search, global quick picks, live/delayed/closed quote pill with measured lag, candles moved by ticks, quality badge, corporate actions, analysis panels (findings, forecast fan, VaR/ES, volatility, tests, benchmark exposure), opt-in TradingView live chart | Vitest, Playwright on desktop + mobile with mocked data, axe accessibility check, live spec on real data |
 | Hosting | Railway behind a shared access token (bearer or cookie login form); CORS closed; same-origin bundle | Smoke script checks the gate returns 401 |
 | Engineering | Pre-push gate running everything CI runs | `scripts/check.sh` |
 
@@ -34,18 +35,19 @@ uncalibrated constants; don't trade on it. Tracked in Phase 1.
   ticks (#68; needs your Upstox/Angel/Breeze/Dhan account and keys).
 - **TradingView**: no data API exists. We embed its free widget for viewing only; its data
   can't be used in our analysis.
-- **No analysis yet**: distributions, GARCH, Monte Carlo fan charts, risk, validation and
-  multi-ticker comparison are milestones 0.2–0.5.
+- **Forecasts are not yet validated out of sample.** The fans show the range a model implies;
+  whether a model *beats a random walk* on unseen data is milestone 0.3 (walk-forward scoring,
+  VaR backtests). Until then the app says so and treats forecasts as risk ranges.
+- **Single instrument at a time.** Multi-ticker comparison (correlation, cointegration) is 0.4.
 - **No accounts**: one shared beta token. No database on Railway (nothing needs one yet).
-- **Railway still runs the 22 Nov local upload** until this branch merges and the service
-  is connected to `main` (#43).
+- Railway deploys from `main` automatically (#43 done).
 
 ## Planned
 
 | Milestone | Scope |
 |---|---|
-| 0.1 Data foundation | Remaining: deploy from `main` (#43), NSE stream measurement (#44), bhavcopy cross-check (#45) |
-| 0.2 Analysis engine | Distribution stats, predictability tests, EWMA/GARCH-t, Monte Carlo, risk, `/api/v1/analyze` |
+| 0.1 Data foundation | Remaining: NSE stream measurement (#44), bhavcopy cross-check (#45), chrono replacement (#71) |
+| 0.2 Analysis engine | Done in this release |
 | 0.3 Validation harness | Walk-forward scoring vs baselines, Diebold–Mariano, VaR backtests |
 | 0.4 Multi-instrument | Correlation, Ledoit–Wolf, PCA, cointegration |
 | 0.5 Analyze web app | Fan charts, analysis panels, comparison view, methodology page |

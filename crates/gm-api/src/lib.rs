@@ -20,7 +20,7 @@ use gm_domain::{
 use gm_integrations::{
     CheckoutRequest, CheckoutSession, CheckoutVerification, CheckoutVerificationRequest,
     MockPaymentProvider, PaymentProvider, ProviderError, ProviderStatus, WebhookPayload,
-    WebhookVerification,
+    WebhookVerification, markets,
     yahoo::{ChartData, YahooClient, validate_symbol},
     yahoo_stream::{MAX_SYMBOLS, YahooStream},
 };
@@ -36,8 +36,6 @@ use uuid::Uuid;
 const SERVICE_NAME: &str = "gm-api";
 const RAZORPAY_SIGNATURE_HEADER: &str = "x-razorpay-signature";
 const ACCESS_COOKIE: &str = "gm_access";
-/// Benchmark whose trading days stand in for the NSE/BSE calendar in data-quality checks.
-const CALENDAR_PROXY: &str = "^NSEI";
 
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
@@ -362,6 +360,7 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
         .route("/api/v1/bars", get(bars))
         .route("/api/v1/quote", get(quote))
         .route("/api/v1/stream", get(stream))
+        .route("/api/v1/analyze", get(analyze_instrument))
         .route("/access", post(grant_access));
     let router = match config.web_assets {
         Some(web_assets) => router.fallback_service(ServeDir::new(web_assets)),
@@ -498,20 +497,169 @@ async fn bars(
         .chart(&query.symbol, range)
         .await
         .map_err(ApiError::provider)?;
-    // Indian listings are checked for gaps against NIFTY's trading days. If NIFTY itself can't
-    // be fetched, the report falls back to a calendar-day staleness check rather than failing.
-    let reference = if chart.meta.currency.as_deref() == Some("INR") {
-        state.yahoo.chart(CALENDAR_PROXY, range).await.ok()
-    } else {
-        None
-    };
-    let reference_days = reference
-        .as_deref()
-        .map(|nifty| nifty.bars.iter().map(|b| b.date).collect::<Vec<_>>());
-    let quality = quality_report(&chart, reference_days.as_deref());
-    Ok(Json(
-        serde_json::json!({ "chart": &*chart, "quality": quality }),
+    let calendar = home_calendar(&state, &chart, range).await;
+    let quality = quality_report(&chart, calendar.as_ref().map(|(_, days)| days.as_slice()));
+    Ok(Json(serde_json::json!({
+        "chart": &*chart,
+        "quality": quality,
+        "calendar_reference": calendar.map(|(symbol, _)| symbol),
+    })))
+}
+
+/// Trading days of the instrument's home-market index, as the exchange calendar for gap
+/// checks (any exchange in `markets::MARKETS`, plus US). None when there is no local index or
+/// it can't be fetched; the quality report then falls back to a calendar-day staleness check.
+async fn home_calendar(
+    state: &AppState,
+    chart: &ChartData,
+    range: &str,
+) -> Option<(String, Vec<chrono::NaiveDate>)> {
+    let meta = &chart.meta;
+    let (benchmark, _) = markets::default_benchmark(
+        &meta.symbol,
+        meta.instrument_type.as_deref(),
+        meta.currency.as_deref(),
+    )?;
+    if !markets::is_local_benchmark(&meta.symbol, benchmark) {
+        return None;
+    }
+    let reference = state.yahoo.chart(benchmark, range).await.ok()?;
+    Some((
+        benchmark.to_string(),
+        reference.bars.iter().map(|b| b.date).collect(),
     ))
+}
+
+#[derive(Debug, Deserialize)]
+struct AnalyzeQuery {
+    symbol: String,
+    range: Option<String>,
+    /// "auto" (default): home-market index, S&P 500 for US, MSCI ACWI otherwise;
+    /// "none": skip exposure; or any symbol.
+    benchmark: Option<String>,
+    seed: Option<u64>,
+    paths: Option<usize>,
+}
+
+/// Full single-instrument analysis for any symbol Yahoo knows: distribution, predictability,
+/// volatility (EWMA, GARCH-t), Monte Carlo fan charts, VaR/ES, drawdown, and benchmark
+/// exposure when a benchmark applies.
+async fn analyze_instrument(
+    State(state): State<AppState>,
+    Query(query): Query<AnalyzeQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use gm_domain::analysis::{AnalysisInput, DEFAULT_HORIZONS, DEFAULT_PATHS, MAX_PATHS, analyze};
+    let range = query.range.as_deref().unwrap_or("5y");
+    let paths = query.paths.unwrap_or(DEFAULT_PATHS);
+    if !(100..=MAX_PATHS).contains(&paths) {
+        return Err(ApiError::bad_request(format!(
+            "paths must be 100-{MAX_PATHS}"
+        )));
+    }
+    let seed = query.seed.unwrap_or(42);
+    let chart = state
+        .yahoo
+        .chart(&query.symbol, range)
+        .await
+        .map_err(ApiError::provider)?;
+    let meta = &chart.meta;
+
+    let (benchmark, selection) = match query.benchmark.as_deref().map(str::trim) {
+        Some("none") => (None, "none"),
+        Some(symbol) if !symbol.is_empty() && symbol != "auto" => (
+            Some((validate_symbol(symbol).map_err(ApiError::provider)?, None)),
+            "requested",
+        ),
+        _ => (
+            markets::default_benchmark(
+                &meta.symbol,
+                meta.instrument_type.as_deref(),
+                meta.currency.as_deref(),
+            )
+            .map(|(symbol, name)| (symbol.to_string(), Some(name.to_string()))),
+            "auto",
+        ),
+    };
+    let benchmark = benchmark.filter(|(symbol, _)| *symbol != meta.symbol);
+    let bench_chart = match &benchmark {
+        // A benchmark the caller asked for must work; an automatic one is best-effort.
+        Some((symbol, _)) if selection == "requested" => Some(
+            state
+                .yahoo
+                .chart(symbol, range)
+                .await
+                .map_err(ApiError::provider)?,
+        ),
+        Some((symbol, _)) => state.yahoo.chart(symbol, range).await.ok(),
+        None => None,
+    };
+
+    let calendar = match (&benchmark, &bench_chart) {
+        (Some((symbol, _)), Some(b)) if markets::is_local_benchmark(&meta.symbol, symbol) => {
+            Some(b.bars.iter().map(|bar| bar.date).collect::<Vec<_>>())
+        }
+        _ => None,
+    };
+    let quality = quality_report(&chart, calendar.as_deref());
+
+    let prices = chart
+        .bars
+        .iter()
+        .map(|b| (b.date, b.adjusted_close()))
+        .collect::<Vec<_>>();
+    let bench_prices = bench_chart.as_ref().map(|b| {
+        b.bars
+            .iter()
+            .map(|bar| (bar.date, bar.adjusted_close()))
+            .collect::<Vec<_>>()
+    });
+    let symbol = meta.symbol.clone();
+    let bench_symbol = benchmark.as_ref().map(|(s, _)| s.clone());
+    let report = tokio::task::spawn_blocking(move || {
+        analyze(&AnalysisInput {
+            symbol: &symbol,
+            prices: &prices,
+            benchmark: bench_symbol.as_deref().zip(bench_prices.as_deref()),
+            horizons: &DEFAULT_HORIZONS,
+            n_paths: paths,
+            seed,
+        })
+    })
+    .await
+    .map_err(|e| ApiError::bad_request(format!("analysis task failed: {e}")))?
+    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+
+    let bench_currency = bench_chart.as_ref().and_then(|b| b.meta.currency.clone());
+    let currency_note = match (&meta.currency, &bench_currency) {
+        (Some(a), Some(b)) if a != b => Some(format!(
+            "{} trades in {a} and the benchmark in {b}; beta and alpha include currency moves.",
+            meta.symbol
+        )),
+        _ => None,
+    };
+    Ok(Json(serde_json::json!({
+        "report": report,
+        "data": {
+            "symbol": meta.symbol,
+            "name": meta.name,
+            "currency": meta.currency,
+            "exchange": meta.exchange,
+            "instrument_type": meta.instrument_type,
+            "tradingview_symbol": meta.tradingview_symbol,
+            "range": range,
+            "source": chart.source,
+            "fetched_at": chart.fetched_at,
+            "quality": quality,
+        },
+        "benchmark": benchmark.map(|(symbol, name)| serde_json::json!({
+            "symbol": symbol,
+            "name": name.or_else(|| bench_chart.as_ref().and_then(|b| b.meta.name.clone())),
+            "selection": selection,
+            "used": report.benchmark.is_some(),
+            "currency": bench_currency,
+            "note": currency_note,
+        })),
+    })))
 }
 
 fn quality_report(
@@ -1292,6 +1440,24 @@ async fn openapi() -> Json<serde_json::Value> {
                     "responses": {
                         "200": { "description": "text/event-stream of `tick` events" },
                         "400": { "description": "Empty, invalid, or more than 20 symbols" }
+                    }
+                }
+            },
+            "/api/v1/analyze": {
+                "get": {
+                    "summary": "Full single-instrument analysis for any symbol on any exchange",
+                    "parameters": [
+                        { "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" } },
+                        { "name": "range", "in": "query", "required": false, "schema": { "type": "string", "default": "5y" } },
+                        { "name": "benchmark", "in": "query", "required": false, "description": "auto (home-market index, S&P 500 for US, MSCI ACWI otherwise), none, or a symbol", "schema": { "type": "string", "default": "auto" } },
+                        { "name": "seed", "in": "query", "required": false, "schema": { "type": "integer", "default": 42 } },
+                        { "name": "paths", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 100, "maximum": 20000, "default": 2000 } }
+                    ],
+                    "responses": {
+                        "200": { "description": "report (distribution, predictability, volatility, projections, risk, benchmark exposure, findings), data provenance and quality, benchmark choice" },
+                        "400": { "description": "Invalid input or too little history" },
+                        "404": { "description": "Unknown symbol or requested benchmark" },
+                        "503": { "description": "Upstream data provider unavailable" }
                     }
                 }
             },
@@ -2095,7 +2261,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn search_lists_only_indian_listings() {
+    async fn search_covers_every_exchange() {
         let (status, body) = get_json(
             market_app(false, None).await,
             "/api/v1/instruments/search?q=nifty",
@@ -2104,11 +2270,8 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         let results = body["results"].as_array().unwrap();
         assert!(!results.is_empty());
-        assert!(
-            results
-                .iter()
-                .all(|r| matches!(r["exchange"].as_str(), Some("NSE" | "BSE" | "Bombay")))
-        );
+        // Global search: a US-listed NIFTY ETF is a valid hit alongside NSE listings.
+        assert!(results.iter().any(|r| r["symbol"] == "NFTY"));
     }
 
     #[tokio::test]
@@ -2194,5 +2357,74 @@ mod tests {
         let _ = rustls::ClientConfig::builder()
             .with_root_certificates(rustls::RootCertStore::empty())
             .with_no_client_auth();
+    }
+
+    // ---- /api/v1/analyze --------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn analyze_reports_on_any_symbol_with_auto_benchmark_and_provenance() {
+        let (status, body) = get_json(
+            market_app(false, None).await,
+            "/api/v1/analyze?symbol=RELIANCE.NS&range=1y",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let report = &body["report"];
+        assert_eq!(report["symbol"], "RELIANCE.NS");
+        assert_eq!(report["n_returns"], 247);
+        assert!(report["distribution"]["vol_annual"].as_f64().unwrap() > 0.0);
+        assert!(report["predictability"]["ljung_box_returns"]["p_value"].is_number());
+        assert!(!report["findings"].as_array().unwrap().is_empty());
+        // 247 returns is below GARCH's 250 minimum: EWMA and GBM only, said plainly.
+        assert!(report["volatility"]["garch"].is_null());
+        assert_eq!(report["projections"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            report["projections"][0]["fan"].as_array().unwrap().len(),
+            63
+        );
+        // Home-market benchmark chosen automatically; the stub serves identical data, so beta = 1.
+        assert_eq!(body["benchmark"]["symbol"], "^NSEI");
+        assert_eq!(body["benchmark"]["selection"], "auto");
+        assert_eq!(body["benchmark"]["used"], true);
+        assert!((report["benchmark"]["beta"].as_f64().unwrap() - 1.0).abs() < 1e-9);
+        assert_eq!(body["data"]["tradingview_symbol"], "NSE:RELIANCE");
+        assert_eq!(body["data"]["quality"]["passed"], true);
+        assert_eq!(body["data"]["source"], "yahoo-chart-v8");
+    }
+
+    #[tokio::test]
+    async fn analyze_is_deterministic_per_seed_and_benchmark_is_optional() {
+        let app = market_app(false, None).await;
+        let uri = "/api/v1/analyze?symbol=RELIANCE.NS&range=1y&benchmark=none&seed=9&paths=500";
+        let (_, a) = get_json(app.clone(), uri).await;
+        let (_, b) = get_json(app.clone(), uri).await;
+        assert_eq!(a["report"]["projections"], b["report"]["projections"]);
+        assert!(a["benchmark"].is_null() && a["report"]["benchmark"].is_null());
+        assert_eq!(a["report"]["projections"][0]["n_paths"], 500);
+        let (_, c) = get_json(app, &uri.replace("seed=9", "seed=10")).await;
+        assert_ne!(a["report"]["projections"], c["report"]["projections"]);
+    }
+
+    #[tokio::test]
+    async fn analyze_rejects_bad_input_and_maps_unknown_symbols() {
+        let app = market_app(false, None).await;
+        for uri in [
+            "/api/v1/analyze?symbol=RELIANCE.NS&paths=5",
+            "/api/v1/analyze?symbol=RELIANCE.NS&paths=50000",
+            "/api/v1/analyze?symbol=RELIANCE.NS&range=1h",
+            "/api/v1/analyze?symbol=..%2Fetc",
+        ] {
+            let (status, body) = get_json(app.clone(), uri).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {body}");
+        }
+        let (status, _) = get_json(app.clone(), "/api/v1/analyze?symbol=NOPE.NS").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        // A benchmark the caller asked for must exist; an automatic one is best-effort.
+        let (status, _) = get_json(
+            app,
+            "/api/v1/analyze?symbol=RELIANCE.NS&range=1y&benchmark=NOPE.NS",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 }

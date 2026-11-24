@@ -16,8 +16,12 @@ noncommercial use and is not open-source licensed.
 **Start with [docs/STATUS.md](docs/STATUS.md)**: what is live, what runs on fixtures, and
 known limits. Planned work: [project board](https://github.com/users/Chandrashekhar-Hegde/projects/3).
 
-- Live NSE/BSE market data (Yahoo): search, adjusted daily history, delayed quotes, a
-  Server-Sent Events price stream, and a data-quality report, shown in the **Markets** view.
+- Live market data for any exchange (Yahoo): search, adjusted daily history, delayed quotes,
+  a Server-Sent Events price stream, and a data-quality report.
+- An analysis engine for any symbol: fat-tail statistics, predictability tests, GARCH-t
+  volatility, Monte Carlo forecast ranges, VaR/ES, drawdowns and home-market beta. It is
+  checked against scipy/statsmodels/arch; see [docs/METHODOLOGY.md](docs/METHODOLOGY.md).
+  Both are shown in the **Markets** view.
 
 - Deterministic event scoring and event classification.
 - BUY/SELL/HOLD decision generation from frozen as-of facts.
@@ -105,6 +109,7 @@ migration directory is mounted somewhere other than `/app/migrations`.
 ## Documentation
 
 - [Status](docs/STATUS.md)
+- [Methodology](docs/METHODOLOGY.md)
 - [API](docs/API.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Algorithm](docs/ALGORITHM.md)

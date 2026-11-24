@@ -11,6 +11,7 @@ const meta = (symbol: string, name: string) => ({
   last_price: 1377.5,
   last_trade_at: '2026-11-20T09:58:10Z',
   market_open: false,
+  tradingview_symbol: symbol === 'RELIANCE.NS' ? 'NSE:RELIANCE' : symbol === '^GSPC' ? 'SP:SPX' : null,
 })
 
 function bars(symbol: string) {
@@ -87,6 +88,7 @@ export async function mockMarketData(page: Page, { liveTicks = false } = {}) {
           source: 'yahoo-chart-v8',
           fetched_at: '2026-11-24T09:00:00Z',
         },
+        calendar_reference: symbol === 'RELIANCE.NS' ? '^NSEI' : null,
         quality: {
           passed: true,
           n_bars: series.length,
@@ -111,6 +113,10 @@ export async function mockMarketData(page: Page, { liveTicks = false } = {}) {
         : ': keep-alive\n\n'
     return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body })
   })
+  await page.route('**/api/v1/analyze**', (route) => {
+    const symbol = new URL(route.request().url()).searchParams.get('symbol') ?? '^GSPC'
+    return route.fulfill({ json: analysis(symbol) })
+  })
   // Never load the real third-party widget in tests.
   await page.route('https://s3.tradingview.com/**', (route) =>
     route.fulfill({ contentType: 'text/javascript', body: '' }),
@@ -120,4 +126,65 @@ export async function mockMarketData(page: Page, { liveTicks = false } = {}) {
 /** The fixture console lives behind the "Event lab" tab. */
 export async function openEventLab(page: Page) {
   await page.getByRole('tab', { name: /event lab/i }).click()
+}
+
+function analysis(symbol: string) {
+  const result = (statistic: number, p: number) => ({ statistic, p_value: p, reject_5pct: p < 0.05 })
+  const last = bars(symbol).at(-1)!
+  const fan = Array.from({ length: 63 }, (_, i) => ({
+    day: i + 1,
+    price: [-0.1, -0.04, 0, 0.04, 0.1].map((f) => last.close * (1 + f * Math.sqrt((i + 1) / 63))),
+  }))
+  const horizons = [5, 21, 63].map((h) => ({
+    horizon_days: h,
+    return_quantiles: [-0.08, -0.02, 0.004, 0.03, 0.09],
+    prob_gain: 0.53,
+    prob_loss_over_10pct: 0.03,
+    prob_drawdown_over_10pct: 0.07,
+  }))
+  const isEquity = !symbol.startsWith('^')
+  return {
+    report: {
+      symbol,
+      first_date: '2026-08-24',
+      last_date: last.date,
+      n_returns: 59,
+      last_price: last.close,
+      periods_per_year: 251,
+      distribution: {
+        mean_annual: 0.08, mean_annual_se: 0.2, vol_annual: 0.22, skewness: -0.2, excess_kurtosis: 1.1,
+        jarque_bera: result(4.2, 0.12), hill_tail_index: null, worst_day: -0.03, best_day: 0.03,
+      },
+      predictability: {
+        lags: 10,
+        ljung_box_returns: result(9.1, 0.52),
+        ljung_box_squared: result(12.3, 0.27),
+        variance_ratios: [{ q: 2, ratio: 1.02, test: result(0.2, 0.84) }],
+        adf: { statistic: -1.5, critical_values: [-3.5, -2.9, -2.6], reject_unit_root_5pct: false },
+      },
+      volatility: { ewma_annual: 0.21, garch: null },
+      projections: [{ model: 'gbm', n_paths: 2000, seed: 42, fan, horizons }],
+      risk: {
+        var_es: [
+          { method: 'historical', confidence: 0.95, var: 0.021, es: 0.027 },
+          { method: 'historical', confidence: 0.99, var: 0.029, es: 0.031 },
+        ],
+        max_drawdown: { max: 0.06, peak_date: '2026-09-01', trough_date: '2026-09-20', recovery_date: null, duration_days: 84, current: 0.02 },
+        sharpe: 0.36, sharpe_se: 2.1, sortino: 0.5,
+      },
+      benchmark: isEquity
+        ? { symbol: '^NSEI', n_common_days: 60, beta: 1.08, beta_se: 0.09, alpha_annual: 0.01, alpha_annual_se: 0.2, r_squared: 0.48, correlation: 0.69, idiosyncratic_vol_annual: 0.15 }
+        : null,
+      findings: [
+        'Annualised volatility 22.0% over 59 trading days.',
+        'No evidence of predictability in returns: Ljung–Box p = 0.520 and no variance ratio is significant.',
+      ],
+    },
+    data: {
+      symbol, name: 'Mock', currency: 'INR', exchange: 'NSE', instrument_type: isEquity ? 'EQUITY' : 'INDEX',
+      tradingview_symbol: null, range: '5y', source: 'yahoo-chart-v8', fetched_at: '2026-11-24T09:00:00Z',
+      quality: { passed: true, n_bars: 60, first_date: null, last_date: null, ohlc_violations: [], non_positive_prices: [], zero_volume_days: 0, missing_days: [], is_stale: false, outliers: [], warnings: [] },
+    },
+    benchmark: isEquity ? { symbol: '^NSEI', name: 'NIFTY 50', selection: 'auto', used: true, currency: 'INR', note: null } : null,
+  }
 }
