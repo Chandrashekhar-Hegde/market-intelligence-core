@@ -21,10 +21,13 @@ Live broker order placement is out of scope for `v0.1.0`.
 ## Local Setup
 
 ```bash
-cp .env.example .env
-make check
+git config core.hooksPath .githooks
+(cd apps/web && npm ci && npx playwright install chromium)
+scripts/check.sh
 make run-api
 ```
+
+`AGENTS.md` has the full workflow, testing rules and known gotchas.
 
 In another terminal:
 
@@ -45,7 +48,7 @@ Before opening a pull request:
 - keep changes focused on one issue or one clear workstream
 - add or update tests for behavior changes
 - update docs for user-facing or operational changes
-- run `make check`
+- run `scripts/check.sh` (the pre-push hook does this for you)
 - include screenshots for frontend changes
 - do not commit credentials, tokens, account identifiers, broker secrets, or payment secrets
 
