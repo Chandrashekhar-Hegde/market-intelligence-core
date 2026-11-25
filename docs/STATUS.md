@@ -1,6 +1,6 @@
 # Status
 
-Last updated: 2026-11-24 (analysis engine and global markets). This page is the honest answer to "what actually works?".
+Last updated: 2026-11-25.
 Planned work, in order, is in [ROADMAP.md](ROADMAP.md) and the
 [milestones](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/milestones).
 

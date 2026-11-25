@@ -72,7 +72,16 @@ docs/                 STATUS, METHODOLOGY, API, TESTING, HISTORY, ARCHITECTURE, 
 
 ## Setup from a clean clone
 
-Needs Rust 1.96+, Node 24, and (for browser tests) Playwright Chromium.
+Needs:
+- Rust 1.96+ and `cargo install cargo-audit --locked` (without it the local gate skips the audit
+  that CI runs);
+- Node 24 (see `.nvmrc`);
+- Playwright Chromium, for browser tests;
+- only when regenerating maths references: Python 3.12 and `uv`.
+
+Steps that need production access are done by a maintainer: Railway spikes, the production smoke
+test, reading the access token. Outside contributors say in their PR which of these are left for a
+maintainer.
 
 ```bash
 git clone https://github.com/Chandrashekhar-Hegde/market-intelligence-core.git
@@ -110,9 +119,11 @@ Production-like (one origin, gated): build the web app with `VITE_API_BASE_URL=`
 
 ## Workflow (how work lands)
 
-1. Pick an issue from the board (Todo first, then Backlog by milestone order). Move it to
-   **In Progress**.
-2. Branch from `main` (`phaseX.Y-short-name`). Never commit to `main` directly.
+1. Pick the first `agent-ready` row in [docs/ROADMAP.md](docs/ROADMAP.md) whose blockers are
+   closed. **ROADMAP order wins**: `gh issue list` sorts by date, not priority. Claim it with a
+   comment. Maintainers also move it to In Progress on their private board.
+2. Branch from `main` as `<milestone>-<short-slug>` (e.g. `0.1-bhavcopy`). `main` is protected,
+   so every change goes through a PR.
 3. Build with tests at every layer you touch (see "Testing rules"). Update docs in the same change:
    - `docs/STATUS.md` when what works changes;
    - `docs/METHODOLOGY.md` for any new statistic;

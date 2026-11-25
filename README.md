@@ -23,23 +23,21 @@ known limits. Planned work, in order: [docs/ROADMAP.md](docs/ROADMAP.md).
   checked against scipy/statsmodels/arch; see [docs/METHODOLOGY.md](docs/METHODOLOGY.md).
   Both are shown in the **Markets** view.
 
-- Deterministic event scoring and event classification.
-- BUY/SELL/HOLD decision generation from frozen as-of facts.
-- Technical indicators: returns, SMA, EMA, RSI, ATR, volatility, drawdown,
-  z-score, and beta.
-- Feature-vector calculation with no look-ahead beyond the supplied as-of date.
-- GBM plus flow-adjusted return prediction with deterministic quantiles.
-- Event-study calibration helpers for forward and abnormal returns.
-- Axum HTTP API for scoring, decisions, features, prediction, and macro context.
-- SQLx/PostgreSQL migrations for append-only market, feature, prediction,
-  decision, and trace tables.
-- Local scripts for API smoke testing and PostgreSQL migration verification.
+- **Compare** 2–10 instruments: correlation, the shared market factor, cointegrated pairs and
+  relative performance.
+- **Out-of-sample validation:** every forecast model is scored against a baseline before it is
+  presented as useful.
+- **How it works:** a plain-language guide in the app covering data sources, what is stored, and
+  how to read each number.
+- **Event lab (fixtures, experimental):** the original deterministic event scoring and decision
+  workbench. Its BUY/SELL/HOLD output uses uncalibrated constants and is labelled as such in the
+  app; #65 decides whether to calibrate it or retire it.
 
 ## Release Status
 
-The current target is `v0.1.0-mv`: a public-ready source-available release with
-an operator UI, evidence-backed model direction, deterministic fixtures, mock or
-read-only integrations, Razorpay test mode, and no live broker order placement.
+Phase 0 (0.1–0.5) is live as a private beta: real market data, the analysis engine, validation,
+comparison and the guide. Next comes Phase 1 (events and fundamentals), then Phase 2 (portfolio);
+see [docs/ROADMAP.md](docs/ROADMAP.md). There is no live broker order placement, ever.
 
 ## Roadmap and contributing
 
@@ -103,6 +101,19 @@ The image serves API routes and the built web app from the same process. Set
 migration directory is mounted somewhere other than `/app/migrations`.
 
 ## API
+
+Full contract: [docs/API.md](docs/API.md) and `GET /openapi.json`.
+
+Market data and analysis (behind the access gate):
+
+- `GET /api/v1/instruments/search?q=`
+- `GET /api/v1/bars?symbol=&range=`
+- `GET /api/v1/quote?symbol=`
+- `GET /api/v1/stream?symbols=` (Server-Sent Events)
+- `GET /api/v1/analyze?symbol=&range=&benchmark=`
+- `GET /api/v1/compare?symbols=&range=`
+
+Operational and Event lab (fixtures):
 
 - `GET /health`
 - `GET /ready`

@@ -4,9 +4,10 @@
 
 ## Claude Code specifics
 
-- **Start of a session.** Read `docs/STATUS.md`, then check the board:
-  `gh project item-list 3 --owner Chandrashekhar-Hegde --format json`. Continue the In Progress or
-  Todo item, or the next milestone named in "Where we are and what's next" above.
+- **Start of a session.** Read `docs/STATUS.md` and `docs/ROADMAP.md`. Continue an item that is
+  already claimed and in progress; otherwise take the first `agent-ready` ROADMAP row whose
+  blockers are closed. With the owner's access, also keep the private board in step:
+  `gh project item-list 3 --owner Chandrashekhar-Hegde --format json`.
 - **Skills.** The project ships a Rust skill (`.claude/skills/rust`, mirrored in `.agents/skills`).
   Railway work goes through the `use-railway` skill.
 - **Long commands.** Run `scripts/check.sh` in the foreground with a long timeout; a full run takes
