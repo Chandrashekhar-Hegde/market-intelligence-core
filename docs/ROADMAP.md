@@ -11,8 +11,8 @@ an issue** (part of the [Definition of Done](../CONTRIBUTING.md#definition-of-do
 
 ## How to pick the next item
 
-1. Take the **first row in "Next" labelled `agent-ready`** whose blockers are closed.
-   `gh issue list --label agent-ready` shows the same set.
+1. Take the **first row in "Next" labelled `agent-ready`** whose blockers are closed. Use this
+   table's order: `gh issue list --label agent-ready` shows the same set, but sorted by date.
 2. Comment "taking this" on the issue and assign yourself, so two people don't take the same item.
 3. Follow its work package. Open one PR per issue that says `Closes #N`.
 
@@ -34,7 +34,7 @@ Item states (GitHub labels):
 | 0.4 Multi-instrument | Compare 2–10 instruments: correlation (daily/rank/weekly), Ledoit–Wolf, PCA, Engle–Granger cointegration, relative performance | #77 (closes #57–#60) |
 | 0.5 Analyze web app | Analysis panels, Compare tab, How it works guide | #73, #77 (closes #61–#63) |
 | Hardening | Search errors are no longer silent empty results | #78 |
-| Docs | AGENTS.md / CLAUDE.md, history, plans, this roadmap, work packages | #75, #79, this PR |
+| Docs | AGENTS.md / CLAUDE.md, history, plans, this roadmap, work packages | #75, #79, #95, #97 |
 
 ## Next, in order
 
@@ -90,7 +90,7 @@ flowchart LR
 
 ## Principles every item follows
 
-These are the five in [AGENTS.md](../AGENTS.md#principles-non-negotiable): distributions not
+These are the six in [AGENTS.md](../AGENTS.md#principles-non-negotiable): distributions not
 calls, models earn their place out of sample, cite or calibrate, visible provenance, and a pure
 domain layer. No live order placement, ever.
 

@@ -15,6 +15,8 @@ Issues are for concrete, ready work.
 
 ## Local setup
 
+Needs Rust 1.96+, Node 24 (`.nvmrc`) and `cargo install cargo-audit --locked`.
+
 ```bash
 git config core.hooksPath .githooks          # pre-push gate: nothing is pushed unless it passes
 (cd apps/web && npm ci && npx playwright install chromium)
@@ -24,11 +26,12 @@ scripts/check.sh                             # must end with "All checks passed.
 ## How to pick up work
 
 1. **Choose:** take the first `agent-ready` item in
-   [ROADMAP.md → Next](docs/ROADMAP.md#next-in-order) whose blockers are closed, or run
-   `gh issue list --label agent-ready`. Small, isolated items are also labelled
-   `good first issue`.
-2. **Claim it:** comment "taking this" on the issue and assign yourself. If an item has been
-   claimed but shows no activity for 7 days, ask in the issue before taking it over.
+   [ROADMAP.md → Next](docs/ROADMAP.md#next-in-order) whose blockers are closed. ROADMAP order
+   wins: `gh issue list --label agent-ready` shows the same set, but sorted by date. Small,
+   isolated items are also labelled `good first issue`.
+2. **Claim it:** comment "taking this" on the issue. If you have write access, also assign
+   yourself; otherwise a maintainer assigns you. If an item has been claimed but shows no activity
+   for 7 days, ask in the issue before taking it over.
 3. **Branch** from `main` as `<milestone>-<short-slug>`, for example `0.1-bhavcopy` or
    `phase1-event-study`. One issue per PR.
 4. **Follow the work package.** Every issue has *Why*, *Scope*, a *Suggested approach* (files and
@@ -59,7 +62,9 @@ An issue is done when **all** of these are true:
   - the in-app **How it works** page, if what users see or what is stored changes.
 - [ ] The PR says `Closes #N`.
 - [ ] After merge, Railway deploys `main` automatically. The production smoke test passes:
-  `BASE_URL=… GM_ACCESS_TOKEN=… scripts/smoke_api.sh` (maintainers hold the token).
+  `BASE_URL=… GM_ACCESS_TOKEN=… scripts/smoke_api.sh`. **Maintainer step:** only maintainers hold
+  production access, so outside contributors list any production-only checks (smoke, Railway
+  spikes) in the PR for a maintainer to run.
 
 ## Rules that don't bend
 

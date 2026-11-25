@@ -1,4 +1,4 @@
-> **Status: Done** (this PR). The plan approved on 2026-11-25 for making the project workable by
+> **Status: Done** (#95; cold-start fixes in #97). The plan approved on 2026-11-25 for making the project workable by
 > other developers and AI agents from GitHub alone.
 
 # Put every plan in GitHub so any developer or AI agent knows exactly what's done and what's next
