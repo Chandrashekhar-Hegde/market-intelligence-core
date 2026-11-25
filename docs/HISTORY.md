@@ -111,3 +111,13 @@ Its five principles are in `AGENTS.md`.
 `AGENTS.md` became the canonical operating guide, with `CLAUDE.md` importing it. This file was
 added, `docs/ARCHITECTURE.md` was refreshed for the market and analysis path, and the clean-clone
 run of the documented setup was verified (see `docs/STATUS.md`).
+
+## 25 Nov: live NSE measurement (#44)
+
+The first NSE session after the holiday was measured on Yahoo's streamer. NSE stocks and NIFTY
+arrive about 2 s after the trade (about 1 tick/s, and the polled quote is within 1–5 s). BSE
+symbols are exactly 15 minutes delayed.
+
+The UI had shown BSE as "no live ticks; polling", which was wrong. It now labels the feed
+"DELAYED 15 MIN" and keeps streaming the delayed ticks. Because NSE real time works for free, the
+broker-feed issue (#68) stays at p1; it is needed only for licensed or BSE real-time data.
