@@ -157,3 +157,24 @@ broker-feed issue (#68) stays at p1; it is needed only for licensed or BSE real-
 - **Upstream cause:** unknown. After redeploying, the query worked and nothing was logged. If it
   recurs, the error message and the `search returned quotes but none were usable` log line will
   show what Yahoo sent.
+
+## 25 Nov: everything on GitHub for collaborators and agents
+
+The owner asked that plans and the full "done / next" picture live on GitHub, so other developers
+and AI agents can collaborate.
+
+- **Plans:** committed to `docs/plans/`. That covers the Phase 0 plan with a status header, the
+  live-data plan, this collaboration plan, and new step-by-step Phase 1 and Phase 2 plans.
+- **Roadmap:** `docs/ROADMAP.md` became the public, ordered queue, with done items linked to PRs
+  and a dependency graph. The board stays the owner's private view.
+- **Issues:** all open issues were rewritten as work packages (why, scope, approach, acceptance
+  criteria, verification, dependencies, owner input). The broken `\n` bodies were fixed. 15
+  issues were added (#80–#94) and linked as GitHub sub-issues under #17, #66, #69 and #70. Every
+  open issue carries exactly one of `agent-ready`, `needs-owner-input` or `blocked`.
+- **Milestones:** 0.2, 0.3, 0.4 and v0.1.0-mv were closed, and the descriptions now give status
+  and order.
+- **Contributor plumbing:** CONTRIBUTING has *how to pick up work*, a *Definition of Done* and
+  *working with AI agents*. There is a new Work package issue template and a new PR template.
+- **CODEOWNERS** moved to `@Chandrashekhar-Hegde` (`@llMr-Sweetll` was the old username).
+  Discussions are enabled, and `main` is protected for everyone: PR plus green CI, no
+  force-push.

@@ -1,6 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Questions, ideas and design discussions
+    url: https://github.com/Chandrashekhar-Hegde/market-intelligence-core/discussions
+    about: Ask, propose, or debate here. Issues are for concrete, ready work.
   - name: Security-sensitive report
-    url: https://github.com/llMr-Sweetll/market-intelligence-core/security/advisories/new
+    url: https://github.com/Chandrashekhar-Hegde/market-intelligence-core/security/advisories/new
     about: Report private security issues here.
-

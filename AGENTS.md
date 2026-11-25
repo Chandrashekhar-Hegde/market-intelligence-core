@@ -1,8 +1,8 @@
 # AGENTS.md
 
 Operating guide for anyone, human or AI agent, picking this repo up cold. Read this first, then
-`docs/STATUS.md` (what works today) and the
-[project board](https://github.com/users/Chandrashekhar-Hegde/projects/3) (what's next).
+`docs/STATUS.md` (what works today) and
+[docs/ROADMAP.md](docs/ROADMAP.md) (what's next, in order).
 The history of how we got here is in `docs/HISTORY.md`.
 
 ## What this is
@@ -156,7 +156,8 @@ Production-like (one origin, gated): build the web app with `VITE_API_BASE_URL=`
 - **The access token lives only in Railway.** Read it with `railway variable list --service gm-api`.
   Never commit it, print it in logs, or paste it into issues or PRs.
 - **Railway CLI login:** `railway login`. If the browser OAuth times out, the human runs it with `!`.
-- **GitHub:** `gh` is authenticated with the `project` scope.
+- **GitHub:** `gh` is authenticated with the `project` scope. The project board is the owner's
+  *private* working view; the public queue is `docs/ROADMAP.md`, so keep both in step.
   - The board is user project #3, node `PVT_kwHOAydiks4Bs_d6`.
   - Its Status field is `PVTSSF_lAHOAydiks4Bs_d6zhrK-6w`, with options Backlog `3537a9a7`,
     Todo `5e35da4d`, In Progress `d963a666`, In Review `daf0f9f5`, Done `1cf45f5c`.
@@ -197,25 +198,16 @@ Production-like (one origin, gated): build the web app with `VITE_API_BASE_URL=`
 
 ## Where we are and what's next
 
-Shipped:
-- **0.1:** live data. NSE is live at about 2 s, BSE is 15 min delayed (#44).
-- **0.2:** the global analysis engine.
-- **0.3:** out-of-sample validation.
-- **0.4:** the comparison engine and the Compare tab.
-- **0.5:** the analysis panels and the "How it works" guide (#63).
+**The single source of truth is [docs/ROADMAP.md](docs/ROADMAP.md).** It lists what's done, with
+PRs, and the ordered queue, with each item's state and blockers. Each item is a GitHub issue
+written as a full work package. Pick the first `agent-ready` row whose blockers are closed
+(`gh issue list --label agent-ready`), claim it, and follow [CONTRIBUTING.md](CONTRIBUTING.md)
+including its Definition of Done.
 
-Next, in order (see the board):
-- **#45:** NSE bhavcopy end-of-day cross-check and fallback, so Yahoo isn't a single point of
-  failure.
-- **#71:** replace chrono (the RUSTSEC advisory is ignored in `.cargo/audit.toml` until then).
-- **Phase 1:**
-  - #64: market-model event study;
-  - #65: calibrate or retire `/decide`;
-  - #17: real events and news;
-  - #66: fundamentals and a Monte Carlo DCF (pick a free India fundamentals source first);
-  - #67: HMM market regimes (optional).
-- **Phase 2:**
-  - #69: user accounts, replacing the shared token;
-  - #70: portfolio analytics, reusing `analysis` and `multi`;
-  - #68: broker live ticks (licensed or real-time BSE data; needs the owner's broker keys);
-  - #18: read-only broker adapters.
+The design behind the queue is in [docs/plans/](docs/plans/README.md). Commit a plan there
+*before* starting significant new work.
+
+Snapshot (2026-11-25):
+- **Shipped:** 0.1–0.5.
+- **Ready now:** #45, #71, #64, #91, #9, #94, #67.
+- **Waiting on owner decisions:** #80 (Postgres cost), #83, #85, #89.
