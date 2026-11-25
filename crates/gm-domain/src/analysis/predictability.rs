@@ -114,17 +114,7 @@ pub fn variance_ratio(y: &[f64], q: usize) -> VarianceRatio {
 pub fn adf(y: &[f64]) -> Adf {
     let n = y.len();
     let lags = (12.0 * (n as f64 / 100.0).powf(0.25)).floor() as usize;
-    let dy = y.windows(2).map(|w| w[1] - w[0]).collect::<Vec<_>>();
-    let mut rows = Vec::new();
-    let mut target = Vec::new();
-    for t in lags..dy.len() {
-        let mut row = vec![y[t], 1.0];
-        row.extend((1..=lags).map(|i| dy[t - i]));
-        rows.push(row);
-        target.push(dy[t]);
-    }
-    let n_obs = rows.len();
-    let statistic = numeric::ols(&rows, &target).map_or(f64::NAN, |fit| fit.coef[0] / fit.se[0]);
+    let (statistic, n_obs) = adf_statistic(y, lags, true);
     // MacKinnon (2010), Table 1, constant term, one variable: β∞ + β1/T + β2/T².
     let t = n_obs as f64;
     let crit = |b: [f64; 3]| b[0] + b[1] / t + b[2] / (t * t);
@@ -140,4 +130,24 @@ pub fn adf(y: &[f64]) -> Adf {
         critical_values,
         reject_unit_root_5pct: statistic < critical_values[1],
     }
+}
+
+/// ADF t-statistic of γ with a fixed lag order, with or without a constant. Returns
+/// (statistic, observations used). No constant is the Engle–Granger residual test.
+pub fn adf_statistic(y: &[f64], lags: usize, constant: bool) -> (f64, usize) {
+    let dy = y.windows(2).map(|w| w[1] - w[0]).collect::<Vec<_>>();
+    let mut rows = Vec::new();
+    let mut target = Vec::new();
+    for t in lags..dy.len() {
+        let mut row = vec![y[t]];
+        if constant {
+            row.push(1.0);
+        }
+        row.extend((1..=lags).map(|i| dy[t - i]));
+        rows.push(row);
+        target.push(dy[t]);
+    }
+    let n_obs = rows.len();
+    let statistic = numeric::ols(&rows, &target).map_or(f64::NAN, |fit| fit.coef[0] / fit.se[0]);
+    (statistic, n_obs)
 }

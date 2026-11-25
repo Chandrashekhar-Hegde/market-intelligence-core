@@ -203,7 +203,15 @@ function ChangeBadge({ change, pct }: { change: number; pct: number }) {
   )
 }
 
-function InstrumentSearch({ onPick }: { onPick: (symbol: string) => void }) {
+export function InstrumentSearch({
+  onPick,
+  id = 'instrument-search',
+  label = 'Search stocks, ETFs, indices, crypto and FX',
+}: {
+  onPick: (symbol: string) => void
+  id?: string
+  label?: string
+}) {
   const [text, setText] = useState('')
   const query = useDebounced(text.trim(), 300)
   const hits = useQuery<SearchHit[]>({
@@ -215,11 +223,11 @@ function InstrumentSearch({ onPick }: { onPick: (symbol: string) => void }) {
 
   return (
     <div className="instrument-search">
-      <label htmlFor="instrument-search">
-        <Search size={16} aria-hidden="true" /> Search stocks, ETFs, indices, crypto and FX
+      <label htmlFor={id}>
+        <Search size={16} aria-hidden="true" /> {label}
       </label>
       <input
-        id="instrument-search"
+        id={id}
         type="search"
         autoComplete="off"
         placeholder="e.g. apple, toyota, infosys, bitcoin"

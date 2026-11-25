@@ -46,6 +46,8 @@ import {
   type PaymentVerification,
 } from './api'
 import { earningsDecisionRequest, impactSeries } from './fixtures'
+import { Compare } from './Compare'
+import { Guide } from './Guide'
 import { Markets } from './Markets'
 
 type StatusTone = 'green' | 'amber' | 'red' | 'blue' | 'neutral'
@@ -134,7 +136,7 @@ const integrationRows: IntegrationRow[] = [
 ]
 
 function App() {
-  const [view, setView] = useState<'markets' | 'lab'>('markets')
+  const [view, setView] = useState<'markets' | 'compare' | 'guide' | 'lab'>('markets')
   const [eventFilters, setEventFilters] = useState({
     region: 'all',
     market: 'all',
@@ -263,6 +265,24 @@ function App() {
           <button
             type="button"
             role="tab"
+            aria-selected={view === 'compare'}
+            onClick={() => setView('compare')}
+          >
+            <Scale size={18} aria-hidden="true" />
+            Compare
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === 'guide'}
+            onClick={() => setView('guide')}
+          >
+            <ListChecks size={18} aria-hidden="true" />
+            How it works
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={view === 'lab'}
             onClick={() => setView('lab')}
           >
@@ -308,6 +328,14 @@ function App() {
       {view === 'markets' ? (
         <main className="workspace">
           <Markets />
+        </main>
+      ) : view === 'compare' ? (
+        <main className="workspace">
+          <Compare />
+        </main>
+      ) : view === 'guide' ? (
+        <main className="workspace">
+          <Guide />
         </main>
       ) : (
       <main className="workspace">

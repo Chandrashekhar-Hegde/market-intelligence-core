@@ -121,3 +121,26 @@ symbols are exactly 15 minutes delayed.
 The UI had shown BSE as "no live ticks; polling", which was wrong. It now labels the feed
 "DELAYED 15 MIN" and keeps streaming the delayed ticks. Because NSE real time works for free, the
 broker-feed issue (#68) stays at p1; it is needed only for licensed or BSE real-time data.
+
+## 25 Nov: Phase 0.4, comparison, and the "How it works" guide
+
+- **Engine:** `GET /api/v1/compare` and `gm-domain::analysis::multi` cover:
+  - daily, rank and weekly correlation;
+  - Ledoit–Wolf covariance (sklearn-exact);
+  - PCA by Jacobi rotation (no nalgebra; the matrices are 10×10 at most);
+  - Engle–Granger cointegration in both orderings, with MacKinnon critical values checked against
+    statsmodels;
+  - relative performance.
+- **Errors caught while building it:**
+  - My remembered 1% critical-value coefficient (−22.527) was wrong; statsmodels has −33.527.
+  - statsmodels uses n − 1 as the sample size for those critical values.
+  - Duplicate series names now return an error instead of hitting a debug assertion.
+- **Multiple-testing caveat:** a live 6-instrument comparison flagged RELIANCE/BTC as
+  "cointegrated". With 15 pairs, about 0.75 false positives are expected, so the findings now
+  state how many hits chance would produce.
+- **UI:** the Compare tab (chips, rebased chart, heatmap, PCA, pairs). Weekly correlation is the
+  default when time zones differ.
+- **"How it works" tab (#63):** where the data comes from and how live it is, what is stored (no
+  market-data database, only a sign-in cookie; the Postgres schema belongs to the Event lab and
+  isn't attached in production), how to read each panel, how models earn trust, limits, and a
+  glossary.

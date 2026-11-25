@@ -45,3 +45,18 @@ test('Markets view has no serious accessibility violations', async ({ page }) =>
   const blocking = results.violations.filter((v) => ['critical', 'serious'].includes(v.impact ?? ''))
   expect(blocking.map((v) => `${v.id}: ${v.nodes.map((n) => n.target).join(' | ')}`)).toEqual([])
 })
+
+test('How it works and Compare pages have no serious accessibility violations', async ({ page }) => {
+  await mockMarketData(page)
+  await page.goto('/')
+  for (const tab of [/how it works/i, /compare/i]) {
+    await page.getByRole('tab', { name: tab }).click()
+    await expect(page.getByRole('main')).toBeVisible()
+    const results = await new AxeBuilder({ page })
+      .include('main')
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+      .analyze()
+    const blocking = results.violations.filter((v) => ['critical', 'serious'].includes(v.impact ?? ''))
+    expect(blocking.map((v) => `${v.id}: ${v.nodes.map((n) => n.target).join(' | ')}`)).toEqual([])
+  }
+})

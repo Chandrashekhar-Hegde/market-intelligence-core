@@ -361,6 +361,7 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
         .route("/api/v1/quote", get(quote))
         .route("/api/v1/stream", get(stream))
         .route("/api/v1/analyze", get(analyze_instrument))
+        .route("/api/v1/compare", get(compare_instruments))
         .route("/access", post(grant_access));
     let router = match config.web_assets {
         Some(web_assets) => router.fallback_service(ServeDir::new(web_assets)),
@@ -528,6 +529,96 @@ async fn home_calendar(
         benchmark.to_string(),
         reference.bars.iter().map(|b| b.date).collect(),
     ))
+}
+
+#[derive(Debug, Deserialize)]
+struct CompareQuery {
+    symbols: String,
+    range: Option<String>,
+}
+
+/// Compare 2–10 instruments on their common trading days: correlation (daily, rank, weekly),
+/// Ledoit–Wolf covariance, PCA, Engle–Granger cointegration per pair, relative performance.
+async fn compare_instruments(
+    State(state): State<AppState>,
+    Query(query): Query<CompareQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use gm_domain::analysis::multi::{MAX_SYMBOLS as MAX, MIN_SYMBOLS as MIN, compare};
+    let range = query.range.as_deref().unwrap_or("5y");
+    let mut symbols = Vec::new();
+    for raw in query.symbols.split(',').filter(|s| !s.trim().is_empty()) {
+        let symbol = validate_symbol(raw).map_err(ApiError::provider)?;
+        if !symbols.contains(&symbol) {
+            symbols.push(symbol);
+        }
+    }
+    if !(MIN..=MAX).contains(&symbols.len()) {
+        return Err(ApiError::bad_request(format!(
+            "compare {MIN}-{MAX} distinct symbols"
+        )));
+    }
+    let charts =
+        futures_util::future::join_all(symbols.iter().map(|s| state.yahoo.chart(s, range))).await;
+    let mut loaded = Vec::new();
+    for (symbol, chart) in symbols.iter().zip(charts) {
+        let chart = chart.map_err(|e| {
+            let mut err = ApiError::provider(e);
+            err.message = format!("{symbol}: {}", err.message);
+            err
+        })?;
+        loaded.push(chart);
+    }
+    // Name each series by the symbol requested (validated, distinct), not Yahoo's echo of it.
+    let series = symbols
+        .iter()
+        .zip(&loaded)
+        .map(|(symbol, c)| {
+            (
+                symbol.clone(),
+                c.bars
+                    .iter()
+                    .map(|b| (b.date, b.adjusted_close()))
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let comparison = tokio::task::spawn_blocking(move || compare(&series))
+        .await
+        .map_err(|e| ApiError::bad_request(format!("comparison task failed: {e}")))?
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+
+    let currencies = loaded
+        .iter()
+        .filter_map(|c| c.meta.currency.clone())
+        .collect::<BTreeSet<_>>();
+    let zones = loaded
+        .iter()
+        .filter_map(|c| c.meta.timezone.clone())
+        .collect::<BTreeSet<_>>();
+    let mut notes = Vec::new();
+    if currencies.len() > 1 {
+        notes.push(format!(
+            "Prices are in different currencies ({}). Each return is in its own currency, so performance includes currency moves and isn't directly comparable.",
+            currencies.into_iter().collect::<Vec<_>>().join(", ")
+        ));
+    }
+    if zones.len() > 1 {
+        notes.push("These markets close at different times of day. Daily correlations are biased down; use the weekly figures.".to_string());
+    }
+    Ok(Json(serde_json::json!({
+        "comparison": comparison,
+        "instruments": loaded.iter().map(|c| serde_json::json!({
+            "symbol": c.meta.symbol,
+            "name": c.meta.name,
+            "currency": c.meta.currency,
+            "exchange": c.meta.exchange,
+            "timezone": c.meta.timezone,
+            "source": c.source,
+            "fetched_at": c.fetched_at,
+        })).collect::<Vec<_>>(),
+        "range": range,
+        "notes": notes,
+    })))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1457,6 +1548,21 @@ async fn openapi() -> Json<serde_json::Value> {
                         "200": { "description": "report (distribution, predictability, volatility, projections, risk, benchmark exposure, findings), data provenance and quality, benchmark choice" },
                         "400": { "description": "Invalid input or too little history" },
                         "404": { "description": "Unknown symbol or requested benchmark" },
+                        "503": { "description": "Upstream data provider unavailable" }
+                    }
+                }
+            },
+            "/api/v1/compare": {
+                "get": {
+                    "summary": "Compare 2-10 instruments: correlation, shrinkage covariance, PCA, cointegration, relative performance",
+                    "parameters": [
+                        { "name": "symbols", "in": "query", "required": true, "description": "Comma-separated, 2-10 distinct symbols on any exchange", "schema": { "type": "string" } },
+                        { "name": "range", "in": "query", "required": false, "schema": { "type": "string", "default": "5y" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "comparison, instruments (provenance), notes (currency / time-zone caveats)" },
+                        "400": { "description": "Wrong number of symbols, invalid input, or too few common trading days" },
+                        "404": { "description": "A symbol is unknown (the message names it)" },
                         "503": { "description": "Upstream data provider unavailable" }
                     }
                 }
@@ -2430,5 +2536,54 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    // ---- /api/v1/compare --------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn compare_returns_correlations_pairs_and_provenance() {
+        let (status, body) = get_json(
+            market_app(false, None).await,
+            "/api/v1/compare?symbols=RELIANCE.NS,%5ENSEI,RELIANCE.NS&range=1y",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let c = &body["comparison"];
+        // Duplicates are dropped; the stub serves identical data for both, so correlation is 1.
+        assert_eq!(c["symbols"].as_array().unwrap().len(), 2);
+        assert!((c["correlation_daily"][0][1].as_f64().unwrap() - 1.0).abs() < 1e-9);
+        assert_eq!(c["n_common_days"], 248);
+        assert_eq!(c["pairs"].as_array().unwrap().len(), 1);
+        assert!(!c["findings"].as_array().unwrap().is_empty());
+        assert_eq!(body["instruments"][0]["source"], "yahoo-chart-v8");
+        assert_eq!(
+            body["notes"],
+            serde_json::json!([]),
+            "same currency and time zone"
+        );
+    }
+
+    #[tokio::test]
+    async fn compare_validates_symbol_count_and_names_unknown_symbols() {
+        let app = market_app(false, None).await;
+        let eleven = (0..11)
+            .map(|i| format!("S{i}.NS"))
+            .collect::<Vec<_>>()
+            .join(",");
+        for uri in [
+            "/api/v1/compare?symbols=RELIANCE.NS".to_string(),
+            "/api/v1/compare?symbols=RELIANCE.NS,RELIANCE.NS".to_string(),
+            format!("/api/v1/compare?symbols={eleven}"),
+            "/api/v1/compare?symbols=RELIANCE.NS,..%2Fetc".to_string(),
+        ] {
+            let (status, body) = get_json(app.clone(), &uri).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {body}");
+        }
+        let (status, body) = get_json(app, "/api/v1/compare?symbols=RELIANCE.NS,NOPE.NS").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(
+            body["error"].as_str().unwrap().starts_with("NOPE.NS:"),
+            "{body}"
+        );
     }
 }

@@ -1437,3 +1437,81 @@ ol {
     overflow-wrap: anywhere;
   }
 }
+
+/* ---- Compare view --------------------------------------------------------------------- */
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 10px;
+  font-weight: 700;
+  background: #fff;
+  border: 1px solid #cfd7d3;
+  border-radius: 999px;
+}
+
+.chip button {
+  display: inline-flex;
+  padding: 4px;
+  color: #3d4242;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+}
+
+.chip button:hover,
+.chip button:focus-visible {
+  background: #eef0ef;
+}
+
+.chip-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.heatmap td {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.bar {
+  display: block;
+  height: 8px;
+  margin: 4px 0 8px;
+  background: #1f7a68;
+  border-radius: 4px;
+}
+
+/* ---- How it works ------------------------------------------------------------------------ */
+
+.guide p,
+.guide li,
+.guide dd {
+  max-width: 78ch;
+  line-height: 1.6;
+}
+
+.guide-list {
+  display: grid;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.guide-list dt {
+  font-weight: 800;
+}
+
+.guide-list dd {
+  margin: 2px 0 0;
+}

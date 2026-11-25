@@ -423,3 +423,23 @@ test('opens on the live Markets view and labels the Event lab as fixture data', 
   expect(screen.getByRole('note')).toHaveTextContent(/fixture data, not live markets/i)
   expect(screen.getByRole('heading', { name: 'Normalized review queue' })).toBeInTheDocument()
 })
+
+test('How it works explains the data sources, what is stored, and the terms', async () => {
+  mockFetch()
+  renderApp()
+  await userEvent.click(screen.getByRole('tab', { name: /how it works/i }))
+
+  expect(screen.getByRole('heading', { name: /what is stored \(the database question\)/i })).toBeInTheDocument()
+  expect(screen.getByTestId('guide-storage')).toHaveTextContent(/market data is not kept in a database/i)
+  expect(screen.getByTestId('guide-storage')).toHaveTextContent(/hosted beta currently runs without one/i)
+  expect(screen.getByText(/NSE stocks and NIFTY at about 2\s+seconds/i)).toBeInTheDocument()
+  expect(screen.getByTestId('glossary')).toHaveTextContent('Cointegration')
+  expect(screen.getByRole('link', { name: /methodology document/i })).toHaveAttribute('href', expect.stringContaining('METHODOLOGY.md'))
+})
+
+test('the Compare tab opens the comparison view', async () => {
+  mockFetch()
+  renderApp()
+  await userEvent.click(screen.getByRole('tab', { name: /compare/i }))
+  expect(screen.getByRole('heading', { name: /how instruments move together/i })).toBeInTheDocument()
+})

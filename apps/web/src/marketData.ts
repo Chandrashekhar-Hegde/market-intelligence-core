@@ -166,3 +166,14 @@ export function formatPct(value: number | null | undefined, digits = 1): string 
 export function formatP(p: number): string {
   return p < 0.001 ? '< 0.001' : p.toFixed(3)
 }
+
+/** Heatmap cell background for a correlation: teal for positive, red for negative. Alpha is
+ * capped so dark text stays readable (WCAG AA) on every cell. */
+export function correlationColor(value: number): string {
+  if (!Number.isFinite(value)) return 'transparent'
+  const alpha = Math.min(Math.abs(value), 1) * 0.5
+  return value >= 0 ? `rgba(31, 122, 104, ${alpha.toFixed(3)})` : `rgba(180, 68, 58, ${alpha.toFixed(3)})`
+}
+
+/** Distinct, colour-blind-friendlier series colours (Okabe–Ito based). */
+export const SERIES_COLORS = ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#E69F00', '#56B4E9', '#202423', '#8C510A', '#7B3294', '#1B7837']

@@ -14,6 +14,8 @@ Planned work is tracked on the
 | Market state | `market_open` from Yahoo's own trading period, so weekends **and exchange holidays** show CLOSED without a holiday calendar | Unit test; confirmed on the 24 Nov 2026 NSE holiday |
 | Data quality | Every bar series is checked: impossible prices, gaps vs the home-market index's trading days (34 exchanges + US), stale data, extreme returns (robust z > 8) | Unit tests; shown in the UI |
 | Analysis engine | `GET /api/v1/analyze` for any symbol: return distribution (fat tails, Jarque–Bera, Hill), predictability (Ljung–Box, variance ratios, ADF), EWMA + GARCH(1,1)-t volatility and term structure, seeded Monte Carlo fans (GBM, GARCH-t), VaR/ES three ways, drawdown, Sharpe ± SE, beta/alpha vs an automatically chosen home-market benchmark, and plain-language findings. See [METHODOLOGY.md](METHODOLOGY.md) | Matches scipy/statsmodels/arch on 5y of AAPL, S&P 500, NIFTY (`scripts/gen_reference.py`); GARCH parameter recovery on simulated data; determinism per seed; API tests on stubs; live checks across 9 markets |
+| Comparison | `GET /api/v1/compare` for 2–10 instruments: daily, rank and weekly correlation (weekly first across time zones), rolling correlation, Ledoit–Wolf covariance, PCA market factor, Engle–Granger cointegration with half-life and a multiple-testing caveat, relative performance | Matches pandas/scikit-learn/numpy/statsmodels; a constructed cointegrated pair is found and an independent walk isn't; API tests on stubs |
+| Plain-language guide | **How it works** tab: where the data comes from and how live it is, what is and isn't stored, how to read each panel, how models earn trust, limits, glossary | Vitest + axe |
 | Web app | **Markets** home for any exchange: search, global quick picks, live/delayed/closed quote pill with measured lag, candles moved by ticks, quality badge, corporate actions, analysis panels (findings, forecast fan, VaR/ES, volatility, tests, benchmark exposure), opt-in TradingView live chart | Vitest, Playwright on desktop + mobile with mocked data, axe accessibility check, live spec on real data |
 | Hosting | Railway behind a shared access token (bearer or cookie login form); CORS closed; same-origin bundle | Smoke script checks the gate returns 401 |
 | Engineering | Pre-push gate running everything CI runs; a fresh clone set up exactly as `AGENTS.md` says passes it (verified 2026-11-24, 85 s) | `scripts/check.sh` |
@@ -40,7 +42,8 @@ uncalibrated constants; don't trade on it. Tracked in Phase 1.
 - **Validation covers 1-day forecasts.** Every analysis with 600+ returns walks forward and
   scores the 1-day forecast distributions against historical simulation, with VaR backtests.
   The multi-day fans are not yet scored separately; they come from the same models.
-- **Single instrument at a time.** Multi-ticker comparison (correlation, cointegration) is 0.4.
+- **Comparison is descriptive.** Cointegrated pairs aren't backtested as a trading strategy yet,
+  and correlations are full-period plus a rolling window, with no regime detection.
 - **No accounts**: one shared beta token. No database on Railway (nothing needs one yet).
 - Railway deploys from `main` automatically (#43 done).
 
@@ -50,9 +53,10 @@ uncalibrated constants; don't trade on it. Tracked in Phase 1.
 |---|---|
 | 0.1 Data foundation | Remaining: NSE stream measurement (#44), bhavcopy cross-check (#45), chrono replacement (#71) |
 | 0.2 Analysis engine | Done |
+| 0.4 Multi-instrument | Done: Compare tab with chips, heatmap, rebased performance, pairs (#57–#62) |
 | 0.3 Validation harness | Done: walk-forward pinball loss, Diebold–Mariano, Kupiec and Christoffersen backtests, coverage, direction, per-model verdict |
 | 0.3 Validation harness | Walk-forward scoring vs baselines, Diebold–Mariano, VaR backtests |
 | 0.4 Multi-instrument | Correlation, Ledoit–Wolf, PCA, cointegration |
-| 0.5 Analyze web app | Fan charts, analysis panels, comparison view, methodology page |
+| 0.5 Analyze web app | Done (analysis panels, Compare, How it works). Remaining: link panels to the guide |
 | Phase 1 | Real events and news, market-model event study, calibrate or retire `/decide`, fundamentals |
 | Phase 2 | Broker live ticks, accounts, portfolio analytics. Still no live orders |
