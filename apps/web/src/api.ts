@@ -580,3 +580,68 @@ export type AnalyzeResponse = {
 export function fetchAnalysis(symbol: string, range = '5y'): Promise<AnalyzeResponse> {
   return request<AnalyzeResponse>(`/api/v1/analyze?symbol=${encodeURIComponent(symbol)}&range=${range}`)
 }
+
+// ---- comparison (/api/v1/compare) --------------------------------------------------------
+
+export type Comparison = {
+  symbols: string[]
+  first_date: string
+  last_date: string
+  n_common_days: number
+  n_weekly: number
+  correlation_daily: number[][]
+  spearman_daily: number[][]
+  correlation_weekly: number[][]
+  covariance_shrinkage: number
+  covariance_annual: number[][]
+  pca: { explained: number[]; first_loadings: number[] }
+  pairs: {
+    a: string
+    b: string
+    correlation_daily: number
+    correlation_weekly: number
+    cointegration: {
+      dependent: string
+      regressor: string
+      hedge_ratio: number
+      statistic: number | null
+      lags: number
+      critical_values: [number, number, number]
+      cointegrated_5pct: boolean
+      half_life_days: number | null
+      spread_z_now: number
+    }
+  }[]
+  rolling_correlation: { a: string; b: string; points: [string, number][] }[]
+  performance: {
+    symbol: string
+    total_return: number
+    annual_return: number
+    annual_vol: number
+    sharpe: number
+    max_drawdown: number
+  }[]
+  rebased: { date: string; values: number[] }[]
+  findings: string[]
+}
+
+export type CompareResponse = {
+  comparison: Comparison
+  instruments: {
+    symbol: string
+    name: string | null
+    currency: string | null
+    exchange: string | null
+    timezone: string | null
+    source: string
+    fetched_at: string
+  }[]
+  range: string
+  notes: string[]
+}
+
+export function fetchComparison(symbols: string[], range = '5y'): Promise<CompareResponse> {
+  return request<CompareResponse>(
+    `/api/v1/compare?symbols=${encodeURIComponent(symbols.join(','))}&range=${range}`,
+  )
+}

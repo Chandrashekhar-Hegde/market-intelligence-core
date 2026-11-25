@@ -117,6 +117,10 @@ export async function mockMarketData(page: Page, { liveTicks = false } = {}) {
     const symbol = new URL(route.request().url()).searchParams.get('symbol') ?? '^GSPC'
     return route.fulfill({ json: analysis(symbol) })
   })
+  await page.route('**/api/v1/compare**', (route) => {
+    const symbols = (new URL(route.request().url()).searchParams.get('symbols') ?? '').split(',')
+    return route.fulfill({ json: comparison(symbols) })
+  })
   // Never load the real third-party widget in tests.
   await page.route('https://s3.tradingview.com/**', (route) =>
     route.fulfill({ contentType: 'text/javascript', body: '' }),
@@ -208,4 +212,43 @@ function analysis(symbol: string) {
     },
     benchmark: isEquity ? { symbol: '^NSEI', name: 'NIFTY 50', selection: 'auto', used: true, currency: 'INR', note: null } : null,
   }
+}
+
+function comparison(symbols: string[]) {
+  const k = symbols.length
+  const matrix = (base: number) => symbols.map((_, i) => symbols.map((__, j) => (i === j ? 1 : base)))
+  const pairs = []
+  for (let i = 0; i < k; i++) {
+    for (let j = i + 1; j < k; j++) {
+      pairs.push({
+        a: symbols[i], b: symbols[j], correlation_daily: 0.55, correlation_weekly: 0.62,
+        cointegration: {
+          dependent: symbols[i], regressor: symbols[j], hedge_ratio: 1.02, statistic: i === 0 && j === 1 ? -3.8 : -1.5, lags: 22,
+          critical_values: [-3.9, -3.34, -3.05], cointegrated_5pct: i === 0 && j === 1,
+          half_life_days: i === 0 && j === 1 ? 21 : null, spread_z_now: 0.7,
+        },
+      })
+    }
+  }
+  const series = bars('X')
+  return {
+    comparison: {
+      symbols, first_date: series[0]!.date, last_date: series.at(-1)!.date, n_common_days: 60, n_weekly: 12,
+      correlation_daily: matrix(0.55), spearman_daily: matrix(0.5), correlation_weekly: matrix(0.62),
+      covariance_shrinkage: 0.03, covariance_annual: matrix(0.02),
+      pca: { explained: [0.7, 0.2, 0.1], first_loadings: symbols.map(() => 0.5) },
+      pairs, rolling_correlation: [],
+      performance: symbols.map((symbol, i) => ({ symbol, total_return: 0.1 * (i + 1), annual_return: 0.1, annual_vol: 0.2, sharpe: 0.5, max_drawdown: 0.1 })),
+      rebased: series.map((b, t) => ({ date: b.date, values: symbols.map((_, i) => 100 + t * (i + 1) * 0.3) })),
+      findings: [`60 trading days in common. One shared factor explains 70% of the daily variance of these ${k} instruments.`],
+    },
+    instruments: symbols.map((symbol) => ({ symbol, name: symbol, currency: 'USD', exchange: 'NMS', timezone: 'America/New_York', source: 'yahoo-chart-v8', fetched_at: '2026-11-25T07:00:00Z' })),
+    range: '5y',
+    notes: [],
+  }
+}
+
+/** The Compare tab. */
+export async function openCompare(page: Page) {
+  await page.getByRole('tab', { name: /compare/i }).click()
 }

@@ -260,6 +260,20 @@ else:
 PY
   done
 
+  comparison="$(curl -fsS "$BASE_URL/api/v1/compare?symbols=AAPL,MSFT,RELIANCE.NS,7203.T")"
+  python3 - "$comparison" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+c = payload["comparison"]
+assert c["symbols"] == ["AAPL", "MSFT", "RELIANCE.NS", "7203.T"], c["symbols"]
+assert c["n_common_days"] > 900, c["n_common_days"]
+assert len(c["pairs"]) == 6 and len(c["correlation_weekly"]) == 4
+assert any("different times of day" in n for n in payload["notes"]), payload["notes"]
+assert c["findings"], "no findings"
+PY
+
   code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/api/v1/quote?symbol=NOTAREALTICKER.NS")"
   [ "$code" = "404" ] || { echo "unknown symbol returned $code, expected 404" >&2; exit 1; }
 

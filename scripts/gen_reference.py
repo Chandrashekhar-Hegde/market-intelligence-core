@@ -1,6 +1,6 @@
 """Reference outputs for the Rust analysis engine, computed with established libraries.
 
-    uv venv .refenv && VIRTUAL_ENV=.refenv uv pip install numpy scipy statsmodels arch pandas
+    uv venv .refenv && VIRTUAL_ENV=.refenv uv pip install numpy scipy statsmodels arch pandas scikit-learn
     .refenv/bin/python scripts/gen_reference.py
 
 Reads crates/gm-domain/tests/fixtures/*_5y.csv (real adjusted closes) and writes
@@ -119,9 +119,61 @@ def beta(asset, bench):
             "beta_se": fit.bse[1], "alpha_se_daily": fit.bse[0], "r_squared": fit.rsquared}
 
 
+def compare_reference(names):
+    from sklearn.covariance import ledoit_wolf
+    from statsmodels.tsa.stattools import coint
+
+    frames = [load(n).rename(n) for n in names]
+    px = pd.concat(frames, axis=1, join="inner").dropna()
+    logp = np.log(px)
+    r = logp.diff().dropna()
+    iso = px.index.isocalendar()
+    week_last = logp.groupby([iso.year, iso.week]).tail(1)
+    w = week_last.diff().dropna()
+    out = {
+        "n_common_days": len(px),
+        "n_weekly": len(w),
+        "pearson_daily": r.corr().to_numpy().tolist(),
+        "spearman_daily": r.corr(method="spearman").to_numpy().tolist(),
+        "pearson_weekly": w.corr().to_numpy().tolist(),
+    }
+    shrunk, shrinkage = ledoit_wolf(r.to_numpy())
+    out["ledoit_wolf_shrinkage"] = float(shrinkage)
+    out["ledoit_wolf_cov"] = shrunk.tolist()
+    eig = np.sort(np.linalg.eigvalsh(r.corr().to_numpy()))[::-1]
+    out["pca_explained"] = (eig / eig.sum()).tolist()
+    lags = int(12 * (len(px) / 100) ** 0.25)
+    pairs = {}
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            res = {}
+            for dep, reg in ((a, b), (b, a)):
+                stat, _, crit = coint(logp[dep], logp[reg], trend="c", maxlag=lags, autolag=None)
+                X = np.column_stack([np.ones(len(logp)), logp[reg].to_numpy()])
+                beta = np.linalg.lstsq(X, logp[dep].to_numpy(), rcond=None)[0]
+                resid = logp[dep].to_numpy() - X @ beta
+                ds = np.diff(resid)
+                phi = np.linalg.lstsq(np.column_stack([np.ones(len(ds)), resid[:-1]]), ds, rcond=None)[0][1]
+                half = -math.log(2) / math.log(1 + phi) if -1 < phi < 0 else None
+                res[f"{dep}~{reg}"] = {"stat": stat, "crit": list(crit), "hedge": beta[1], "half_life": half}
+            pairs[f"{a}|{b}"] = res
+    out["pairs"] = pairs
+    years = (px.index[-1] - px.index[0]).days / 365.25
+    out["performance"] = {
+        n: {
+            "total_return": px[n].iloc[-1] / px[n].iloc[0] - 1,
+            "annual_return": (px[n].iloc[-1] / px[n].iloc[0]) ** (1 / years) - 1,
+            "sharpe": r[n].mean() / r[n].std(ddof=1) * math.sqrt(len(r) / years),
+        }
+        for n in names
+    }
+    return out
+
+
 def main():
     ref = {name: reference(name) for name in ("aapl", "gspc", "nsei")}
     ref["beta_aapl_gspc"] = beta("aapl", "gspc")
+    ref["compare_aapl_gspc_nsei"] = compare_reference(["aapl", "gspc", "nsei"])
     xs = np.array([1.0, 2, 3, 4, 5])
     y = 2 + 3 * xs + np.array([0.1, -0.1, 0, 0.1, -0.1])
     small = OLS(y, np.column_stack([np.ones(5), xs])).fit()

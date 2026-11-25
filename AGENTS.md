@@ -39,7 +39,8 @@ Forecasts are always distributions, never buy/sell calls.
 crates/
   gm-domain/          pure logic (no I/O)
     src/analysis/     the engine: distribution, predictability, volatility (EWMA, GARCH-t),
-                      montecarlo, risk, validation (walk-forward), numeric (OLS, Nelder–Mead)
+                      montecarlo, risk, validation (walk-forward), multi (comparison),
+                      numeric (OLS, Nelder–Mead)
     src/quality.rs    data-quality report for bar series
     src/{features,stochastic,indicators,event_study,model,...}.rs   older decision path (/decide)
     tests/fixtures/   5y real adjusted closes (AAPL, ^GSPC, ^NSEI) + reference.json
@@ -49,13 +50,15 @@ crates/
     src/markets.rs      suffix → home-market benchmark + TradingView name (34 exchanges + US)
     src/lib.rs          provider traits, mock providers, Razorpay test mode
     tests/fixtures/     recorded Yahoo responses and stream frames
-  gm-api/             Axum HTTP: /api/v1/{instruments/search,bars,quote,stream,analyze},
+  gm-api/             Axum HTTP: /api/v1/{instruments/search,bars,quote,stream,analyze,compare},
                       access gate, CORS, legacy fixture routes (/events, /decide, /payments/*)
   gm-persistence/     Postgres (optional; nothing in the market path needs it yet)
   gm-worker/          migration CLI
 apps/web/             React + Vite + TanStack Query + lightweight-charts
   src/Markets.tsx     home view: search, live quote, candles, quality, TradingView widget
   src/Analysis.tsx    analysis panels (findings, fan, risk, volatility, validation, tests, beta)
+  src/Compare.tsx     Compare tab: chips, rebased chart, correlation heatmap, PCA, pairs
+  src/Guide.tsx       "How it works": data sources, what is stored, how to read it, glossary
   src/marketData.ts   pure UI helpers (unit-tested); keep components out of it
   src/App.tsx         shell; "Event lab (fixtures)" tab holds the old fixture console
   tests/e2e/          Playwright; marketMocks.ts mocks /api/v1 so CI never hits Yahoo
@@ -192,18 +195,24 @@ Production-like (one origin, gated): build the web app with `VITE_API_BASE_URL=`
 ## Where we are and what's next
 
 Shipped:
-- **0.1:** live data, the Markets view, the local gate, deploys from `main`.
+- **0.1:** live data. NSE is live at about 2 s, BSE is 15 min delayed (#44).
 - **0.2:** the global analysis engine.
 - **0.3:** out-of-sample validation.
+- **0.4:** the comparison engine and the Compare tab.
+- **0.5:** the analysis panels and the "How it works" guide (#63).
 
-Next, in order:
-- **0.4 multi-instrument** (#57–#60): align returns on common days, Pearson/Spearman and rolling
-  correlation, Ledoit–Wolf covariance, PCA market factor (will add `nalgebra`), Engle–Granger
-  cointegration with OU half-life, relative performance. Then the comparison view and multi-select
-  chips (#61, #62).
-- **Open 0.1 items:** #44 (measure NSE stream lag in market hours), #45 (bhavcopy cross-check),
-  #71 (replace chrono, whose RUSTSEC advisory is ignored in `.cargo/audit.toml`).
-- **#63:** an in-app Methodology page.
-- **Phase 1:** real events and news, a market-model event study, calibrate or retire `/decide`,
-  fundamentals.
-- **Phase 2:** broker live ticks, accounts, portfolio analytics.
+Next, in order (see the board):
+- **#45:** NSE bhavcopy end-of-day cross-check and fallback, so Yahoo isn't a single point of
+  failure.
+- **#71:** replace chrono (the RUSTSEC advisory is ignored in `.cargo/audit.toml` until then).
+- **Phase 1:**
+  - #64: market-model event study;
+  - #65: calibrate or retire `/decide`;
+  - #17: real events and news;
+  - #66: fundamentals and a Monte Carlo DCF (pick a free India fundamentals source first);
+  - #67: HMM market regimes (optional).
+- **Phase 2:**
+  - #69: user accounts, replacing the shared token;
+  - #70: portfolio analytics, reusing `analysis` and `multi`;
+  - #68: broker live ticks (licensed or real-time BSE data; needs the owner's broker keys);
+  - #18: read-only broker adapters.

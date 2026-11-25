@@ -71,6 +71,24 @@ Invalid input returns `400`, an unknown symbol `404`, and an upstream failure `5
 
 Formulas, sources and verification: [METHODOLOGY.md](METHODOLOGY.md).
 
+## Compare Endpoint
+
+`GET /api/v1/compare?symbols=A,B,C&range=5y` compares 2–10 distinct symbols (any exchange) on
+their common trading days. The response has three parts:
+- `comparison`:
+  - correlations: `correlation_daily`, `spearman_daily`, `correlation_weekly`;
+  - `covariance_shrinkage` and `covariance_annual` (Ledoit–Wolf);
+  - `pca`;
+  - `pairs`, each with correlation and Engle–Granger cointegration (hedge ratio, half-life, spread
+    z-score);
+  - `rolling_correlation`, `performance`, `rebased` (normalised to 100, sampled to at most about
+    400 points) and `findings`.
+- `instruments`: provenance and currency for each symbol.
+- `notes`: currency and time-zone caveats.
+
+Duplicates are dropped. Fewer than 2 or more than 10 symbols, invalid input, or fewer than 120
+common days returns `400`. An unknown symbol returns `404`, and the message names it.
+
 ## Access Gate
 
 When `GM_ACCESS_TOKEN` is set, every route except `GET /health`, `POST /access`

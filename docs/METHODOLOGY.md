@@ -132,6 +132,33 @@ with 90% coverage within 2 points.
 - **Currency.** When the asset and the benchmark trade in different currencies, the response says
   that beta includes currency moves.
 
+## Comparing instruments (`/api/v1/compare`)
+
+Compares 2–10 instruments on the trading days they all share (at least 120). Every value is
+checked against pandas, scikit-learn, numpy and statsmodels on the AAPL, S&P 500 and NIFTY
+fixtures.
+
+- **Correlation.** Pearson on daily log returns, Spearman (rank) for robustness to outliers, and
+  Pearson on weekly returns (the last common close of each ISO week). Markets in different time
+  zones close hours apart, which biases daily correlation down (asynchronous trading, Scholes &
+  Williams 1977). For them the UI shows weekly correlation first.
+- **Rolling correlation** over a 63-day window, sampled weekly.
+- **Covariance.** Ledoit–Wolf (2004) shrinkage toward μ·I, exactly as scikit-learn's
+  `ledoit_wolf`.
+- **PCA.** Eigenvalues of the correlation matrix (cyclic Jacobi) give the share of variance
+  explained by each factor. The first factor is usually "the market".
+- **Cointegration.**
+  - Engle & Granger (1987): OLS of one log price on the other, then ADF on the residual spread
+    (no constant, lag ⌊12·(n/100)^¼⌋). Critical values are MacKinnon (2010) τ_c for two variables,
+    at statsmodels `coint`'s sample size of n − 1.
+  - Both orderings are tested and the more significant is reported, with its hedge ratio.
+  - The spread's OU half-life comes from Δsₜ = a + φsₜ₋₁ (−ln 2 / ln(1+φ)), and its z-score today
+    is also reported.
+  - **Multiple testing.** k instruments give k(k−1)/2 tests, so about 5% of them pass by chance.
+    The findings say how many to expect.
+- **Performance.** Total and annual return, volatility, Sharpe and maximum drawdown on the common
+  period, each in its own currency. When currencies differ the response says so.
+
 ## Data quality (`/api/v1/bars` and `/analyze`)
 
 Every series is checked for:
@@ -145,7 +172,8 @@ Every series is checked for:
 
 Bollerslev (1986) J. Econometrics 31; Bollerslev (1987) REStat 69; Dickey & Fuller (1979) JASA 74;
 Fama (1970) J. Finance 25; Hill (1975) Ann. Statist. 3; Jarque & Bera (1980) Econ. Letters 6;
-Jensen (1968) J. Finance 23; J.P. Morgan/Reuters (1996) RiskMetrics Technical Document; Ljung & Box
+Engle & Granger (1987) Econometrica 55; Jensen (1968) J. Finance 23; Ledoit & Wolf (2004) J.
+Multivariate Analysis 88; Scholes & Williams (1977) J. Financial Economics 5; J.P. Morgan/Reuters (1996) RiskMetrics Technical Document; Ljung & Box
 (1978) Biometrika 65; Lo (2002) FAJ 58; Lo & MacKinlay (1988) RFS 1; MacKinnon (2010) Queen's
 Economics WP 1227; McNeil, Frey & Embrechts (2005) Quantitative Risk Management; Nelder & Mead (1965)
 Computer J. 7; Schwert (1989) JBES 7; Christoffersen (1998) IER 39; Diebold & Mariano (1995)
