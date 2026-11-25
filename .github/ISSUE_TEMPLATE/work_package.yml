@@ -1,0 +1,69 @@
+name: Work package
+description: A concrete, self-contained piece of work that a developer or AI agent can finish without asking.
+title: ""
+labels: ["kind:task"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Write it so someone who has only read AGENTS.md can finish it. Bigger ideas start in Discussions or a plan in docs/plans/.
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: The problem or value, and how it fits the roadmap.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: "**In:** what this delivers. **Out:** what it deliberately doesn't."
+      value: |
+        **In:**
+        -
+
+        **Out:**
+        -
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: Suggested approach
+      description: Files to touch, existing code to reuse, data-source terms, references to cite.
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance criteria
+      description: Testable checkboxes.
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: The exact commands that prove it works.
+      render: bash
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Issues that must close first (e.g. "Blocked by #80"), or "None".
+      value: None.
+  - type: textarea
+    id: owner
+    attributes:
+      label: Needs owner input
+      description: Keys, money or a product decision the owner must provide, or "None".
+      value: None.
+  - type: markdown
+    attributes:
+      value: |
+        **Definition of Done:** see [CONTRIBUTING.md](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/blob/main/CONTRIBUTING.md#definition-of-done).

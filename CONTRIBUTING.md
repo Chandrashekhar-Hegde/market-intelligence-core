@@ -1,76 +1,99 @@
 # Contributing
 
-Market Intelligence Core is source-available under a noncommercial license.
-Contributions are welcome when they improve correctness, verification,
-documentation, or release quality.
+Market Intelligence Core is source-available under a noncommercial license (PolyForm
+Noncommercial 1.0.0). Contributions are welcome from people and from AI agents. Both follow the
+same rules below.
 
-## Scope
+**Start here:**
+1. [AGENTS.md](AGENTS.md): setup, commands, architecture, and gotchas we already paid for.
+2. [docs/ROADMAP.md](docs/ROADMAP.md): what's done and the ordered queue of what's next.
+3. [docs/STATUS.md](docs/STATUS.md): what works today, in plain terms.
 
-Good contributions usually fit one of these areas:
+Questions, ideas and design debates go to
+[Discussions](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/discussions).
+Issues are for concrete, ready work.
 
-- deterministic domain math
-- event-study calibration
-- knowledge-base taxonomy and fixtures
-- API contracts and persistence
-- frontend workflows and accessibility
-- provider adapters and test fixtures
-- documentation and release checks
-
-Live broker order placement is out of scope for `v0.1.0`.
-
-## Local Setup
+## Local setup
 
 ```bash
-git config core.hooksPath .githooks
+git config core.hooksPath .githooks          # pre-push gate: nothing is pushed unless it passes
 (cd apps/web && npm ci && npx playwright install chromium)
-scripts/check.sh
-make run-api
+scripts/check.sh                             # must end with "All checks passed."
 ```
 
-`AGENTS.md` has the full workflow, testing rules and known gotchas.
+## How to pick up work
 
-In another terminal:
+1. **Choose:** take the first `agent-ready` item in
+   [ROADMAP.md → Next](docs/ROADMAP.md#next-in-order) whose blockers are closed, or run
+   `gh issue list --label agent-ready`. Small, isolated items are also labelled
+   `good first issue`.
+2. **Claim it:** comment "taking this" on the issue and assign yourself. If an item has been
+   claimed but shows no activity for 7 days, ask in the issue before taking it over.
+3. **Branch** from `main` as `<milestone>-<short-slug>`, for example `0.1-bhavcopy` or
+   `phase1-event-study`. One issue per PR.
+4. **Follow the work package.** Every issue has *Why*, *Scope*, a *Suggested approach* (files and
+   code to reuse), *Acceptance criteria*, *Verification* and *Dependencies*. If the approach turns
+   out wrong, say so in the issue before diverging.
+5. **Open a PR** using the template, with `Closes #N`. CI must be green. `main` is protected: no
+   direct pushes, no force-pushes.
+6. **Items labelled `needs-owner-input`** wait for the owner (keys, money, product decisions).
+   Research that helps the decision is welcome; implementation waits.
 
-```bash
-make smoke-api
-```
+## Definition of Done
 
-For migration verification:
+An issue is done when **all** of these are true:
 
-```bash
-make verify-postgres
-```
+- [ ] Every acceptance criterion in the issue is checked.
+- [ ] `scripts/check.sh` passes locally (the pre-push hook runs it) and CI is green.
+- [ ] There are tests at every layer you touched:
+  - domain maths against an independent reference (`scripts/gen_reference.py`), plus a
+    behavioural test where the truth is known;
+  - providers on recorded fixtures;
+  - API on in-process stubs;
+  - UI with Vitest, plus Playwright with axe.
+- [ ] Docs are updated in the same PR:
+  - [docs/ROADMAP.md](docs/ROADMAP.md): move the item to *Done*;
+  - [docs/STATUS.md](docs/STATUS.md);
+  - [docs/METHODOLOGY.md](docs/METHODOLOGY.md) for any new statistic;
+  - [docs/API.md](docs/API.md) and `/openapi.json` for any route;
+  - the in-app **How it works** page, if what users see or what is stored changes.
+- [ ] The PR says `Closes #N`.
+- [ ] After merge, Railway deploys `main` automatically. The production smoke test passes:
+  `BASE_URL=… GM_ACCESS_TOKEN=… scripts/smoke_api.sh` (maintainers hold the token).
 
-## Pull Requests
+## Rules that don't bend
 
-Before opening a pull request:
+- **Distributions, not calls.** No buy/sell outputs. Forecasts are ranges with a horizon.
+- **A model earns its place.** It must beat the baseline out of sample in the validation harness
+  before the UI presents it as useful.
+- **Cite or calibrate.** Every constant has a source in METHODOLOGY or is estimated from data.
+- **Pure domain.** `gm-domain` has no network, clock or unseeded randomness.
+- **No live order placement.** `ExecutionMode::Live` stays disabled.
+- **No secrets in the repo, issues or logs:** credentials, tokens, account ids, broker or payment
+  secrets, personal emails. EDGAR-style "contact" headers use a project contact, never a person.
+- **Data-source terms are checked before code.** Record them in `docs/INTEGRATIONS.md`. Sources
+  whose terms forbid automated access (for example the NSE website JSON) are not used.
 
-- keep changes focused on one issue or one clear workstream
-- add or update tests for behavior changes
-- update docs for user-facing or operational changes
-- run `scripts/check.sh` (the pre-push hook does this for you)
-- include screenshots for frontend changes
-- do not commit credentials, tokens, account identifiers, broker secrets, or payment secrets
+## Working with AI agents
 
-## Decision Model Changes
+- Agents read [AGENTS.md](AGENTS.md) (Claude Code reads it through `CLAUDE.md`) and follow this
+  file exactly like a human contributor: claim, branch, work package, Definition of Done, PR.
+- Plans for significant work are committed to [docs/plans/](docs/plans/README.md) *before*
+  implementation, so the reasoning lives in the repo, not in a chat log.
+- A human reviews and merges. CI and branch protection apply to everyone.
+- Commit messages and PRs carry **no AI co-author trailers or "generated with" lines**.
+- Agents must say plainly what they did *not* verify.
 
-Decision behavior must be replayable. Model changes need:
+## Proposing new work
 
-- deterministic fixtures
-- before/after examples
-- explanation of changed assumptions
-- tests proving stable replay for the same inputs
-- documentation updates in `docs/MODEL.md` when semantics change
+- **Something concrete:** open an issue from the **Work package** template. Include why, scope,
+  approach, acceptance criteria and verification. Maintainers set the milestone and state label.
+- **Something bigger:** start a Discussion or write a plan in `docs/plans/` first. It then becomes
+  one issue per step.
+- **Bugs:** use the **Bug report** template, with reproduction steps.
 
-## Frontend Changes
+## Frontend specifics
 
-The interface is an operator console, not a marketing page. Prefer dense,
-scannable layouts, clear state, and evidence-first presentation.
-
-Frontend changes should verify:
-
-- loading, empty, error, stale, and success states
-- desktop and mobile layout
-- keyboard reachability for primary workflows
-- no text overlap or clipped buttons
-
+The interface is a dense, evidence-first analysis tool, not a marketing page. Verify loading,
+empty, error, stale and success states; desktop and phone widths (no horizontal overflow);
+keyboard reachability; and axe with no serious violations.

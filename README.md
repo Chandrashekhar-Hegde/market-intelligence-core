@@ -14,7 +14,7 @@ noncommercial use and is not open-source licensed.
 ## What Works Now
 
 **Start with [docs/STATUS.md](docs/STATUS.md)**: what is live, what runs on fixtures, and
-known limits. Planned work: [project board](https://github.com/users/Chandrashekhar-Hegde/projects/3).
+known limits. Planned work, in order: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 - Live market data for any exchange (Yahoo): search, adjusted daily history, delayed quotes,
   a Server-Sent Events price stream, and a data-quality report.
@@ -40,6 +40,15 @@ known limits. Planned work: [project board](https://github.com/users/Chandrashek
 The current target is `v0.1.0-mv`: a public-ready source-available release with
 an operator UI, evidence-backed model direction, deterministic fixtures, mock or
 read-only integrations, Razorpay test mode, and no live broker order placement.
+
+## Roadmap and contributing
+
+- **What's done and what's next, in order:** [docs/ROADMAP.md](docs/ROADMAP.md)
+- **Design plans:** [docs/plans/](docs/plans/README.md) (Phase 0 history, Phase 1 events and fundamentals, Phase 2 portfolio)
+- **How to pick up an issue, and the Definition of Done:** [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Setup, commands and gotchas, for humans and AI agents:** [AGENTS.md](AGENTS.md)
+- **Ready-to-start work:** issues labelled [`agent-ready`](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues?q=is%3Aopen+label%3Aagent-ready)
+- **Questions and ideas:** [Discussions](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/discussions)
 
 ## Workspace
 

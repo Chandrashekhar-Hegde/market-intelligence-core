@@ -1,8 +1,7 @@
 # Status
 
 Last updated: 2026-11-24 (analysis engine and global markets). This page is the honest answer to "what actually works?".
-Planned work is tracked on the
-[project board](https://github.com/users/Chandrashekhar-Hegde/projects/3) and in the
+Planned work, in order, is in [ROADMAP.md](ROADMAP.md) and the
 [milestones](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/milestones).
 
 ## Works (real data, tested)
@@ -49,14 +48,9 @@ uncalibrated constants; don't trade on it. Tracked in Phase 1.
 
 ## Planned
 
-| Milestone | Scope |
-|---|---|
-| 0.1 Data foundation | Remaining: NSE stream measurement (#44), bhavcopy cross-check (#45), chrono replacement (#71) |
-| 0.2 Analysis engine | Done |
-| 0.4 Multi-instrument | Done: Compare tab with chips, heatmap, rebased performance, pairs (#57–#62) |
-| 0.3 Validation harness | Done: walk-forward pinball loss, Diebold–Mariano, Kupiec and Christoffersen backtests, coverage, direction, per-model verdict |
-| 0.3 Validation harness | Walk-forward scoring vs baselines, Diebold–Mariano, VaR backtests |
-| 0.4 Multi-instrument | Correlation, Ledoit–Wolf, PCA, cointegration |
-| 0.5 Analyze web app | Done (analysis panels, Compare, How it works). Remaining: link panels to the guide |
-| Phase 1 | Real events and news, market-model event study, calibrate or retire `/decide`, fundamentals |
-| Phase 2 | Broker live ticks, accounts, portfolio analytics. Still no live orders |
+The ordered queue, with each item's state and blockers, is in [ROADMAP.md](ROADMAP.md). The design
+is in [plans/](plans/README.md). In short:
+- **Phase 1** adds real events and news, a correct event study, and fundamentals with a valuation
+  given as a distribution.
+- **Phase 2** adds portfolio risk (starting stateless, with nothing stored), then accounts, saved
+  portfolios and read-only broker connections.
