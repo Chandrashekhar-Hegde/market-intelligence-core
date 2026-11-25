@@ -144,3 +144,16 @@ broker-feed issue (#68) stays at p1; it is needed only for licensed or BSE real-
   market-data database, only a sign-in cookie; the Postgres schema belongs to the Event lab and
   isn't attached in production), how to read each panel, how models earn trust, limits, and a
   glossary.
+
+## 25 Nov: production search incident (#78)
+
+- **What happened:** after #77 deployed, the production smoke test failed. Production answered
+  `search?q=reliance` with `{"results":[]}` and status 200, while Yahoo answered the same query
+  normally from other networks.
+- **Root defect:** the search parser defaulted a missing `quotes` field to an empty list, so any
+  non-result body from Yahoo looked like "no matches".
+- **Fix:** a missing `quotes` field is now a 503 that includes the upstream body, and quotes that
+  all get filtered out are logged at warn level with the body.
+- **Upstream cause:** unknown. After redeploying, the query worked and nothing was logged. If it
+  recurs, the error message and the `search returned quotes but none were usable` log line will
+  show what Yahoo sent.
