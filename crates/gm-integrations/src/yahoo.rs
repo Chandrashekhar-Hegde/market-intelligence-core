@@ -187,8 +187,9 @@ struct WireSplit {
 
 #[derive(Deserialize)]
 struct SearchEnvelope {
-    #[serde(default)]
-    quotes: Vec<WireSearchQuote>,
+    // No serde default: a body without `quotes` (an error object, a block page) is an upstream
+    // failure, not "no matches". Defaulting it hid exactly that in production (Nov 2026).
+    quotes: Option<Vec<WireSearchQuote>>,
 }
 
 #[derive(Deserialize)]
@@ -347,10 +348,15 @@ const ANALYSABLE_TYPES: [&str; 7] = [
 
 /// Parse a search response: every exchange, analysable instrument types only.
 pub fn parse_search(body: &str) -> Result<Vec<SearchHit>, ProviderError> {
-    let envelope: SearchEnvelope = serde_json::from_str(body)
-        .map_err(|e| ProviderError::Unavailable(format!("malformed search response: {e}")))?;
-    Ok(envelope
-        .quotes
+    let snippet = || body.chars().take(200).collect::<String>();
+    let envelope: SearchEnvelope = serde_json::from_str(body).map_err(|e| {
+        ProviderError::Unavailable(format!("malformed search response ({e}): {}", snippet()))
+    })?;
+    let quotes = envelope.quotes.ok_or_else(|| {
+        ProviderError::Unavailable(format!("search response has no quotes: {}", snippet()))
+    })?;
+    let raw_count = quotes.len();
+    let hits = quotes
         .into_iter()
         .filter(|q| {
             q.quote_type
@@ -368,7 +374,11 @@ pub fn parse_search(body: &str) -> Result<Vec<SearchHit>, ProviderError> {
                 quote_type: q.quote_type.unwrap_or_default(),
             })
         })
-        .collect())
+        .collect::<Vec<_>>();
+    if raw_count > 0 && hits.is_empty() {
+        tracing::warn!(raw_count, body = %snippet(), "search returned quotes but none were usable");
+    }
+    Ok(hits)
 }
 
 /// Symbols reach a URL path, so they are whitelisted: Yahoo tickers are short and use A-Z 0-9 ^ & . - _
@@ -593,6 +603,18 @@ mod tests {
                 ..
             }]
         ));
+    }
+
+    #[test]
+    fn search_errors_are_not_silent_empty_results() {
+        let err = parse_search(r#"{"finance":{"error":{"code":"Unauthorized"}}}"#).unwrap_err();
+        assert!(
+            matches!(&err, ProviderError::Unavailable(m) if m.contains("no quotes") && m.contains("Unauthorized")),
+            "{err:?}"
+        );
+        assert!(parse_search("<html>blocked</html>").is_err());
+        // A genuine empty result is still fine.
+        assert!(parse_search(r#"{"quotes":[]}"#).unwrap().is_empty());
     }
 
     #[test]
