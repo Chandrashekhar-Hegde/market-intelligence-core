@@ -257,9 +257,17 @@ describe('liveState', () => {
     expect(state.detail).toMatch(/lag 3s/)
   })
 
-  test('a stale tick falls back to the quote', () => {
-    const old = tick({ tick_time: new Date(NOW - 10 * 60_000).toISOString() })
-    expect(liveState(meta({ market_open: true }), old, NOW).kind).toBe('delayed')
+  test('a 15-minute-old tick in market hours is an exchange-delayed feed (BSE), not LIVE', () => {
+    const bse = tick({ tick_time: new Date(NOW - 902_000).toISOString() })
+    const state = liveState(meta({ market_open: true }), bse, NOW)
+    expect(state).toMatchObject({ kind: 'delayed', label: 'DELAYED 15 MIN' })
+    expect(state.detail).toMatch(/BSE is 15 min; NSE is live/)
+    expect(liveState(meta({ market_open: false }), bse, NOW).kind).toBe('closed')
+  })
+
+  test('a very old tick falls back to the polled quote', () => {
+    const old = tick({ tick_time: new Date(NOW - 60 * 60_000).toISOString() })
+    expect(liveState(meta({ market_open: true }), old, NOW)).toMatchObject({ kind: 'delayed', label: 'DELAYED' })
     expect(liveState(meta({ market_open: false }), old, NOW).kind).toBe('closed')
   })
 

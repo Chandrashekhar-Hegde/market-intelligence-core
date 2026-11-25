@@ -26,10 +26,12 @@ uncalibrated constants; don't trade on it. Tracked in Phase 1.
 
 ## Doesn't work yet / limits to know
 
-- **NSE live ticks are unverified.** The Yahoo stream works (crypto/FX ticks arrive 1–3 s
-  after the trade), but 24 Nov 2026 was an NSE holiday, so no NSE tick could be observed.
-  Until #44 measures it in market hours, assume NSE may be delayed. When no tick arrives,
-  the app falls back to polling and says **DELAYED**.
+- **Live coverage depends on the exchange.** Measured in a live session on 25 Nov 2026 (#44):
+  - NSE stocks and NIFTY stream in **real time, about 2 s behind**, at roughly 1 tick per second.
+  - BSE (`.BO`, `^BSESN`) is **exactly 15 minutes delayed** on Yahoo, and the app labels it
+    "DELAYED 15 MIN".
+  - Crypto and FX lag 1–3 s.
+  - Other exchanges follow Yahoo's own terms; many are delayed.
 - **Yahoo is unofficial.** It can rate-limit, block cloud IPs or change format. The fallback
   plan is NSE bhavcopy for end-of-day (#45) and a free broker feed for exchange-licensed live
   ticks (#68; needs your Upstox/Angel/Breeze/Dhan account and keys).

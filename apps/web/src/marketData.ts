@@ -15,6 +15,11 @@ export const QUICK_PICKS = [
 
 /** A tick older than this is not "live" (exchange time vs this browser's clock). */
 export const LIVE_TICK_MAX_AGE_MS = 120_000
+/**
+ * A streamed tick up to this old during market hours is an exchange-delayed feed, not a stale
+ * one. Measured 2026-11-25: Yahoo streams NSE at ~2 s and BSE at exactly 15 min (#44).
+ */
+export const DELAYED_FEED_MAX_AGE_MS = 25 * 60_000
 
 export type LiveState = {
   kind: 'live' | 'delayed' | 'closed' | 'loading'
@@ -38,6 +43,17 @@ export function liveState(
     }
   }
   if (!meta) return { kind: 'loading', label: 'LOADING', detail: 'Fetching quote' }
+  if (tick && meta.market_open) {
+    const age = now - Date.parse(tick.tick_time)
+    if (age < DELAYED_FEED_MAX_AGE_MS) {
+      const minutes = Math.max(1, Math.round(age / 60_000))
+      return {
+        kind: 'delayed',
+        label: `DELAYED ${minutes} MIN`,
+        detail: `Streaming, but this exchange's feed is delayed ~${minutes} min on Yahoo (BSE is 15 min; NSE is live) · tick ${formatClock(tick.tick_time)}`,
+      }
+    }
+  }
   const lastTrade = meta.last_trade_at ? formatClock(meta.last_trade_at, true) : 'unknown'
   if (meta.market_open) {
     return {

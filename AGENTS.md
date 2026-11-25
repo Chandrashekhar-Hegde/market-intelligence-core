@@ -174,8 +174,9 @@ Production-like (one origin, gated): build the web app with `VITE_API_BASE_URL=`
   - Holidays and weekends show the previous session's `currentTradingPeriod`, so
     `market_open` is computed from it (no holiday calendar needed).
   - 24 Nov 2026 was an NSE holiday.
-  - NSE live-tick coverage of the Yahoo streamer is still unmeasured (#44). Crypto and FX ticks
-    arrive with 1–3 s lag.
+  - Measured live on 25 Nov 2026: the Yahoo streamer delivers NSE at about 2 s lag and about
+    1 tick/s, BSE at exactly 15 min, and crypto/FX at 1–3 s. `liveState` labels an exchange-delayed
+    feed "DELAYED N MIN" rather than LIVE.
 - **Yahoo is unofficial.** It can rate-limit or block. The fallbacks are NSE bhavcopy for
   end-of-day data (#45) and a broker feed for licensed live ticks (#68, which needs the owner's
   account). The NSE website JSON API is off-limits: its terms forbid automated access.
