@@ -183,6 +183,9 @@ Production-like (one origin, gated): build the web app with `VITE_API_BASE_URL=`
 - **Yahoo is unofficial.** It can rate-limit or block. The fallbacks are NSE bhavcopy for
   end-of-day data (#45) and a broker feed for licensed live ticks (#68, which needs the owner's
   account). The NSE website JSON API is off-limits: its terms forbid automated access.
+- **Yahoo can send odd bodies from cloud IPs.** Never default a missing upstream field to
+  "empty". Surface it as an error carrying the body (see the search incident in `docs/HISTORY.md`).
+  If production search or bars look empty, check `railway logs --service gm-api` for warnings.
 - **TradingView has no data API.** We only embed its widget for display.
 - **Analysis on short histories.**
   - Under 60 returns the request is rejected with 400.
