@@ -13,9 +13,9 @@ use axum::{
     routing::{get, post},
 };
 use gm_domain::{
-    AsOfFacts, DECISION_MODEL_VERSION, DecisionInput, DecisionThresholds, EntityType, EventClass,
-    MacroContext, NormalizedEvent, PriceBar, RuleRegistry, build_macro_context, classify,
-    compute_features, decide, gbm_flow_prediction, score_event,
+    DECISION_MODEL_VERSION, EntityType, EventClass, MacroContext, NormalizedEvent, PriceBar,
+    RuleRegistry, build_macro_context, classify, compute_features, gbm_flow_prediction,
+    score_event,
 };
 use gm_integrations::{
     CheckoutRequest, CheckoutSession, CheckoutVerification, CheckoutVerificationRequest,
@@ -80,7 +80,6 @@ impl Default for ApiConfig {
 #[derive(Clone)]
 struct AppState {
     registry: Arc<RuleRegistry>,
-    thresholds: DecisionThresholds,
     store: Option<PgStore>,
     payment_provider: Arc<MockPaymentProvider>,
     yahoo: YahooClient,
@@ -177,12 +176,6 @@ struct SourceReliability {
     tier: String,
     score: f64,
     rationale: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct DecideRequest {
-    event: NormalizedEvent,
-    facts: Option<AsOfFacts>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -317,7 +310,6 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
 
     let state = AppState {
         registry: Arc::new(RuleRegistry::builtin()),
-        thresholds: DecisionThresholds::default(),
         store,
         payment_provider: Arc::new(MockPaymentProvider::test_mode(
             config.payment_key_id,
@@ -356,7 +348,7 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
         .route("/events/{event_id}", get(event_detail))
         .route("/rules", get(rules))
         .route("/score", post(score))
-        .route("/decide", post(decide_route))
+        .route("/decide", post(decide_retired))
         .route("/quant/features", post(features))
         .route("/predict/gbm", post(predict_gbm))
         .route("/macro/context", post(macro_context))
@@ -1121,27 +1113,14 @@ async fn score(
     Json(score_event(&event, &state.registry))
 }
 
-async fn decide_route(
-    State(state): State<AppState>,
-    Json(request): Json<DecideRequest>,
-) -> Result<Json<gm_domain::Decision>, ApiError> {
-    let score = score_event(&request.event, &state.registry);
-    let input = DecisionInput {
-        event: request.event,
-        score,
-        facts: request.facts.unwrap_or_default(),
-        thresholds: state.thresholds,
-    };
-    let decision = decide(input.clone());
-
-    if let Some(store) = state.store.as_ref() {
-        store
-            .save_decision_audit(&input, &decision, DECISION_MODEL_VERSION)
-            .await
-            .map_err(ApiError::persistence)?;
+/// Retired 2026-11-26 (#65): about 40 hand-picked, uncalibrated constants turned events into
+/// BUY/SELL calls. Advice now comes only from rules that pass walk-forward validation
+/// (`/api/v1/analyze` → `advice`).
+async fn decide_retired() -> ApiError {
+    ApiError {
+        status: StatusCode::GONE,
+        message: "/decide was retired: its calls came from uncalibrated constants. Use /api/v1/analyze?symbol=… and read `advice`, which comes only from rules validated on that instrument.".to_string(),
     }
-
-    Ok(Json(decision))
 }
 
 async fn features(Json(request): Json<FeatureRequest>) -> Json<gm_domain::FeatureVector> {
@@ -1850,19 +1829,9 @@ async fn openapi() -> Json<serde_json::Value> {
             },
             "/decide": {
                 "post": {
-                    "summary": "Create a deterministic decision from an event and as-of facts",
-                    "requestBody": {
-                        "required": true,
-                        "content": {
-                            "application/json": {
-                                "schema": { "$ref": "#/components/schemas/DecideRequest" }
-                            }
-                        }
-                    },
-                    "responses": {
-                        "200": { "description": "Decision" },
-                        "500": { "description": "Persistence failed when configured" }
-                    }
+                    "summary": "Retired (410). Use /api/v1/analyze and its validated `advice`",
+                    "deprecated": true,
+                    "responses": { "410": { "description": "Gone" } }
                 }
             },
             "/quant/features": {
@@ -1944,14 +1913,6 @@ async fn openapi() -> Json<serde_json::Value> {
                         "region": { "type": ["string", "null"] },
                         "impact_level": { "type": ["string", "null"] },
                         "impact_category": { "type": ["string", "null"] }
-                    }
-                },
-                "DecideRequest": {
-                    "type": "object",
-                    "required": ["event"],
-                    "properties": {
-                        "event": { "$ref": "#/components/schemas/NormalizedEvent" },
-                        "facts": { "type": ["object", "null"] }
                     }
                 },
                 "Decision": {
@@ -2222,20 +2183,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn decide_contract_returns_deterministic_buy() {
+    async fn decide_is_retired_with_a_pointer_to_validated_advice() {
         let (status, payload) =
             json_request(app().await, "POST", "/decide", decision_request()).await;
-
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(payload["action"], "BUY");
-        assert_eq!(payload["execution_ready"], true);
-        assert_eq!(payload["quantity"], 20);
-        assert_eq!(payload["target_price"], 1030.0);
-        assert_eq!(payload["stop_loss"], 980.0);
-        assert_eq!(payload["total_score"], 0.72);
-        assert_eq!(payload["model_version"], DECISION_MODEL_VERSION);
-        assert!(payload["input_hash"].as_str().unwrap().len() > 20);
-        assert!(payload["explanation"]["utilities"].is_array());
+        assert_eq!(status, StatusCode::GONE);
+        assert!(
+            payload["error"]
+                .as_str()
+                .unwrap()
+                .contains("/api/v1/analyze")
+        );
     }
 
     #[tokio::test]

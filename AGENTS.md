@@ -46,7 +46,7 @@ crates/
                       montecarlo, risk, validation (walk-forward), multi (comparison),
                       numeric (OLS, Nelder–Mead)
     src/quality.rs    data-quality report for bar series
-    src/{features,stochastic,indicators,event_study,model,...}.rs   older decision path (/decide)
+    src/{features,stochastic,indicators,event_study,model,...}.rs   older decision path (its /decide route is retired: 410)
     tests/fixtures/   5y real adjusted closes (AAPL, ^GSPC, ^NSEI) + reference.json
   gm-integrations/    providers
     src/yahoo.rs        Yahoo chart/search client (retries, TTL cache), parsing, validation
@@ -55,7 +55,7 @@ crates/
     src/lib.rs          provider traits, mock providers, Razorpay test mode
     tests/fixtures/     recorded Yahoo responses and stream frames
   gm-api/             Axum HTTP: /api/v1/{instruments/search,bars,quote,stream,analyze,compare},
-                      access gate, CORS, legacy fixture routes (/events, /decide, /payments/*)
+                      access gate, CORS, legacy fixture routes (/events, /payments/*; /decide answers 410)
   gm-persistence/     Postgres (optional; nothing in the market path needs it yet)
   gm-worker/          migration CLI
 apps/web/             React + Vite + TanStack Query + lightweight-charts
@@ -222,8 +222,7 @@ including its Definition of Done.
 The design behind the queue is in [docs/plans/](docs/plans/README.md). Commit a plan there
 *before* starting significant new work.
 
-Snapshot (2026-11-25):
-- **Shipped:** 0.1–0.5.
-- **In progress:** Phase 0.6 (#98–#101): live intraday data, validated advice, news.
-- **Ready after that:** #45, #71, #64, #91, #9, #94, #67.
-- **Waiting on owner decisions:** #80 (Postgres cost), #83, #85, #89.
+Snapshot (2026-11-27):
+- **Shipped:** 0.1–0.6 (0.6: live intraday data, validated advice, news).
+- **Ready now:** #108, #45, #71, #64, #91, #9, #94, #67.
+- **Waiting on owner decisions:** #80 (Postgres cost), #83, #85, #89, #109 (news source from Railway).
