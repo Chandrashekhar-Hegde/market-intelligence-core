@@ -255,6 +255,36 @@ These are computed in `apps/web/src/plainLanguage.ts`, from API numbers only.
   This assumes volume accrues evenly. Real intraday volume is U-shaped, so the figure overstates
   activity early and understates it midday.
 
+## News (`/api/v1/news`)
+
+**Source.** GDELT DOC 2.0: English-language articles from the last 3 days whose text contains the
+instrument's name (legal suffixes such as "Limited" or "Inc." are dropped). Matching is by name,
+so some stories are off-topic.
+
+**Reaction to a story.** Code: `crates/gm-domain/src/analysis/news.rs`.
+1. Take the close of the last 5-minute bar that had finished when GDELT first saw the story
+   (`seen_at`), and the latest close.
+   - instrument move *r* = ln(now / before);
+   - market move *r*<sub>m</sub>, the same window for the home index;
+   - abnormal move = *r* − β·*r*<sub>m</sub>, with β from a year of daily returns.
+2. Express time since the story in sessions: bars after it × bar length / session length.
+3. *z* = abnormal / (σ·√sessions). σ is the daily volatility the market does not explain
+   (idiosyncratic σ from the same regression), or total daily volatility when there is no index.
+4. "About 1 in *N* without news": *N* = 1 / (2(1 − Φ(|*z*|))). Below |*z*| = 1.96 the UI calls the
+   move ordinary.
+
+This is the market-model abnormal return (MacKinlay 1997), applied intraday.
+
+**Tone.**
+- GDELT's daily average tone runs from about −10 to +10.
+- The last 7 days are compared with the earlier days: *z* = (recent mean − baseline mean) /
+  (baseline sd / √7). The coverage is "more negative/positive than usual" at |*z*| ≥ 1.96.
+- At least 30 baseline days are needed.
+
+**Why news does not vote in the advice yet.** GDELT only searches about 3 months back. Testing
+news tone like the trading rules (walk-forward, Holm, costs) needs years of stored daily tone per
+instrument, which needs the database (#80).
+
 ## References
 
 Bollerslev (1986) J. Econometrics 31; Bollerslev (1987) REStat 69; Dickey & Fuller (1979) JASA 74;
@@ -268,4 +298,4 @@ JBES 13; Gneiting & Raftery (2007) JASA 102; Kupiec (1995) J. Derivatives 3; Fab
 Granville (1963) New Key to Stock Market Profits; Hansen & Hodrick (1980) JPE 88; Holm (1979) Scand.
 J. Statistics 6; Jegadeesh (1990) J. Finance 45; Jegadeesh & Titman (1993) J. Finance 48; Lehmann
 (1990) QJE 105; Moskowitz, Ooi & Pedersen (2012) JFE 104; Newey & West (1987) Econometrica 55;
-Wilder (1978) New Concepts in Technical Trading Systems; Wilson (1927) JASA 22.
+Wilder (1978) New Concepts in Technical Trading Systems; Wilson (1927) JASA 22. MacKinlay (1997) J. Economic Literature 35.

@@ -18,6 +18,7 @@ import {
   type ChartRange,
   type IntradayData,
   type IntradayRange,
+  type NewsResponse,
   type QualityReport,
   type QuoteResponse,
   type SearchHit,
@@ -25,6 +26,7 @@ import {
   describeApiError,
   fetchBars,
   fetchIntraday,
+  fetchNews,
   fetchQuote,
   isIntraday,
   searchInstruments,
@@ -231,6 +233,8 @@ export function Markets() {
         }
       />
 
+      <NewsPanel symbol={symbol} />
+
       <section className="panel chart-panel" aria-labelledby="tv-heading">
         <h3 id="tv-heading" className="visually-hidden">
           TradingView chart
@@ -298,6 +302,81 @@ function LiveOutlook({
         </li>
       ) : null}
     </ul>
+  )
+}
+
+function timeAgo(iso: string, now: number): string {
+  const minutes = Math.max(0, Math.round((now - Date.parse(iso)) / 60_000))
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.round(minutes / 60)
+  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`
+}
+
+/** Headlines that mention the instrument, and how the price moved after each beyond the market. */
+function NewsPanel({ symbol }: { symbol: string }) {
+  const now = useNow(60_000)
+  const news = useQuery<NewsResponse>({
+    queryKey: ['news', symbol],
+    queryFn: () => fetchNews(symbol),
+    staleTime: 10 * 60_000,
+    // GDELT allows one request every 5 s; never hammer it with retries.
+    retry: false,
+  })
+  return (
+    <section className="panel chart-panel" aria-labelledby="news-heading" data-testid="news">
+      <p className="eyebrow">News · last 3 days · GDELT, about 15 minutes behind</p>
+      <h3 id="news-heading">What the news says, and how the price took it</h3>
+      {news.error ? (
+        <p className="error-state" role="alert">
+          News is unavailable right now ({describeApiError(news.error)}). The rest of the page does not depend on it.
+        </p>
+      ) : !news.data ? (
+        <p className="empty-state">Searching the news…</p>
+      ) : (
+        <>
+          {news.data.tone ? (
+            <p data-testid="news-tone">
+              This week’s coverage is <strong>{news.data.tone.label}</strong> (tone {news.data.tone.recent_mean.toFixed(1)}{' '}
+              vs a 3-month average of {news.data.tone.baseline_mean.toFixed(1)}, on a scale from about −10 to +10).
+            </p>
+          ) : null}
+          {news.data.articles.length === 0 ? (
+            <p className="quiet-copy">No English-language stories in the last 3 days.</p>
+          ) : (
+            <ul className="news-list">
+              {news.data.articles.slice(0, 12).map(({ article, impact }) => (
+                <li key={article.url}>
+                  <a href={article.url} target="_blank" rel="noopener noreferrer">
+                    {article.title}
+                  </a>
+                  <span className="quiet-copy">
+                    {' '}
+                    {article.domain} · {timeAgo(article.seen_at, now)}
+                  </span>
+                  {impact ? (
+                    <p className="news-impact">
+                      Since then: {formatSigned((Math.exp(impact.instrument_move) - 1) * 100, 1)}%
+                      {impact.market_move !== null && news.data.benchmark
+                        ? `, ${formatSigned((Math.exp(impact.abnormal_move) - 1) * 100, 1)}% beyond what ${news.data.benchmark} explains`
+                        : ''}
+                      .{' '}
+                      {Math.abs(impact.z) < 1.96
+                        ? 'An ordinary move for this instrument; it could easily be chance.'
+                        : `Unusual: a move this size happens about 1 in ${Math.round(impact.one_in)} times without news.`}
+                    </p>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="quiet-copy">
+            Stories are found by searching for “{news.data.query.split('"')[1]}”, so some may be off-topic. News does not
+            change the call above yet: news can’t be tested like the trading rules until enough of its history is
+            stored.
+          </p>
+        </>
+      )}
+    </section>
   )
 }
 

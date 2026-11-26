@@ -5,6 +5,7 @@
 pub mod distribution;
 pub mod montecarlo;
 pub mod multi;
+pub mod news;
 pub mod numeric;
 pub mod predictability;
 pub mod risk;

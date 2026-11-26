@@ -22,6 +22,7 @@ test('search, pick an instrument, and see quote, charts, quality and TradingView
   await expect(page.getByTestId('advice')).toContainText('No proven edge')
   await expect(page.getByTestId('meaning-cards')).toContainText('A bad day')
   await expect(page.getByTestId('findings')).toBeHidden()
+  await expect(page.getByTestId('news')).toContainText('beyond what ^NSEI explains')
   await page.getByText('Show all the maths').click()
   await expect(page.getByTestId('quality-badge')).toHaveText(/Usable/)
   await expect(page.getByText(/60 sessions/).first()).toBeVisible()

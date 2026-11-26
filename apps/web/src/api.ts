@@ -391,6 +391,44 @@ export function useAnalysis(symbol: string) {
   })
 }
 
+// ---- news (/api/v1/news) ----------------------------------------------------------------
+
+export type NewsImpact = {
+  instrument_move: number
+  market_move: number | null
+  abnormal_move: number
+  sessions_elapsed: number
+  z: number
+  one_in: number
+}
+
+export type NewsResponse = {
+  symbol: string
+  query: string
+  articles: {
+    article: { title: string; url: string; domain: string; source_country: string | null; seen_at: string }
+    impact: NewsImpact | null
+  }[]
+  tone: null | {
+    recent_mean: number
+    baseline_mean: number
+    baseline_sd: number
+    n_recent: number
+    n_baseline: number
+    z: number
+    label: string
+  }
+  tone_note: string | null
+  benchmark: string | null
+  beta: number | null
+  source: string
+  fetched_at: string
+}
+
+export function fetchNews(symbol: string): Promise<NewsResponse> {
+  return request<NewsResponse>(`/api/v1/news?symbol=${encodeURIComponent(symbol)}`)
+}
+
 // ---- comparison (/api/v1/compare) --------------------------------------------------------
 
 export type Comparison = {
