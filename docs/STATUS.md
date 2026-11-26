@@ -17,15 +17,16 @@ Planned work, in order, is in [ROADMAP.md](ROADMAP.md) and the
 | Validated advice (API) | `/api/v1/analyze` returns `signals` and `advice`: six literature rules (trend, momentum, short-term reversal, RSI, unusual volume, OBV pressure), each backtested walk-forward on up to 10 years. Buy/Sell only when a rule earns its place (Holm-corrected, beats trading costs, stable, 30+ calls). Otherwise Hold, with the reason. On 26 Nov 2026, 1 of 37 instruments had a proven rule | Matches statsmodels on AAPL; planted trend found; 1.5% false rules on 200 random walks; API test on 10 years of RELIANCE |
 | Comparison | `GET /api/v1/compare` for 2–10 instruments: daily, rank and weekly correlation (weekly first across time zones), rolling correlation, Ledoit–Wolf covariance, PCA market factor, Engle–Granger cointegration with half-life and a multiple-testing caveat, relative performance | Matches pandas/scikit-learn/numpy/statsmodels; a constructed cointegrated pair is found and an independent walk isn't; API tests on stubs |
 | Plain-language guide | **How it works** tab: where the data comes from and how live it is, what is and isn't stored, how to read each panel, how models earn trust, limits, glossary | Vitest + axe |
+| Web app (plain language) | Markets opens with **what to do** (Buy/Hold/Sell from proven rules, what each rule sees today, a live note when a tick would flip a rule, and how much to put in for a chosen bad-day loss). Then **likely close today and tomorrow**, recomputed on every tick, and cards that put risk in rupees for any amount. All statistics sit behind "Show all the maths". Three tabs; a compact top bar on phones | Vitest (plain-language maths, every advice state, live flip), Playwright desktop and phone with axe and the overflow check, live spec, screenshots |
 | Web app | **Markets** home for any exchange: live watchlist, search, today's minute chart, live/delayed/closed quote pill with measured lag, candles moved by ticks, quality badge, corporate actions, analysis panels (findings, forecast fan, VaR/ES, volatility, tests, benchmark exposure), opt-in TradingView live chart | Vitest, Playwright on desktop + mobile with mocked data, axe accessibility check, live spec on real data |
 | Hosting | Railway behind a shared access token (bearer or cookie login form); CORS closed; same-origin bundle | Smoke script checks the gate returns 401 |
 | Engineering | Pre-push gate running everything CI runs; a fresh clone set up exactly as `AGENTS.md` says passes it (verified 2026-11-24, 85 s) | `scripts/check.sh` |
 
-## Works, but on fixtures (not real data)
+## Retired from the UI
 
-The **Event lab** tab (labelled in the app): event inbox (5 hard-coded events), the `/decide`
-workbench, and Razorpay **test-mode** payments. `/decide` uses about 40 hand-picked,
-uncalibrated constants; don't trade on it. Tracked in Phase 1.
+The **Event lab** fixture tab (5 hard-coded events, the `/decide` workbench, Razorpay test mode) was
+removed from the app on 26 Nov 2026; validated advice replaces it. The `/decide` and payment API
+routes still exist and will be removed in a follow-up (#65).
 
 ## Doesn't work yet / limits to know
 

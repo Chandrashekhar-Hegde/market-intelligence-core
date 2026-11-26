@@ -11,13 +11,17 @@ test.describe('@live real Yahoo data', () => {
 
     await expect(page.getByTestId('quote-price')).toHaveText(/₹[\d,]+\.\d{2}/, { timeout: 20_000 })
     await expect(page.getByTestId('live-state')).toHaveText(/LIVE|DELAYED|CLOSED/)
-    await expect(page.getByTestId('quality-badge')).toBeVisible({ timeout: 20_000 })
     await expect(page.getByTestId('intraday-chart').locator('canvas').first()).toBeVisible({ timeout: 20_000 })
     await page.getByRole('button', { name: '1Y' }).click()
     await expect(page.getByTestId('candle-chart').locator('canvas').first()).toBeVisible()
     await expect(page.getByText(/\d+ sessions · yahoo-chart-v8/)).toBeVisible()
-    // The real engine on real data: findings, a fan chart and an automatic NIFTY benchmark.
-    await expect(page.getByTestId('findings')).toBeVisible({ timeout: 30_000 })
+    // The real engine on real data: advice from tested rules, then the folded statistics.
+    await expect(page.getByTestId('stance')).toHaveText(/Buy|Sell|Hold/, { timeout: 60_000 })
+    await expect(page.getByTestId('meaning-cards')).toContainText('A bad day')
+    await page.getByText('Show all the maths').click()
+    await expect(page.getByTestId('signals-table')).toContainText('Long-term trend')
+    await expect(page.getByTestId('findings')).toBeVisible()
+    await expect(page.getByTestId('quality-badge')).toBeVisible()
     await expect(page.getByTestId('fan-chart').locator('canvas').first()).toBeVisible()
     await expect(page.getByTestId('benchmark')).toContainText('Beta')
     // Five years is enough history for walk-forward validation.

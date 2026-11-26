@@ -29,6 +29,7 @@ import {
   isIntraday,
   searchInstruments,
   streamUrl,
+  useAnalysis,
 } from './api'
 import {
   QUICK_PICKS,
@@ -47,6 +48,7 @@ import {
   toCandles,
 } from './marketData'
 import { AnalysisPanels } from './Analysis'
+import { relativeVolume, sessionLeft, sessionRange } from './plainLanguage'
 
 const isDomTest = typeof navigator !== 'undefined' && navigator.userAgent.includes('jsdom')
 
@@ -142,6 +144,15 @@ export function Markets() {
             ) : meta?.day_volume ? (
               <p className="quiet-copy">Traded {formatCompact(meta.day_volume)} in the latest session</p>
             ) : null}
+            <LiveOutlook
+              symbol={symbol}
+              price={price}
+              currency={currency}
+              marketOpen={meta?.market_open ?? false}
+              volumeToday={tick?.day_volume ?? meta?.day_volume ?? null}
+              bars={bars.data}
+              now={now}
+            />
             {quote.data ? (
               <p className="quiet-copy mono">
                 {meta?.exchange ?? 'exchange unknown'} · {quote.data.source} · fetched{' '}
@@ -198,12 +209,7 @@ export function Markets() {
         )}
       </section>
 
-      {bars.data ? (
-        <>
-          <QualityPanel report={bars.data.quality} calendar={bars.data.calendar_reference} />
-          <CorporateActionsPanel bars={bars.data} />
-        </>
-      ) : bars.error && isIntraday(range) ? (
+      {bars.error && isIntraday(range) ? (
         <section className="panel" aria-label="Daily history">
           <p className="error-state" role="alert">
             Daily history: {describeApiError(bars.error)}
@@ -211,7 +217,19 @@ export function Markets() {
         </section>
       ) : null}
 
-      <AnalysisPanels symbol={symbol} history={bars.data?.chart.bars} />
+      <AnalysisPanels
+        symbol={symbol}
+        history={bars.data?.chart.bars}
+        livePrice={tick ? price : null}
+        extraMaths={
+          bars.data ? (
+            <>
+              <QualityPanel report={bars.data.quality} calendar={bars.data.calendar_reference} />
+              <CorporateActionsPanel bars={bars.data} />
+            </>
+          ) : null
+        }
+      />
 
       <section className="panel chart-panel" aria-labelledby="tv-heading">
         <h3 id="tv-heading" className="visually-hidden">
@@ -220,6 +238,66 @@ export function Markets() {
         <TradingViewWidget tvSymbol={meta?.tradingview_symbol ?? null} />
       </section>
     </>
+  )
+}
+
+/**
+ * Where the price is likely to be by the close (or by tomorrow's close when the market is shut),
+ * recomputed on every tick, and how busy trading is compared with a normal day.
+ */
+function LiveOutlook({
+  symbol,
+  price,
+  currency,
+  marketOpen,
+  volumeToday,
+  bars,
+  now,
+}: {
+  symbol: string
+  price: number | null
+  currency: string | null
+  marketOpen: boolean
+  volumeToday: number | null
+  bars: BarsResponse | undefined
+  now: number
+}) {
+  const analysis = useAnalysis(symbol)
+  const intraday = useQuery<{ chart: IntradayData }>({
+    queryKey: ['intraday', symbol, '1d'],
+    queryFn: () => fetchIntraday(symbol, '1d'),
+    retry: retryUnlessClientError,
+  })
+  if (!analysis.data || price === null) return null
+  const chart = intraday.data?.chart
+  const left = marketOpen ? sessionLeft(chart?.session_start ?? null, chart?.session_end ?? null, now / 1000) : null
+  const today = left !== null && left > 0 ? sessionRange(analysis.data, price, left) : null
+  const next = sessionRange(analysis.data, price, (today && left !== null ? left : 0) + 1)
+  const recent = bars?.chart.bars.slice(-20) ?? []
+  const avgVolume = recent.length ? recent.reduce((sum, b) => sum + b.volume, 0) / recent.length : 0
+  const relVol =
+    marketOpen && left !== null && volumeToday !== null ? relativeVolume(volumeToday, avgVolume, 1 - left) : null
+  return (
+    <ul className="plain-list live-outlook" data-testid="live-outlook">
+      {today ? (
+        <li>
+          Likely close today (9 in 10): <strong>{formatPrice(today[0], currency)}</strong> to{' '}
+          <strong>{formatPrice(today[1], currency)}</strong>
+        </li>
+      ) : null}
+      {next ? (
+        <li>
+          {today ? 'Likely close tomorrow' : 'Likely range by the next close'} (9 in 10):{' '}
+          {formatPrice(next[0], currency)} to {formatPrice(next[1], currency)}
+        </li>
+      ) : null}
+      {relVol !== null ? (
+        <li>
+          Trading is {relVol >= 1.5 ? 'busier than usual' : relVol <= 0.6 ? 'quieter than usual' : 'about normal'}:{' '}
+          {relVol.toFixed(1)}× a typical day’s volume so far
+        </li>
+      ) : null}
+    </ul>
   )
 }
 

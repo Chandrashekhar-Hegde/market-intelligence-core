@@ -236,6 +236,25 @@ NIFTY 50, Reliance, TCS, HDFC Bank, Infosys, AAPL, Bitcoin and the gold ETF. One
 place on one stock: Power Grid, RSI over a week. Every other instrument got "Hold: no proven edge".
 That is the expected result for liquid markets, and it is why calls are rare.
 
+## Plain-language cards and live ranges (web app)
+
+These are computed in `apps/web/src/plainLanguage.ts`, from API numbers only.
+- **Typical day:** σ<sub>daily</sub> = annual volatility / √(sessions per year), times the amount.
+- **Compared with the market:** β = ρ·σ<sub>stock</sub>/σ<sub>market</sub>, so
+  σ<sub>stock</sub>/σ<sub>market</sub> = β/ρ exactly. Shown only when β and ρ are positive.
+- **Bad day:** historical 95% one-day VaR and ES, times the amount.
+- **How much to put in:** maximum amount = the user's bad-day loss limit / 95% ES. The average loss
+  on the worst 1 day in 20 then equals the limit.
+- **Where it could be:** the 5% and 95% return quantiles of the GARCH-t projection (GBM when GARCH
+  wasn't fitted) at 5, 21 and 63 sessions, with the share of paths that gain.
+- **Likely close today / tomorrow:** the 5% and 95% one-session log-return quantiles of the same
+  projection, scaled by √(sessions left) and applied to the live price. For today, "sessions left"
+  is the share of the regular session still to trade. This square-root-of-time rule ignores
+  intraday seasonality, and the app uses it only for a day or two ahead.
+- **Relative volume:** today's volume / (20-day average daily volume × share of session elapsed).
+  This assumes volume accrues evenly. Real intraday volume is U-shaped, so the figure overstates
+  activity early and understates it midday.
+
 ## References
 
 Bollerslev (1986) J. Econometrics 31; Bollerslev (1987) REStat 69; Dickey & Fuller (1979) JASA 74;

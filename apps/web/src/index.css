@@ -1588,3 +1588,228 @@ ol {
 .change-down {
   color: #a23b32;
 }
+
+/* ---- advice, plain-language cards, maths drawer (Phase 0.6) ---- */
+.disclaimer {
+  grid-column: 1 / -1;
+  padding: 10px 2px 4px;
+  color: #4f5654;
+  font-size: 0.85rem;
+}
+
+.advice-card {
+  border-top: 4px solid #202423;
+}
+
+.stance {
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.stance-buy {
+  color: #1f6b5c;
+}
+
+.stance-sell {
+  color: #a23b32;
+}
+
+.stance-hold {
+  color: #202423;
+}
+
+.advice-headline {
+  margin: 8px 0 12px;
+  font-size: 1.08rem;
+}
+
+.advice-subhead {
+  margin: 18px 0 8px;
+  font-size: 1rem;
+}
+
+.confidence {
+  margin: 10px 0;
+}
+
+.confidence-bar {
+  position: relative;
+  height: 14px;
+  margin: 8px 0 4px;
+  background: #eef0ef;
+  border-radius: 7px;
+}
+
+.confidence-range {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(31, 122, 104, 0.35);
+  border-radius: 7px;
+}
+
+.confidence-mark {
+  position: absolute;
+  top: -3px;
+  width: 4px;
+  height: 20px;
+  margin-left: -2px;
+  background: #1f6b5c;
+  border-radius: 2px;
+}
+
+.confidence-coin {
+  position: absolute;
+  top: -3px;
+  height: 20px;
+  border-left: 2px dashed #4f5654;
+}
+
+.rule-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rule-list li {
+  padding: 10px 12px;
+  border: 1px solid #e3e7e5;
+  border-radius: 8px;
+}
+
+.rule-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.rule-proven {
+  color: #1f6b5c;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.rule-unproven {
+  color: #4f5654;
+  font-size: 0.85rem;
+}
+
+.live-flip {
+  margin-top: 4px;
+  color: #8a4b00;
+  font-weight: 650;
+}
+
+.position-size,
+.amount-input {
+  display: grid;
+  gap: 6px;
+}
+
+.position-size {
+  margin-top: 16px;
+  padding: 12px;
+  background: #f4f6f5;
+  border-radius: 8px;
+}
+
+.position-size input,
+.amount-input input {
+  max-width: 200px;
+  padding: 8px 10px;
+  font: inherit;
+  border: 1px solid #b9c1be;
+  border-radius: 6px;
+}
+
+.amount-input label,
+.position-size label {
+  font-weight: 650;
+}
+
+.meaning-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.meaning-card {
+  padding: 14px;
+  background: #f9faf9;
+  border: 1px solid #e3e7e5;
+  border-radius: 8px;
+}
+
+.meaning-card h4 {
+  margin-bottom: 6px;
+  font-size: 0.95rem;
+}
+
+.meaning-card p + p {
+  margin-top: 6px;
+}
+
+.live-outlook {
+  margin-top: 8px;
+}
+
+.maths-all > summary {
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.maths-title {
+  font-weight: 800;
+}
+
+.maths-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.maths-grid > .panel {
+  box-shadow: none;
+}
+
+@media (max-width: 1120px) {
+  .maths-grid > .panel {
+    grid-column: span 12;
+  }
+}
+
+/* Phones: the sidebar becomes a slim top bar instead of filling the first screen. */
+@media (max-width: 760px) {
+  .sidebar {
+    gap: 10px;
+    padding: 12px 14px;
+  }
+
+  .view-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-bottom: 0;
+  }
+
+  .view-tabs button {
+    justify-content: center;
+    padding: 8px 4px;
+    font-size: 0.85rem;
+    text-align: center;
+  }
+
+  .sidebar .status-box {
+    display: none;
+  }
+
+  .stance {
+    font-size: 1.6rem;
+  }
+}

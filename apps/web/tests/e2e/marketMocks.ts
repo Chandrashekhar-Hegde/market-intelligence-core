@@ -154,10 +154,6 @@ export async function mockMarketData(page: Page, { liveTicks = false } = {}) {
 }
 
 /** The fixture console lives behind the "Event lab" tab. */
-export async function openEventLab(page: Page) {
-  await page.getByRole('tab', { name: /event lab/i }).click()
-}
-
 function analysis(symbol: string) {
   const result = (statistic: number, p: number) => ({ statistic, p_value: p, reject_5pct: p < 0.05 })
   const last = bars(symbol).at(-1)!
@@ -237,6 +233,27 @@ function analysis(symbol: string) {
       quality: { passed: true, n_bars: 60, first_date: null, last_date: null, ohlc_violations: [], non_positive_prices: [], zero_volume_days: 0, missing_days: [], is_stale: false, outliers: [], warnings: [] },
     },
     benchmark: isEquity ? { symbol: '^NSEI', name: 'NIFTY 50', selection: 'auto', used: true, currency: 'INR', note: null } : null,
+    signals: {
+      first_date: '2016-11-24', last_date: last.date, n_days: 2466, round_trip_cost: 0.0025, n_tests: 6,
+      signals: [
+        {
+          id: 'trend_200d', name: 'Long-term trend', rule: 'Buy while the price is above its 200-day average; stay out below it.',
+          source: 'Faber (2007)', position_today: 1, today: 'The price is above its 200-day average.', flip_level: 1300,
+          tests: [5, 21, 63].map((h) => ({
+            horizon_days: h, n_obs: 2000, n_independent: Math.floor(400 / h), effect: 0.001, t_stat: 0.4, p_value: 0.34,
+            p_holm: 1, effect_first_half: 0.001, effect_second_half: 0.001, hit_rate: 0.52, hit_n: Math.floor(400 / h),
+            hit_low: 0.47, hit_high: 0.57, mean_return_long: 0.002, mean_return_short: 0.001, earns_place: false,
+            verdict: 'No reliable edge: this could be luck.',
+          })),
+        },
+      ],
+    },
+    advice: {
+      stance: 'hold', basis: 'no_evidence',
+      headline: 'Hold. No rule has a proven edge on this instrument: its past moves have not predicted its next ones well enough to beat trading costs.',
+      drivers: [], horizon_days: null, review_date: null, confidence: null, flip_level: null, reasons: [],
+    },
+    signals_note: null,
   }
 }
 

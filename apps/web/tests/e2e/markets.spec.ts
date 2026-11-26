@@ -17,6 +17,12 @@ test('search, pick an instrument, and see quote, charts, quality and TradingView
   await expect(page.getByRole('heading', { name: 'Reliance Industries Limited' })).toBeVisible()
   await expect(page.getByTestId('quote-price')).toHaveText(/₹1,377\.50/)
   await expect(page.getByTestId('live-state')).toHaveText('CLOSED')
+  // What to do comes first, in plain words; the statistics are folded away until asked for.
+  await expect(page.getByTestId('stance')).toHaveText('Hold')
+  await expect(page.getByTestId('advice')).toContainText('No proven edge')
+  await expect(page.getByTestId('meaning-cards')).toContainText('A bad day')
+  await expect(page.getByTestId('findings')).toBeHidden()
+  await page.getByText('Show all the maths').click()
   await expect(page.getByTestId('quality-badge')).toHaveText(/Usable/)
   await expect(page.getByText(/60 sessions/).first()).toBeVisible()
   await expect(page.getByText(/Dividend ₹5\.50/)).toBeVisible()
