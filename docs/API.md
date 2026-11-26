@@ -55,16 +55,18 @@ endpoints). Responses are cached in-process for 60 s (`5d`/`1mo`) or 15 min.
   for the live chart: `1d` is 1-minute bars of the latest session, `5d` is 5-minute bars. `t` is
   Unix seconds. `previous_close` is the price today's change is measured from (last price minus
   Yahoo's day change). Cached for 30 s; display only, never used in the analysis.
-- `GET /api/v1/news?symbol=` returns `{query, articles: [{article: {title, url, domain,
-  source_country, seen_at}, impact}], tone, tone_note, benchmark, beta, source, fetched_at}`.
-  - **Source:** GDELT DOC 2.0, English stories that mention the instrument's name (legal suffixes
-    dropped) over the last 3 days.
+- `GET /api/v1/news?symbol=` returns `{query, articles: [{article: {title, url, publisher, source,
+  seen_at, summary}, impact}], sources: [{name, ok, count, error}], benchmark, beta, fetched_at}`.
+  - **Sources**, all free and keyless, fetched at once:
+    - Google News RSS (the company name, India edition, last 3 days);
+    - the Economic Times and Mint markets feeds (items naming the company);
+    - GDELT.
+  - **Merging:** stories are de-duplicated by title and sorted newest first.
+  - **Failures:** each source reports `ok`, `count` and any `error`. A failed source never empties
+    the list; the response is `503` only when every source fails.
   - **`impact`:** the price move since the story from 5-minute bars, the part beyond β × the home
-    index, and how often a move that size happens by chance. It is null when the story is older
-    than the intraday window.
-  - **`tone`:** this week's GDELT tone against the previous ~3 months.
-  - **Errors:** GDELT allows one request every 5 s, so calls are paced and cached for 15 minutes; a
-    rate limit returns `503` with GDELT's words.
+    index, and how often a move that size happens by chance. It is null outside the intraday
+    window.
 - `GET /api/v1/stream?symbols=A,B` is a Server-Sent Events stream of `tick` events
   `{symbol, price, change, change_pct, day_high, day_low, day_volume, currency, exchange,
   tick_time, source}` from Yahoo's live streamer. It takes 1–20 symbols. The last known

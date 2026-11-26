@@ -324,7 +324,7 @@ function NewsPanel({ symbol }: { symbol: string }) {
   })
   return (
     <section className="panel chart-panel" aria-labelledby="news-heading" data-testid="news">
-      <p className="eyebrow">News · last 3 days · GDELT, about 15 minutes behind</p>
+      <p className="eyebrow">News · last 3 days · Google News, Economic Times, Mint, GDELT</p>
       <h3 id="news-heading">What the news says, and how the price took it</h3>
       {news.error ? (
         <p className="error-state" role="alert">
@@ -334,14 +334,17 @@ function NewsPanel({ symbol }: { symbol: string }) {
         <p className="empty-state">Searching the news…</p>
       ) : (
         <>
-          {news.data.tone ? (
-            <p data-testid="news-tone">
-              This week’s coverage is <strong>{news.data.tone.label}</strong> (tone {news.data.tone.recent_mean.toFixed(1)}{' '}
-              vs a 3-month average of {news.data.tone.baseline_mean.toFixed(1)}, on a scale from about −10 to +10).
-            </p>
-          ) : null}
+          <p className="quiet-copy news-sources" data-testid="news-sources">
+            Sources:{' '}
+            {news.data.sources.map((source, i) => (
+              <span key={source.name} title={source.error ?? undefined}>
+                {i > 0 ? ' · ' : ''}
+                {source.name} {source.ok ? `✓ ${source.count}` : '✗ unavailable'}
+              </span>
+            ))}
+          </p>
           {news.data.articles.length === 0 ? (
-            <p className="quiet-copy">No English-language stories in the last 3 days.</p>
+            <p className="quiet-copy">No stories naming it in the last 3 days.</p>
           ) : (
             <ul className="news-list">
               {news.data.articles.slice(0, 12).map(({ article, impact }) => (
@@ -351,7 +354,8 @@ function NewsPanel({ symbol }: { symbol: string }) {
                   </a>
                   <span className="quiet-copy">
                     {' '}
-                    {article.domain} · {timeAgo(article.seen_at, now)}
+                    {article.publisher}
+                    {article.source !== article.publisher ? ` via ${article.source}` : ''} · {timeAgo(article.seen_at, now)}
                   </span>
                   {impact ? (
                     <p className="news-impact">
@@ -370,7 +374,7 @@ function NewsPanel({ symbol }: { symbol: string }) {
             </ul>
           )}
           <p className="quiet-copy">
-            Stories are found by searching for “{news.data.query.split('"')[1]}”, so some may be off-topic. News does not
+            Stories are found by searching for “{news.data.query}”, so some may be off-topic. News does not
             change the call above yet: news can’t be tested like the trading rules until enough of its history is
             stored.
           </p>

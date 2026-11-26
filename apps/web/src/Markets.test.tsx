@@ -274,28 +274,32 @@ function intradayResponse(): { chart: IntradayData } {
 }
 
 function newsResponse(): NewsResponse {
+  const story = (title: string, publisher: string, source: string, hoursAgo: number) => ({
+    title, url: `https://example.test/${title.length}`, publisher, source, summary: null,
+    seen_at: new Date(Date.now() - hoursAgo * 3600_000).toISOString(),
+  })
   return {
     symbol: '^NSEI',
-    query: '"NIFTY 50" sourcelang:english',
+    query: 'NIFTY 50',
     articles: [
       {
-        article: { title: 'Indian stocks hit fresh highs', url: 'https://example.test/a', domain: 'economictimes.indiatimes.com', source_country: 'India', seen_at: new Date(Date.now() - 2 * 3600_000).toISOString() },
+        article: { ...story('Indian stocks hit fresh highs', 'Economic Times', 'Economic Times', 2), url: 'https://example.test/a' },
         impact: { instrument_move: 0.0099, market_move: null, abnormal_move: 0.0099, sessions_elapsed: 0.3, z: 1.1, one_in: 3.7 },
       },
       {
-        article: { title: 'Budget surprise', url: 'https://example.test/b', domain: 'livemint.com', source_country: 'India', seen_at: new Date(Date.now() - 26 * 3600_000).toISOString() },
+        article: story('Budget surprise', 'Livemint', 'Google News', 26),
         impact: { instrument_move: -0.0305, market_move: null, abnormal_move: -0.0305, sessions_elapsed: 1, z: -2.6, one_in: 107 },
       },
-      {
-        article: { title: 'Old story', url: 'https://example.test/c', domain: 'reuters.com', source_country: null, seen_at: new Date(Date.now() - 70 * 3600_000).toISOString() },
-        impact: null,
-      },
+      { article: story('Old story', 'reuters.com', 'GDELT', 70), impact: null },
     ],
-    tone: { recent_mean: -2.1, baseline_mean: -0.8, baseline_sd: 0.9, n_recent: 7, n_baseline: 80, z: -3.8, label: 'more negative than usual' },
-    tone_note: null,
+    sources: [
+      { name: 'Google News', ok: true, count: 1, error: null },
+      { name: 'Economic Times', ok: true, count: 1, error: null },
+      { name: 'Mint', ok: true, count: 0, error: null },
+      { name: 'GDELT', ok: false, count: 0, error: 'gdelt status 429 Too Many Requests' },
+    ],
     benchmark: null,
     beta: null,
-    source: 'gdelt-doc-2.0',
     fetched_at: new Date().toISOString(),
   }
 }
@@ -902,23 +906,23 @@ describe('advice card', () => {
 })
 
 describe('news panel', () => {
-  test('headlines with time, measured reaction and this week’s tone', async () => {
+  test('headlines from every source with outlet, time and measured reaction', async () => {
     mockApi()
     renderMarkets()
     const news = await screen.findByTestId('news')
-    expect(await within(news).findByTestId('news-tone')).toHaveTextContent(
-      'This week’s coverage is more negative than usual (tone -2.1 vs a 3-month average of -0.8',
+    expect(await within(news).findByTestId('news-sources')).toHaveTextContent(
+      'Sources: Google News ✓ 1 · Economic Times ✓ 1 · Mint ✓ 0 · GDELT ✗ unavailable',
     )
     expect(within(news).getByRole('link', { name: 'Indian stocks hit fresh highs' })).toHaveAttribute('href', 'https://example.test/a')
-    expect(news).toHaveTextContent('economictimes.indiatimes.com · 2 h ago')
+    expect(news).toHaveTextContent('Economic Times · 2 h ago')
+    expect(news).toHaveTextContent('Livemint via Google News · 26 h ago')
     expect(news).toHaveTextContent('Since then: +1.0%. An ordinary move for this instrument')
     expect(news).toHaveTextContent('Since then: -3.0%. Unusual: a move this size happens about 1 in 107 times without news.')
     expect(news).toHaveTextContent('searching for “NIFTY 50”')
-    expect(news).toHaveTextContent('News does not change the call above yet')
   })
 
-  test('a GDELT outage is said plainly and does not break the page', async () => {
-    mockApi({ '/api/v1/news': () => Response.json({ error: 'gdelt: Please limit requests to one every 5 seconds' }, { status: 503 }) })
+  test('every source down is said plainly and does not break the page', async () => {
+    mockApi({ '/api/v1/news': () => Response.json({ error: 'Google News: status 503; gdelt status 429' }, { status: 503 }) })
     renderMarkets()
     expect(await screen.findByText(/News is unavailable right now/)).toBeInTheDocument()
     expect(screen.getByTestId('advice')).toBeInTheDocument()

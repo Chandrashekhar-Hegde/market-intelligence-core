@@ -56,6 +56,8 @@ pub struct ApiConfig {
     pub yahoo_stream_url: Option<String>,
     /// Override the GDELT news endpoint (tests point it at a local stub).
     pub gdelt_base_url: Option<String>,
+    /// Serve Google News and the publisher feeds from one stub (tests).
+    pub news_base_url: Option<String>,
 }
 
 impl Default for ApiConfig {
@@ -73,6 +75,7 @@ impl Default for ApiConfig {
             yahoo_base_url: None,
             yahoo_stream_url: None,
             gdelt_base_url: None,
+            news_base_url: None,
         }
     }
 }
@@ -85,6 +88,7 @@ struct AppState {
     yahoo: YahooClient,
     stream: YahooStream,
     gdelt: gm_integrations::gdelt::GdeltClient,
+    news: gm_integrations::news::NewsClient,
     access_token: Option<Arc<str>>,
 }
 
@@ -327,6 +331,11 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
         gdelt: config
             .gdelt_base_url
             .map(gm_integrations::gdelt::GdeltClient::new)
+            .unwrap_or_default(),
+        news: config
+            .news_base_url
+            .as_deref()
+            .map(gm_integrations::news::NewsClient::stub)
             .unwrap_or_default(),
         access_token: config
             .access_token
@@ -949,8 +958,11 @@ async fn news(
     State(state): State<AppState>,
     Query(query): Query<QuoteQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    use gm_domain::analysis::news::{ImpactInput, impact, tone_summary};
-    use gm_integrations::gdelt::{SOURCE, news_query};
+    use gm_domain::analysis::news::{ImpactInput, impact};
+    use gm_integrations::{
+        gdelt::{company_phrase, news_query},
+        news::{Story, dedupe_key, mentions},
+    };
     let chart = state
         .yahoo
         .chart(&query.symbol, "1y")
@@ -958,16 +970,69 @@ async fn news(
         .map_err(ApiError::provider)?;
     let meta = &chart.meta;
     let name = meta.name.clone().unwrap_or_else(|| meta.symbol.clone());
-    let search = news_query(&name).ok_or_else(|| {
+    let phrase = company_phrase(&name).ok_or_else(|| {
         ApiError::bad_request(format!("{name:?} is too short to search news for"))
     })?;
-    let articles = state
-        .gdelt
-        .articles(&search)
-        .await
-        .map_err(ApiError::provider)?;
-    // Tone is a second request; best-effort, so headlines still show if it is rate-limited.
-    let tone = state.gdelt.tone(&search).await;
+    let gdelt_query = news_query(&name).unwrap_or_default();
+
+    // Every source at once; each one's outcome is reported, and one failing never hides others.
+    let (google, feeds, gdelt) = tokio::join!(
+        state.news.google(&phrase),
+        state.news.feeds(),
+        state.gdelt.articles(&gdelt_query),
+    );
+    let mut sources = Vec::new();
+    let mut stories: Vec<Story> = Vec::new();
+    let mut report = |name: &str, result: Result<Vec<Story>, String>| match result {
+        Ok(found) => {
+            sources.push(serde_json::json!({ "name": name, "ok": true, "count": found.len(), "error": null }));
+            stories.extend(found);
+        }
+        Err(e) => {
+            sources.push(serde_json::json!({ "name": name, "ok": false, "count": 0, "error": e }))
+        }
+    };
+    report(
+        gm_integrations::news::GOOGLE_NEWS,
+        google.map(|s| s.to_vec()).map_err(|e| e.to_string()),
+    );
+    for (name, result) in feeds {
+        report(
+            name,
+            result
+                .map(|s| s.iter().filter(|x| mentions(x, &phrase)).cloned().collect())
+                .map_err(|e| e.to_string()),
+        );
+    }
+    report(
+        "GDELT",
+        gdelt
+            .map(|found| {
+                found
+                    .into_iter()
+                    .map(|a| Story {
+                        title: a.title,
+                        url: a.url,
+                        publisher: a.domain,
+                        source: "GDELT".to_string(),
+                        seen_at: a.seen_at,
+                        summary: None,
+                    })
+                    .collect()
+            })
+            .map_err(|e| e.to_string()),
+    );
+    if sources.iter().all(|s| s["ok"] == false) {
+        let errors: Vec<_> = sources.iter().filter_map(|s| s["error"].as_str()).collect();
+        return Err(ApiError::provider(
+            gm_integrations::ProviderError::Unavailable(errors.join("; ")),
+        ));
+    }
+    // Newest first, one entry per story across sources. Every source is already recent
+    // (Google News `when:3d`, GDELT 3 days, publisher feeds hold their latest items).
+    stories.sort_by_key(|s| std::cmp::Reverse(s.seen_at));
+    let mut seen = std::collections::HashSet::new();
+    stories.retain(|s| seen.insert(dedupe_key(&s.title)));
 
     // Reaction: 5-minute bars of the instrument and its home index over the last 5 sessions.
     let bench_symbol = markets::default_benchmark(
@@ -1034,26 +1099,20 @@ async fn news(
         },
         session_seconds,
     };
-    let articles: Vec<_> = articles
+    let articles: Vec<_> = stories
         .into_iter()
-        .map(|a| {
-            let reaction = impact(&input, a.seen_at.timestamp());
-            serde_json::json!({ "article": a, "impact": reaction })
+        .map(|story| {
+            let reaction = impact(&input, story.seen_at.timestamp());
+            serde_json::json!({ "article": story, "impact": reaction })
         })
         .collect();
-    let (tone_summary_json, tone_note) = match &tone {
-        Ok(daily_tone) => (tone_summary(daily_tone), None),
-        Err(e) => (None, Some(e.to_string())),
-    };
     Ok(Json(serde_json::json!({
         "symbol": meta.symbol,
-        "query": search,
+        "query": phrase,
         "articles": articles,
-        "tone": tone_summary_json,
-        "tone_note": tone_note,
+        "sources": sources,
         "benchmark": exposure.as_ref().map(|e| e.symbol.clone()),
         "beta": exposure.as_ref().map(|e| e.beta),
-        "source": SOURCE,
         "fetched_at": chrono::Utc::now(),
     })))
 }
@@ -2591,7 +2650,6 @@ mod tests {
             }
             match params.get("mode").map(String::as_str) {
                 Some("artlist") => GDELT_ARTICLES.to_string(),
-                Some("timelinetone") => GDELT_TONE.to_string(),
                 _ => "unknown mode".to_string(),
             }
         };
@@ -2607,58 +2665,117 @@ mod tests {
 
     const GDELT_ARTICLES: &str =
         include_str!("../../gm-integrations/tests/fixtures/gdelt_articles_reliance.json");
-    const GDELT_TONE: &str =
-        include_str!("../../gm-integrations/tests/fixtures/gdelt_tone_reliance.json");
     const GDELT_LIMITED: &str =
         include_str!("../../gm-integrations/tests/fixtures/gdelt_rate_limited.txt");
 
-    #[tokio::test]
-    async fn news_lists_headlines_with_tone_and_measured_reaction() {
-        let app = build_app(ApiConfig {
+    const GOOGLE_RSS: &str =
+        include_str!("../../gm-integrations/tests/fixtures/googlenews_reliance.xml");
+    const ET_RSS: &str = include_str!("../../gm-integrations/tests/fixtures/et_markets.xml");
+    const MINT_RSS: &str = include_str!("../../gm-integrations/tests/fixtures/mint_markets.xml");
+
+    /// Google News and the publisher feeds from recordings; `google_down` answers an HTML page.
+    async fn news_stub(google_down: bool) -> String {
+        let google = move || async move {
+            if google_down {
+                "<html>unusual traffic</html>"
+            } else {
+                GOOGLE_RSS
+            }
+        };
+        let stub = Router::new()
+            .route("/rss/search", get(google))
+            .route("/et.xml", get(|| async { ET_RSS }))
+            .route("/mint.xml", get(|| async { MINT_RSS }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+        format!("http://{addr}")
+    }
+
+    async fn news_app(google_down: bool, gdelt_limited: bool) -> Router {
+        build_app(ApiConfig {
             yahoo_base_url: Some(yahoo_stub(false).await),
             yahoo_stream_url: Some(stream_stub().await),
-            gdelt_base_url: Some(gdelt_stub(false).await),
+            gdelt_base_url: Some(gdelt_stub(gdelt_limited).await),
+            news_base_url: Some(news_stub(google_down).await),
             ..ApiConfig::default()
         })
         .await
-        .unwrap();
-        let (status, body) = get_json(app, "/api/v1/news?symbol=RELIANCE.NS").await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        // The fixture chart's name is Reliance's; legal suffix dropped, quoted, English only.
-        assert_eq!(body["query"], "\"Reliance Industries\" sourcelang:english");
-        let articles = body["articles"].as_array().unwrap();
-        assert_eq!(articles.len(), 3);
-        // Seen 05:30 UTC, inside the recorded 1-minute session: a reaction is measured.
-        // The stub serves the same series for the stock and NIFTY (beta 1), so the move beyond
-        // the market is exactly zero: wiring checked here, the maths in gm-domain news tests.
-        let first = &articles[0]["impact"];
-        assert_eq!(body["benchmark"], "^NSEI");
-        assert!(
-            first["instrument_move"].as_f64().unwrap().abs() > 0.0,
-            "{first}"
-        );
-        assert!(
-            (first["instrument_move"].as_f64().unwrap() - first["market_move"].as_f64().unwrap())
-                .abs()
-                < 1e-12,
-            "{first}"
-        );
-        assert!(
-            first["abnormal_move"].as_f64().unwrap().abs() < 1e-9,
-            "{first}"
-        );
-        // Two days before the intraday window: no reaction claimed.
-        assert!(articles[2]["impact"].is_null());
-        assert_eq!(body["tone"]["label"], "more negative than usual");
-        assert_eq!(body["source"], "gdelt-doc-2.0");
+        .unwrap()
     }
 
     #[tokio::test]
-    async fn news_rate_limit_is_a_503_with_gdelts_words() {
+    async fn news_merges_every_source_and_reports_each() {
+        let (status, body) = get_json(
+            news_app(false, false).await,
+            "/api/v1/news?symbol=RELIANCE.NS",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["query"], "Reliance Industries");
+        let sources = body["sources"].as_array().unwrap();
+        let count = |name: &str| {
+            let s = sources.iter().find(|s| s["name"] == name).unwrap();
+            assert_eq!(s["ok"], true, "{s}");
+            s["count"].as_u64().unwrap()
+        };
+        assert_eq!(count("Google News"), 27);
+        assert_eq!(count("GDELT"), 3);
+        // The recorded ET and Mint feeds don't name Reliance Industries: kept out.
+        assert_eq!(count("Economic Times"), 0);
+        assert_eq!(count("Mint"), 0);
+        let articles = body["articles"].as_array().unwrap();
+        // 27 + 3, less one headline Google News carried twice (two outlets, same title).
+        assert_eq!(articles.len(), 29);
+        let times: Vec<_> = articles
+            .iter()
+            .map(|a| a["article"]["seen_at"].as_str().unwrap())
+            .collect();
+        assert!(times.windows(2).all(|w| w[0] >= w[1]), "newest first");
+        // GDELT's 05:30 UTC story falls inside the recorded intraday session: its reaction is
+        // measured. The stub's NIFTY is the same series, so the move beyond the market is zero.
+        let gdelt = articles
+            .iter()
+            .find(|a| a["article"]["source"] == "GDELT" && !a["impact"].is_null())
+            .unwrap();
+        assert!(
+            gdelt["impact"]["abnormal_move"].as_f64().unwrap().abs() < 1e-9,
+            "{gdelt}"
+        );
+        assert_eq!(body["benchmark"], "^NSEI");
+    }
+
+    #[tokio::test]
+    async fn news_survives_a_failed_source_and_503s_only_when_all_fail() {
+        let (status, body) = get_json(
+            news_app(true, true).await,
+            "/api/v1/news?symbol=RELIANCE.NS",
+        )
+        .await;
+        // Google answered a block page and GDELT a rate limit; ET and Mint still worked.
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let google = body["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == "Google News")
+            .unwrap()
+            .clone();
+        assert_eq!(google["ok"], false);
+        assert!(
+            google["error"]
+                .as_str()
+                .unwrap()
+                .contains("unusual traffic"),
+            "{google}"
+        );
+
+        // Every source down: a 503 that carries each reason.
         let app = build_app(ApiConfig {
             yahoo_base_url: Some(yahoo_stub(false).await),
             yahoo_stream_url: Some(stream_stub().await),
             gdelt_base_url: Some(gdelt_stub(true).await),
+            news_base_url: Some("http://127.0.0.1:9".to_string()),
             ..ApiConfig::default()
         })
         .await
@@ -2669,7 +2786,8 @@ mod tests {
             body["error"]
                 .as_str()
                 .unwrap()
-                .contains("one every 5 seconds")
+                .contains("one every 5 seconds"),
+            "{body}"
         );
     }
 

@@ -415,26 +415,20 @@ export type NewsImpact = {
   one_in: number
 }
 
+export type NewsSource = { name: string; ok: boolean; count: number; error: string | null }
+
 export type NewsResponse = {
   symbol: string
+  /** The company name searched for. */
   query: string
   articles: {
-    article: { title: string; url: string; domain: string; source_country: string | null; seen_at: string }
+    article: { title: string; url: string; publisher: string; source: string; seen_at: string; summary: string | null }
     impact: NewsImpact | null
   }[]
-  tone: null | {
-    recent_mean: number
-    baseline_mean: number
-    baseline_sd: number
-    n_recent: number
-    n_baseline: number
-    z: number
-    label: string
-  }
-  tone_note: string | null
+  /** Every source tried, and what it returned. */
+  sources: NewsSource[]
   benchmark: string | null
   beta: number | null
-  source: string
   fetched_at: string
 }
 

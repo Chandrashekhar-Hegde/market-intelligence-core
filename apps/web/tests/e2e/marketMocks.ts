@@ -142,13 +142,21 @@ export async function mockMarketData(page: Page, { liveTicks = false } = {}) {
   await page.route('**/api/v1/news**', (route) =>
     route.fulfill({
       json: {
-        symbol: 'RELIANCE.NS', query: '"Reliance Industries" sourcelang:english',
+        symbol: 'RELIANCE.NS', query: 'Reliance Industries',
         articles: [{
-          article: { title: 'Reliance wins a large order', url: 'https://example.test/r', domain: 'livemint.com', source_country: 'India', seen_at: new Date(Date.now() - 3600_000).toISOString() },
+          article: {
+            title: 'Reliance wins a large order', url: 'https://example.test/r', publisher: 'Livemint', source: 'Google News',
+            seen_at: new Date(Date.now() - 3600_000).toISOString(), summary: null,
+          },
           impact: { instrument_move: 0.021, market_move: 0.002, abnormal_move: 0.019, sessions_elapsed: 0.2, z: 2.9, one_in: 270 },
         }],
-        tone: { recent_mean: 0.4, baseline_mean: -0.5, baseline_sd: 1, n_recent: 7, n_baseline: 80, z: 2.4, label: 'more positive than usual' },
-        tone_note: null, benchmark: '^NSEI', beta: 1.1, source: 'gdelt-doc-2.0', fetched_at: new Date().toISOString(),
+        sources: [
+          { name: 'Google News', ok: true, count: 1, error: null },
+          { name: 'Economic Times', ok: true, count: 0, error: null },
+          { name: 'Mint', ok: true, count: 0, error: null },
+          { name: 'GDELT', ok: false, count: 0, error: 'rate-limited' },
+        ],
+        benchmark: '^NSEI', beta: 1.1, fetched_at: new Date().toISOString(),
       },
     }),
   )

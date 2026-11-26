@@ -1,6 +1,6 @@
-//! GDELT DOC 2.0 news search: recent English-language articles that mention a company, and the
-//! daily average tone of that coverage. Free, keyless, about 15 minutes behind, and it searches a
-//! rolling ~3-month window only. Nothing is stored.
+//! GDELT DOC 2.0 news search: recent English-language articles that mention a company. Free,
+//! keyless, about 15 minutes behind. One of several sources (see `news.rs`); it rate-limits
+//! shared cloud IPs such as Railway's. Nothing is stored.
 //!
 //! GDELT allows one request every 5 seconds per IP and answers faster callers with a plain-text
 //! notice (HTTP 200), so requests are paced through one lock and results cached for 15 minutes.
@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::ProviderError;
@@ -45,22 +45,6 @@ struct WireArticle {
     domain: String,
     sourcecountry: Option<String>,
     seendate: String,
-}
-
-#[derive(Deserialize)]
-struct Timeline {
-    timeline: Vec<Series>,
-}
-
-#[derive(Deserialize)]
-struct Series {
-    data: Vec<Point>,
-}
-
-#[derive(Deserialize)]
-struct Point {
-    date: String,
-    value: f64,
 }
 
 fn snippet(body: &str) -> String {
@@ -115,25 +99,15 @@ pub fn parse_articles(body: &str) -> Result<Vec<Article>, ProviderError> {
     Ok(articles)
 }
 
-/// Daily average tone (GDELT's scale: roughly −10 very negative to +10 very positive).
-pub fn parse_tone(body: &str) -> Result<Vec<(NaiveDate, f64)>, ProviderError> {
-    let json = json_or_error(body)?;
-    let timeline: Timeline = serde_json::from_str(json).map_err(|e| {
-        ProviderError::Unavailable(format!("malformed gdelt tone ({e}): {}", snippet(body)))
-    })?;
-    let series = timeline.timeline.into_iter().next().ok_or_else(|| {
-        ProviderError::Unavailable(format!("gdelt tone has no series: {}", snippet(body)))
-    })?;
-    Ok(series
-        .data
-        .into_iter()
-        .filter_map(|p| Some((parse_seen(&p.date)?.date_naive(), p.value)))
-        .collect())
-}
-
-/// The search phrase for an instrument: its name without legal suffixes, quoted, English only.
+/// GDELT's query for an instrument: its company phrase, quoted, English only.
 /// "Reliance Industries Limited" → `"Reliance Industries" sourcelang:english`.
 pub fn news_query(name: &str) -> Option<String> {
+    company_phrase(name).map(|phrase| format!("\"{phrase}\" sourcelang:english"))
+}
+
+/// An instrument's name without legal suffixes: "Reliance Industries Limited" →
+/// "Reliance Industries". None when what is left is too short to search for.
+pub fn company_phrase(name: &str) -> Option<String> {
     const SUFFIXES: [&str; 14] = [
         "limited",
         "ltd.",
@@ -161,8 +135,8 @@ pub fn news_query(name: &str) -> Option<String> {
         words.pop();
     }
     let phrase = words.join(" ");
-    // GDELT rejects very short phrases.
-    (phrase.len() >= 3).then(|| format!("\"{phrase}\" sourcelang:english"))
+    // Very short phrases match everything (and GDELT rejects them).
+    (phrase.len() >= 3).then_some(phrase)
 }
 
 type Cache = HashMap<(String, &'static str), (Instant, Arc<String>)>;
@@ -208,14 +182,6 @@ impl GdeltClient {
                         ("sort", "datedesc"),
                     ],
                 )
-                .await?,
-        )
-    }
-
-    pub async fn tone(&self, query: &str) -> Result<Vec<(NaiveDate, f64)>, ProviderError> {
-        parse_tone(
-            &self
-                .get(query, "timelinetone", &[("timespan", "3m")])
                 .await?,
         )
     }
@@ -288,10 +254,9 @@ mod tests {
     // Constructed in GDELT's documented shape (artlist fields as seen live on 2026-11-26); GDELT
     // was rate-limiting this machine when the fixtures were made. Replace with recordings.
     const ARTICLES: &str = include_str!("../tests/fixtures/gdelt_articles_reliance.json");
-    const TONE: &str = include_str!("../tests/fixtures/gdelt_tone_reliance.json");
 
     #[test]
-    fn parses_articles_newest_first_and_daily_tone() {
+    fn parses_articles_newest_first() {
         let articles = parse_articles(ARTICLES).unwrap();
         assert_eq!(articles.len(), 3);
         assert!(articles.windows(2).all(|w| w[0].seen_at >= w[1].seen_at));
@@ -300,9 +265,6 @@ mod tests {
             articles[0].seen_at.to_rfc3339(),
             "2026-11-26T05:30:00+00:00"
         );
-        let tone = parse_tone(TONE).unwrap();
-        assert_eq!(tone.len(), 90);
-        assert_eq!(tone[0].0, NaiveDate::from_ymd_opt(2026, 8, 28).unwrap());
     }
 
     #[test]
@@ -317,19 +279,18 @@ mod tests {
         assert_eq!(q("Bitcoin USD"), "\"Bitcoin\" sourcelang:english");
         assert_eq!(q("NIFTY 50"), "\"NIFTY 50\" sourcelang:english");
         assert!(news_query("AB").is_none());
+        assert_eq!(
+            company_phrase("Infosys Limited").as_deref(),
+            Some("Infosys")
+        );
     }
 
     #[test]
     fn rate_limit_notice_is_an_error_with_its_text() {
-        for result in [
-            parse_articles(RATE_LIMITED).err(),
-            parse_tone(RATE_LIMITED).err(),
-        ] {
-            let Some(ProviderError::Unavailable(message)) = result else {
-                panic!("a rate-limit notice must be an error");
-            };
-            assert!(message.contains("one every 5 seconds"), "{message}");
-        }
+        let Err(ProviderError::Unavailable(message)) = parse_articles(RATE_LIMITED) else {
+            panic!("a rate-limit notice must be an error");
+        };
+        assert!(message.contains("one every 5 seconds"), "{message}");
     }
 
     #[test]
