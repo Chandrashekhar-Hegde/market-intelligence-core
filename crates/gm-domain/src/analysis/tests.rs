@@ -343,3 +343,97 @@ fn near_normal_returns_do_not_hang_the_t_quantile() {
     // Fat tails cost more: t(5) 99% VaR exceeds the normal's.
     assert!(at(5.0).var > at(f64::INFINITY).var);
 }
+
+/// Trading rules and their walk-forward tests against pandas/statsmodels (HAC, uniform kernel)
+/// on AAPL closes with the same synthetic volume series as scripts/gen_reference.py.
+#[test]
+fn signals_match_statsmodels_on_aapl() {
+    use super::signals::{SignalInput, evaluate, obv_series, rsi_series};
+    let prices = load(AAPL);
+    let dates: Vec<NaiveDate> = prices.iter().map(|(d, _)| *d).collect();
+    let closes: Vec<f64> = prices.iter().map(|(_, p)| *p).collect();
+    let volume: Vec<f64> = (0..closes.len())
+        .map(|i| 1e6 * (1.0 + 0.5 * (i as f64 / 7.0).sin()) + 1e5 * (i % 13) as f64)
+        .collect();
+    let x = &reference()["signals_aapl"];
+
+    let rsi = rsi_series(&closes, 14);
+    close(rsi[20].unwrap(), &x["rsi_20"], 1e-9, "rsi[20]");
+    close(
+        rsi.last().unwrap().unwrap(),
+        &x["rsi_last"],
+        1e-9,
+        "rsi last",
+    );
+    close(
+        *obv_series(&closes, &volume).last().unwrap(),
+        &x["obv_last"],
+        1e-9,
+        "obv",
+    );
+
+    let s = evaluate(&SignalInput {
+        dates: &dates,
+        close: &closes,
+        volume: Some(&volume),
+    })
+    .unwrap();
+    for sig in &s.signals {
+        assert_eq!(
+            f64::from(sig.position_today),
+            x["positions_today"][&sig.id].as_f64().unwrap(),
+            "{} today",
+            sig.id
+        );
+    }
+    let expected = x["tests"].as_array().unwrap();
+    assert_eq!(s.n_tests, expected.len());
+    for e in expected {
+        let id = e["signal"].as_str().unwrap();
+        let h = e["h"].as_u64().unwrap() as usize;
+        let t = s
+            .signals
+            .iter()
+            .find(|g| g.id == id)
+            .and_then(|g| g.tests.iter().find(|t| t.horizon_days == h))
+            .unwrap_or_else(|| panic!("{id} h={h} missing"));
+        let what = |f: &str| format!("{id} h={h} {f}");
+        assert_eq!(
+            t.n_obs as u64,
+            e["n_obs"].as_u64().unwrap(),
+            "{}",
+            what("n_obs")
+        );
+        assert_eq!(
+            t.n_independent as u64,
+            e["n_independent"].as_u64().unwrap(),
+            "{}",
+            what("n_ind")
+        );
+        assert_eq!(
+            t.hit_n as u64,
+            e["hit_n"].as_u64().unwrap(),
+            "{}",
+            what("hit_n")
+        );
+        close(t.effect, &e["effect"], 1e-8, &what("effect"));
+        close(t.t_stat, &e["t_stat"], 1e-8, &what("t"));
+        close(t.p_value, &e["p_value"], 1e-6, &what("p"));
+        close(t.p_holm, &e["p_holm"], 1e-6, &what("p_holm"));
+        close(
+            t.effect_first_half,
+            &e["first_half"],
+            1e-8,
+            &what("first half"),
+        );
+        close(
+            t.effect_second_half,
+            &e["second_half"],
+            1e-8,
+            &what("second half"),
+        );
+        close(t.hit_rate.unwrap(), &e["hit_rate"], 1e-12, &what("hit"));
+        close(t.hit_low.unwrap(), &e["hit_low"], 1e-9, &what("hit low"));
+        close(t.hit_high.unwrap(), &e["hit_high"], 1e-9, &what("hit high"));
+    }
+}

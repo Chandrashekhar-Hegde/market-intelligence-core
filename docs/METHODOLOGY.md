@@ -168,6 +168,74 @@ Every series is checked for:
 - extreme returns. A robust z above 8 (MAD-based) is flagged, and flagged moves within 3 days of a
   split or dividend are marked as such.
 
+## Signals and advice (`signals`, `advice` in `/api/v1/analyze`)
+
+Buy/Hold/Sell appears only when a rule has worked **on this instrument**, out of sample. Code:
+`crates/gm-domain/src/analysis/signals.rs`.
+
+**Data.** Up to 10 years of daily split- and dividend-adjusted closes and volumes (a separate,
+cached fetch), because the 3-month horizon needs 30+ separate calls.
+
+**Rules.** Published parameters, never tuned here. Each gives +1 (buy), −1 (sell / stay out) or 0
+(no view) at the close of day *t*, from data up to *t* only.
+
+| Rule | Position | Source |
+|---|---|---|
+| `trend_200d` | +1 if close > 200-day simple average, else −1 | Faber (2007); Moskowitz, Ooi & Pedersen (2012) |
+| `momentum_12_1` | sign of ln(P<sub>t−21</sub>/P<sub>t−252</sub>) | Jegadeesh & Titman (1993); Moskowitz et al. (2012) |
+| `reversal_5d` | +1 if the 5-day log return is in the bottom 10% of the previous 252 days' 5-day returns, −1 if in the top 10% | Lehmann (1990); Jegadeesh (1990) |
+| `rsi_14` | +1 if Wilder's 14-day RSI < 30, −1 if > 70 | Wilder (1978) |
+| `volume_spike` | +1 if volume is in the top 10% of the previous 252 days | Gervais, Kaniel & Mingelgrin (2001) |
+| `pressure_obv` | +1 if on-balance volume is above its value 20 sessions ago, else −1 | Granville (1963) |
+
+"Top/bottom 10% of the previous year" is calibrated on the instrument's own trailing 252 days.
+Volume rules run only when at least 90% of days report volume (indices and FX usually don't).
+
+**Test.** For each rule and horizon *h* ∈ {5, 21, 63} sessions:
+1. Regress the *h*-day forward log return on the position: *r*<sub>t→t+h</sub> = *a* + *b*·pos<sub>t</sub>.
+   The slope *b* is the timing effect.
+2. Forward returns overlap, so the error is MA(*h*−1). Standard errors use equal weights on lags
+   1…*h*−1 (Hansen & Hodrick 1980), with Newey–West (1987) as the fallback if that sum is not
+   positive. Bartlett (Newey–West) weights understated the variance here: on simulated random walks
+   they gave 6.5% false "proven" rules.
+3. One-sided p-value (H1: *b* > 0) from Student *t* with *n*<sub>ind</sub> − 1 degrees of freedom,
+   where *n*<sub>ind</sub> = (days with a non-zero position) / *h*.
+4. Holm (1979) step-down correction across every rule × horizon tested on the instrument (18 with
+   volume, 12 without).
+5. Hit rate on non-overlapping calls (every *h*-th active day), with a Wilson (1927) 95% interval.
+
+**A rule earns its place** only if all four hold:
+- Holm-adjusted p < 0.05;
+- *b* ≥ 0.25%, the round-trip cost of an Indian delivery trade: STT 0.1% each side (Finance (No. 2)
+  Act 2004, as amended), stamp duty 0.015% on the buy (Indian Stamp Act, 2020 amendment), NSE
+  transaction and SEBI fees, GST on fees, and a spread allowance, rounded up;
+- *b* > 0 in both halves of the sample;
+- *n*<sub>ind</sub> ≥ 30.
+
+**Advice.**
+- **Buy:** a proven rule says +1 today and none says −1.
+- **Sell / stay out:** the reverse.
+- **Hold:** proven rules disagree (`conflict`), none is active today (`proven_but_quiet`), or none
+  is proven (`no_evidence`).
+
+The leading rule is the one with the smallest adjusted p. It sets:
+- the horizon, and a review date *h* sessions ahead (weekdays, or calendar days when the history
+  has weekend dates);
+- the confidence: its hit rate, Wilson interval and number of calls;
+- the flip level, if the rule has one (the 200-day average).
+
+**Checks.**
+- Positions, RSI, OBV and every test statistic match pandas/statsmodels (HAC, uniform kernel) on 5
+  years of AAPL to 1e-8.
+- A planted ±0.4%/day year-long trend makes the trend rule earn its place.
+- 200 seeded fat-tailed random walks with random volume produce a proven rule in ≤ 5% of cases
+  (measured: 1.5%).
+
+**Measured on real data (26 Nov 2026):** 37 instruments were tested. They were 30 large NSE stocks,
+NIFTY 50, Reliance, TCS, HDFC Bank, Infosys, AAPL, Bitcoin and the gold ETF. One rule earned its
+place on one stock: Power Grid, RSI over a week. Every other instrument got "Hold: no proven edge".
+That is the expected result for liquid markets, and it is why calls are rare.
+
 ## References
 
 Bollerslev (1986) J. Econometrics 31; Bollerslev (1987) REStat 69; Dickey & Fuller (1979) JASA 74;
@@ -177,4 +245,8 @@ Multivariate Analysis 88; Scholes & Williams (1977) J. Financial Economics 5; J.
 (1978) Biometrika 65; Lo (2002) FAJ 58; Lo & MacKinlay (1988) RFS 1; MacKinnon (2010) Queen's
 Economics WP 1227; McNeil, Frey & Embrechts (2005) Quantitative Risk Management; Nelder & Mead (1965)
 Computer J. 7; Schwert (1989) JBES 7; Christoffersen (1998) IER 39; Diebold & Mariano (1995)
-JBES 13; Gneiting & Raftery (2007) JASA 102; Kupiec (1995) J. Derivatives 3.
+JBES 13; Gneiting & Raftery (2007) JASA 102; Kupiec (1995) J. Derivatives 3; Faber (2007) J. Wealth Management 9(4); Gervais, Kaniel & Mingelgrin (2001) J. Finance 56;
+Granville (1963) New Key to Stock Market Profits; Hansen & Hodrick (1980) JPE 88; Holm (1979) Scand.
+J. Statistics 6; Jegadeesh (1990) J. Finance 45; Jegadeesh & Titman (1993) J. Finance 48; Lehmann
+(1990) QJE 105; Moskowitz, Ooi & Pedersen (2012) JFE 104; Newey & West (1987) Econometrica 55;
+Wilder (1978) New Concepts in Technical Trading Systems; Wilson (1927) JASA 22.

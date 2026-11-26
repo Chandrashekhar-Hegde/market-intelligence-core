@@ -8,6 +8,7 @@ pub mod multi;
 pub mod numeric;
 pub mod predictability;
 pub mod risk;
+pub mod signals;
 pub mod validation;
 pub mod volatility;
 
