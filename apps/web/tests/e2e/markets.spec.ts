@@ -58,3 +58,16 @@ test('a streamed tick shows LIVE and moves the price', async ({ page }) => {
   await expect(page.getByTestId('quote-price')).toHaveText(/₹1,391\.25/)
   await expect(page.getByTestId('quote-price')).toContainText('+13.75 (+1.00%)')
 })
+
+test('market filters narrow the search to India and then BSE', async ({ page }) => {
+  await mockMarketData(page)
+  await page.goto('/')
+  await page.getByLabel(/search stocks/i).fill('reliance')
+  await page.getByRole('group', { name: 'instrument-search country' }).getByRole('button', { name: /India/ }).click()
+  await page.getByRole('group', { name: 'instrument-search exchange' }).getByRole('button', { name: /BSE/ }).click()
+  const results = page.getByRole('list', { name: 'Search results' })
+  await expect(results.getByRole('button')).toHaveCount(1)
+  await expect(results.getByRole('button')).toContainText('RELIANCE.BO')
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
+  expect(overflow).toBeLessThanOrEqual(0)
+})

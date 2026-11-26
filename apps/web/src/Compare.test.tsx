@@ -79,7 +79,10 @@ function mockApi(handler?: (symbols: string[]) => Response) {
       return handler?.(symbols) ?? Response.json(comparison(symbols))
     }
     if (url.pathname === '/api/v1/instruments/search') {
-      return Response.json({ results: [{ symbol: '7203.T', name: 'Toyota Motor Corporation', exchange: 'Tokyo', quote_type: 'EQUITY' }] })
+      return Response.json({
+        results: [{ symbol: '7203.T', name: 'Toyota Motor Corporation', exchange: 'Tokyo', country: 'Japan', quote_type: 'EQUITY' }],
+        markets: [{ country: 'Japan', exchange: 'Tokyo', count: 1 }],
+      })
     }
     return new Response('not found', { status: 404 })
   })

@@ -8,6 +8,7 @@ Planned work, in order, is in [ROADMAP.md](ROADMAP.md) and the
 
 | Area | What you get | Verified by |
 |---|---|---|
+| Search | Any listing on any exchange, **Indian listings first**, with **Market and Exchange filters** (India → NSE / BSE, USA → NASDAQ / NYSE, …). BSE twins of NSE stocks and typed tickers (`500325.BO`) are resolved, because Yahoo's search rarely returns BSE | Mapping on a recorded Yahoo search; API stub tests (filters, twin found, missing twin dropped, typed ticker); Vitest; Playwright; smoke test |
 | Market data | **Any exchange** via Yahoo: stocks, ETFs, indices, funds, crypto, FX, futures. Split- and dividend-adjusted daily bars (up to `max`), splits/dividends, delayed last price | Rust tests on recorded responses; API tests on in-process stubs; `scripts/smoke_api.sh`; live check |
 | Live prices | `GET /api/v1/stream` pushes ticks from Yahoo's streamer over Server-Sent Events. One shared upstream connection, reconnects, last tick replayed to new viewers | Stub WebSocket test with a forced reconnect; live test (BTC-USD tick, 2 s lag) |
 | Intraday + watchlist | `GET /api/v1/intraday` (1-minute today, 5-minute for 5 days). The Markets view opens on **today's minute chart for NIFTY 50**, with ticks appended live, and a **live watchlist** (NIFTY, Sensex, Bank Nifty, Reliance, HDFC Bank, TCS, Infosys, Gold ETF, USD/INR, Bitcoin, S&P 500) on one shared stream | Parser on recorded 1-minute responses; API stub test; Vitest with a fake EventSource; Playwright; live run (BTC chart moved with ticks, 26 Nov 2026) |

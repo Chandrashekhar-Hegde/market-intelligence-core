@@ -158,6 +158,17 @@ import sys
 
 hits = json.loads(sys.argv[1])["results"]
 assert any(h["symbol"] == "RELIANCE.NS" for h in hits), hits
+assert all("country" in h for h in hits), hits
+PY
+
+  bse="$(curl -fsS "$BASE_URL/api/v1/instruments/search?q=reliance&country=India&exchange=BSE")"
+  python3 - "$bse" <<'PY'
+import json
+import sys
+
+hits = json.loads(sys.argv[1])["results"]
+assert any(h["symbol"] == "RELIANCE.BO" for h in hits), hits
+assert all(h["exchange"] == "BSE" for h in hits), hits
 PY
 
   for symbol in RELIANCE.NS TCS.NS %5ENSEI; do

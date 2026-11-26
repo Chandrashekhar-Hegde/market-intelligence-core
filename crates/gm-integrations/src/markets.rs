@@ -13,6 +13,7 @@ pub struct Market {
     pub benchmark: &'static str,
     pub benchmark_name: &'static str,
     pub tradingview_prefix: &'static str,
+    pub country: &'static str,
 }
 
 const fn m(
@@ -20,51 +21,151 @@ const fn m(
     benchmark: &'static str,
     benchmark_name: &'static str,
     tradingview_prefix: &'static str,
+    country: &'static str,
 ) -> Market {
     Market {
         suffix,
         benchmark,
         benchmark_name,
         tradingview_prefix,
+        country,
     }
 }
 
 pub const MARKETS: &[Market] = &[
-    m("NS", "^NSEI", "NIFTY 50", "NSE"),
-    m("BO", "^BSESN", "S&P BSE SENSEX", "BSE"),
-    m("L", "^FTSE", "FTSE 100", "LSE"),
-    m("DE", "^GDAXI", "DAX", "XETR"),
-    m("F", "^GDAXI", "DAX", "FWB"),
-    m("PA", "^FCHI", "CAC 40", "EURONEXT"),
-    m("AS", "^AEX", "AEX", "EURONEXT"),
-    m("BR", "^BFX", "BEL 20", "EURONEXT"),
-    m("MI", "FTSEMIB.MI", "FTSE MIB", "MIL"),
-    m("MC", "^IBEX", "IBEX 35", "BME"),
-    m("SW", "^SSMI", "SMI", "SIX"),
-    m("ST", "^OMX", "OMX Stockholm 30", "OMXSTO"),
-    m("CO", "^OMXC25", "OMX Copenhagen 25", "OMXCOP"),
-    m("OL", "OSEBX.OL", "Oslo Børs Benchmark", "OSL"),
-    m("T", "^N225", "Nikkei 225", "TSE"),
-    m("HK", "^HSI", "Hang Seng", "HKEX"),
-    m("SS", "000001.SS", "SSE Composite", "SSE"),
-    m("SZ", "399001.SZ", "SZSE Component", "SZSE"),
-    m("KS", "^KS11", "KOSPI", "KRX"),
-    m("KQ", "^KQ11", "KOSDAQ", "KRX"),
-    m("TW", "^TWII", "TAIEX", "TWSE"),
-    m("AX", "^AXJO", "S&P/ASX 200", "ASX"),
-    m("NZ", "^NZ50", "S&P/NZX 50", "NZX"),
-    m("TO", "^GSPTSE", "S&P/TSX Composite", "TSX"),
-    m("SA", "^BVSP", "Ibovespa", "BMFBOVESPA"),
-    m("MX", "^MXX", "IPC Mexico", "BMV"),
-    m("SI", "^STI", "Straits Times", "SGX"),
-    m("JK", "^JKSE", "IDX Composite", "IDX"),
-    m("KL", "^KLSE", "FTSE Bursa Malaysia KLCI", "MYX"),
-    m("BK", "^SET.BK", "SET", "SET"),
-    m("TA", "TA35.TA", "TA-35", "TASE"),
-    m("IS", "XU100.IS", "BIST 100", "BIST"),
-    m("SR", "^TASI.SR", "Tadawul All Share", "TADAWUL"),
-    m("JO", "^J203.JO", "JSE All Share", "JSE"),
+    m("NS", "^NSEI", "NIFTY 50", "NSE", "India"),
+    m("BO", "^BSESN", "S&P BSE SENSEX", "BSE", "India"),
+    m("L", "^FTSE", "FTSE 100", "LSE", "UK"),
+    m("DE", "^GDAXI", "DAX", "XETR", "Germany"),
+    m("F", "^GDAXI", "DAX", "FWB", "Germany"),
+    m("PA", "^FCHI", "CAC 40", "EURONEXT", "France"),
+    m("AS", "^AEX", "AEX", "EURONEXT", "Netherlands"),
+    m("BR", "^BFX", "BEL 20", "EURONEXT", "Belgium"),
+    m("MI", "FTSEMIB.MI", "FTSE MIB", "MIL", "Italy"),
+    m("MC", "^IBEX", "IBEX 35", "BME", "Spain"),
+    m("SW", "^SSMI", "SMI", "SIX", "Switzerland"),
+    m("ST", "^OMX", "OMX Stockholm 30", "OMXSTO", "Sweden"),
+    m("CO", "^OMXC25", "OMX Copenhagen 25", "OMXCOP", "Denmark"),
+    m("OL", "OSEBX.OL", "Oslo Børs Benchmark", "OSL", "Norway"),
+    m("T", "^N225", "Nikkei 225", "TSE", "Japan"),
+    m("HK", "^HSI", "Hang Seng", "HKEX", "Hong Kong"),
+    m("SS", "000001.SS", "SSE Composite", "SSE", "China"),
+    m("SZ", "399001.SZ", "SZSE Component", "SZSE", "China"),
+    m("KS", "^KS11", "KOSPI", "KRX", "South Korea"),
+    m("KQ", "^KQ11", "KOSDAQ", "KRX", "South Korea"),
+    m("TW", "^TWII", "TAIEX", "TWSE", "Taiwan"),
+    m("AX", "^AXJO", "S&P/ASX 200", "ASX", "Australia"),
+    m("NZ", "^NZ50", "S&P/NZX 50", "NZX", "New Zealand"),
+    m("TO", "^GSPTSE", "S&P/TSX Composite", "TSX", "Canada"),
+    m("SA", "^BVSP", "Ibovespa", "BMFBOVESPA", "Brazil"),
+    m("MX", "^MXX", "IPC Mexico", "BMV", "Mexico"),
+    m("SI", "^STI", "Straits Times", "SGX", "Singapore"),
+    m("JK", "^JKSE", "IDX Composite", "IDX", "Indonesia"),
+    m("KL", "^KLSE", "FTSE Bursa Malaysia KLCI", "MYX", "Malaysia"),
+    m("BK", "^SET.BK", "SET", "SET", "Thailand"),
+    m("TA", "TA35.TA", "TA-35", "TASE", "Israel"),
+    m("IS", "XU100.IS", "BIST 100", "BIST", "Turkey"),
+    m(
+        "SR",
+        "^TASI.SR",
+        "Tadawul All Share",
+        "TADAWUL",
+        "Saudi Arabia",
+    ),
+    m("JO", "^J203.JO", "JSE All Share", "JSE", "South Africa"),
 ];
+
+/// Yahoo exchange codes (search `exchange`, chart `exchangeName`) → display name and country.
+/// Checked against live Yahoo search results on 2026-11-27.
+pub const EXCHANGES: &[(&str, &str, &str)] = &[
+    ("NSI", "NSE", "India"),
+    ("BSE", "BSE", "India"),
+    ("NMS", "NASDAQ", "USA"),
+    ("NGM", "NASDAQ", "USA"),
+    ("NCM", "NASDAQ", "USA"),
+    ("NAS", "NASDAQ", "USA"),
+    ("NYQ", "NYSE", "USA"),
+    ("ASE", "NYSE American", "USA"),
+    ("PCX", "NYSE Arca", "USA"),
+    ("BTS", "Cboe BZX", "USA"),
+    ("PNK", "OTC Markets", "USA"),
+    ("CME", "CME", "USA"),
+    ("CBT", "CBOT", "USA"),
+    ("NYM", "NYMEX", "USA"),
+    ("CMX", "COMEX", "USA"),
+    ("SNP", "S&P indices", "USA"),
+    ("DJI", "Dow Jones indices", "USA"),
+    ("LSE", "London", "UK"),
+    ("GER", "XETRA", "Germany"),
+    ("FRA", "Frankfurt", "Germany"),
+    ("HAM", "Hamburg", "Germany"),
+    ("DUS", "Düsseldorf", "Germany"),
+    ("STU", "Stuttgart", "Germany"),
+    ("BER", "Berlin", "Germany"),
+    ("MUN", "Munich", "Germany"),
+    ("VIE", "Vienna", "Austria"),
+    ("HEL", "Helsinki", "Finland"),
+    ("LIS", "Lisbon", "Portugal"),
+    ("ATH", "Athens", "Greece"),
+    ("IOB", "London IOB", "UK"),
+    ("NEO", "Cboe Canada", "Canada"),
+    ("CNQ", "CSE Canada", "Canada"),
+    ("PAR", "Paris", "France"),
+    ("AMS", "Amsterdam", "Netherlands"),
+    ("BRU", "Brussels", "Belgium"),
+    ("MIL", "Milan", "Italy"),
+    ("MCE", "Madrid", "Spain"),
+    ("EBS", "SIX Swiss", "Switzerland"),
+    ("STO", "Stockholm", "Sweden"),
+    ("CPH", "Copenhagen", "Denmark"),
+    ("OSL", "Oslo", "Norway"),
+    ("JPX", "Tokyo", "Japan"),
+    ("OSA", "Osaka", "Japan"),
+    ("HKG", "Hong Kong", "Hong Kong"),
+    ("SHH", "Shanghai", "China"),
+    ("SHZ", "Shenzhen", "China"),
+    ("KSC", "Korea Exchange", "South Korea"),
+    ("KOE", "KOSDAQ", "South Korea"),
+    ("TAI", "Taiwan", "Taiwan"),
+    ("ASX", "ASX", "Australia"),
+    ("NZE", "NZX", "New Zealand"),
+    ("TOR", "Toronto", "Canada"),
+    ("VAN", "TSX Venture", "Canada"),
+    ("SAO", "B3", "Brazil"),
+    ("MEX", "Mexico", "Mexico"),
+    ("SES", "Singapore", "Singapore"),
+    ("JKT", "Jakarta", "Indonesia"),
+    ("KLS", "Bursa Malaysia", "Malaysia"),
+    ("SET", "Thailand", "Thailand"),
+    ("TLV", "Tel Aviv", "Israel"),
+    ("IST", "Istanbul", "Turkey"),
+    ("SAU", "Tadawul", "Saudi Arabia"),
+    ("JNB", "Johannesburg", "South Africa"),
+    ("CCC", "Crypto", "Global"),
+    ("CCY", "Currencies", "Global"),
+];
+
+/// Where a listing trades: (exchange, country). Yahoo's exchange code wins; otherwise the
+/// symbol suffix; FX and crypto pairs are "Global"; a bare symbol is taken as a US listing.
+pub fn listing_market(symbol: &str, exchange_code: Option<&str>) -> (&'static str, &'static str) {
+    if let Some((_, name, country)) = exchange_code.and_then(|code| {
+        EXCHANGES
+            .iter()
+            .find(|(c, _, _)| c.eq_ignore_ascii_case(code))
+    }) {
+        return (name, country);
+    }
+    if let Some(m) = market(symbol) {
+        return (m.tradingview_prefix, m.country);
+    }
+    if symbol.contains('=') || symbol.ends_with("-USD") || symbol.ends_with("-INR") {
+        return ("Global", "Global");
+    }
+    if split(symbol).1.is_none() {
+        return ("US", "USA");
+    }
+    ("Other", "Other")
+}
 
 /// Indices TradingView knows under a different name.
 const TRADINGVIEW_INDICES: &[(&str, &str)] = &[
@@ -245,5 +346,17 @@ mod tests {
         for (yahoo, tv) in cases {
             assert_eq!(tradingview_symbol(yahoo).as_deref(), tv, "{yahoo}");
         }
+    }
+
+    #[test]
+    fn listings_map_to_exchange_and_country() {
+        assert_eq!(listing_market("RELIANCE.NS", Some("NSI")), ("NSE", "India"));
+        assert_eq!(listing_market("RELIANCE.BO", None), ("BSE", "India"));
+        assert_eq!(listing_market("^NSEI", Some("NSI")), ("NSE", "India"));
+        assert_eq!(listing_market("AAPL", Some("NMS")), ("NASDAQ", "USA"));
+        assert_eq!(listing_market("7203.T", Some("JPX")), ("Tokyo", "Japan"));
+        assert_eq!(listing_market("BTC-USD", Some("CCC")), ("Crypto", "Global"));
+        assert_eq!(listing_market("INR=X", None), ("Global", "Global"));
+        assert_eq!(listing_market("SAP.DE", None), ("XETR", "Germany"));
     }
 }

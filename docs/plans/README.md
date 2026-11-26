@@ -11,6 +11,7 @@ explain the *why* and the *order*.
 | [Make it live: real data in the UI, local gate, board](2026-11-24-live-data-and-gate.md) | 2026-11-24 | Done | PRs #72, #76 |
 | [Collaboration: plans, roadmap and work packages on GitHub](2026-11-25-collaboration.md) | 2026-11-25 | Done | #95, #97 |
 | [Phase 0.6: live data and validated advice](phase-0.6-advice.md) | 2026-11-26 | Done | #102–#106 |
+| [Phase 0.7: find any listing, understand the advice, real forecasts, news](phase-0.7.md) | 2026-11-27 | In progress | #110–#114, #108 |
 | [Phase 1: real events and fundamentals](phase-1-events-and-fundamentals.md) | 2026-11-25 | Planned | #64, #67, #80–#88, #13, #17, #65, #66 |
 | [Phase 2: portfolio, accounts, broker data](phase-2-portfolio.md) | 2026-11-25 | Planned | #91–#93, #89, #90, #18, #68, #69, #70 |
 

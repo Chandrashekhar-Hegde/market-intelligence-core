@@ -28,9 +28,16 @@ the API connects to PostgreSQL at startup, applies migrations by default, and
 Live data for any exchange from Yahoo Finance (free end-of-day data and quotes delayed by about 15 minutes; unofficial
 endpoints). Responses are cached in-process for 60 s (`5d`/`1mo`) or 15 min.
 
-- `GET /api/v1/instruments/search?q=` returns `{results: [{symbol, name, exchange,
-  quote_type}]}` from every exchange. It covers equities, ETFs, indices, funds, crypto, FX and
-  futures; options are excluded. `q` is 1-64 characters.
+- `GET /api/v1/instruments/search?q=&country=&exchange=` returns
+  `{results: [{symbol, name, exchange, country, quote_type}], markets: [{country, exchange, count}]}`.
+  - **Coverage:** every exchange, covering equities, ETFs, indices, funds, crypto, FX and futures;
+    options are excluded. `q` is 1–64 characters.
+  - **Filters:** `country` (India, USA, UK, Japan, Global for crypto/FX, …) and `exchange` (NSE,
+    BSE, NASDAQ, NYSE, London, …) are case-insensitive; `all` or omitted means no filter. Indian
+    listings come first. `markets` counts every match before filtering, for the UI's chips.
+  - **Added beyond Yahoo's search:** Yahoo's search rarely returns BSE listings. For the first six
+    NSE equities the server tries the `.BO` twin through the quote endpoint and adds those that
+    exist. A typed exact ticker (`500325.BO`, `INR=X`) is resolved the same way.
 - `GET /api/v1/bars?symbol=&range=` returns `{chart, quality}`. `range` is one of
   `5d 1mo 3mo 6mo 1y 2y 5y 10y max` (default `1y`). `chart.bars` are completed
   daily bars, oldest first: `close` is split-adjusted and `adj_close` is split- and

@@ -40,8 +40,17 @@ export function getApiBaseUrl(): string {
 export type SearchHit = {
   symbol: string
   name: string
+  /** NSE, BSE, NASDAQ, Tokyo, … */
   exchange: string
+  /** India, USA, UK, Global (crypto and FX), … */
+  country: string
   quote_type: string
+}
+
+export type SearchResponse = {
+  results: SearchHit[]
+  /** Where the matches were found, before the filters: drives the filter chips. */
+  markets: { country: string; exchange: string; count: number }[]
 }
 
 export type InstrumentMeta = {
@@ -162,11 +171,9 @@ export function fetchIntraday(symbol: string, range: IntradayRange): Promise<{ c
   return request<{ chart: IntradayData }>(`/api/v1/intraday?symbol=${encodeURIComponent(symbol)}&range=${range}`)
 }
 
-export async function searchInstruments(query: string): Promise<SearchHit[]> {
-  const body = await request<{ results: SearchHit[] }>(
-    `/api/v1/instruments/search?q=${encodeURIComponent(query)}`,
-  )
-  return body.results
+export function searchInstruments(query: string, country = 'all', exchange = 'all'): Promise<SearchResponse> {
+  const params = new URLSearchParams({ q: query, country, exchange })
+  return request<SearchResponse>(`/api/v1/instruments/search?${params.toString()}`)
 }
 
 export function fetchBars(symbol: string, range: BarRange): Promise<BarsResponse> {

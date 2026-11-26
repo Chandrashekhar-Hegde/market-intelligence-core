@@ -61,8 +61,16 @@ export async function mockMarketData(page: Page, { liveTicks = false } = {}) {
     route.fulfill({
       json: {
         results: [
-          { symbol: 'RELIANCE.NS', name: 'Reliance Industries Limited', exchange: 'NSE', quote_type: 'EQUITY' },
-          { symbol: 'RELIANCE.BO', name: 'Reliance Industries Limited', exchange: 'Bombay', quote_type: 'EQUITY' },
+          { symbol: 'RELIANCE.NS', name: 'Reliance Industries Limited', exchange: 'NSE', country: 'India', quote_type: 'EQUITY' },
+          { symbol: 'RELIANCE.BO', name: 'Reliance Industries Limited', exchange: 'BSE', country: 'India', quote_type: 'EQUITY' },
+        ].filter((h) => {
+          const params = new URL(route.request().url()).searchParams
+          const keep = (f: string | null, v: string) => !f || f === 'all' || f === v
+          return keep(params.get('country'), h.country) && keep(params.get('exchange'), h.exchange)
+        }),
+        markets: [
+          { country: 'India', exchange: 'BSE', count: 1 },
+          { country: 'India', exchange: 'NSE', count: 1 },
         ],
       },
     }),

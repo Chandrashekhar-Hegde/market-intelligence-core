@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { AlertTriangle, CheckCircle2, Search } from 'lucide-react'
 import {
@@ -21,7 +21,7 @@ import {
   type NewsResponse,
   type QualityReport,
   type QuoteResponse,
-  type SearchHit,
+  type SearchResponse,
   type Tick,
   describeApiError,
   fetchBars,
@@ -589,13 +589,26 @@ export function InstrumentSearch({
   label?: string
 }) {
   const [text, setText] = useState('')
+  const [country, setCountry] = useState('all')
+  const [exchange, setExchange] = useState('all')
   const query = useDebounced(text.trim(), 300)
-  const hits = useQuery<SearchHit[]>({
-    queryKey: ['search', query],
-    queryFn: () => searchInstruments(query),
+  const hits = useQuery<SearchResponse>({
+    queryKey: ['search', query, country, exchange],
+    queryFn: () => searchInstruments(query, country, exchange),
     enabled: query.length >= 2,
     staleTime: 300_000,
+    placeholderData: (previous) => previous,
   })
+  const markets = hits.data?.markets ?? []
+  const countries = countByKey(markets, (m) => m.country)
+  const exchanges = countByKey(
+    markets.filter((m) => m.country === country),
+    (m) => m.exchange,
+  )
+  const pickCountry = (value: string) => {
+    setCountry(value)
+    setExchange('all')
+  }
 
   return (
     <div className="instrument-search">
@@ -606,20 +619,51 @@ export function InstrumentSearch({
         id={id}
         type="search"
         autoComplete="off"
-        placeholder="e.g. apple, toyota, infosys, bitcoin"
+        placeholder="e.g. reliance, tata, infosys, apple, bitcoin, or a ticker like 500325.BO"
         value={text}
         onChange={(event) => setText(event.target.value)}
       />
+      {query.length >= 2 && countries.length > 0 ? (
+        <div className="search-filters">
+          <div className="filter-row" role="group" aria-label={`${id} country`}>
+            <span className="filter-label">Market</span>
+            <FilterChip active={country === 'all'} onClick={() => pickCountry('all')}>
+              All
+            </FilterChip>
+            {countries.map(([name, count]) => (
+              <FilterChip key={name} active={country === name} onClick={() => pickCountry(name)}>
+                {name === 'Global' ? 'Crypto & FX' : name} <span className="chip-count">{count}</span>
+              </FilterChip>
+            ))}
+          </div>
+          {country !== 'all' && exchanges.length > 1 ? (
+            <div className="filter-row" role="group" aria-label={`${id} exchange`}>
+              <span className="filter-label">Exchange</span>
+              <FilterChip active={exchange === 'all'} onClick={() => setExchange('all')}>
+                All
+              </FilterChip>
+              {exchanges.map(([name, count]) => (
+                <FilterChip key={name} active={exchange === name} onClick={() => setExchange(name)}>
+                  {name} <span className="chip-count">{count}</span>
+                </FilterChip>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {query.length >= 2 ? (
         hits.error ? (
           <p className="error-state" role="alert">
             {describeApiError(hits.error)}
           </p>
-        ) : hits.data && hits.data.length === 0 ? (
-          <p className="quiet-copy">No matches for “{query}”.</p>
+        ) : hits.data && hits.data.results.length === 0 ? (
+          <p className="quiet-copy">
+            No matches for “{query}”{country !== 'all' ? ` in ${country}` : ''}.
+            {country !== 'all' && countries.length > 0 ? ' Try another market above.' : ''}
+          </p>
         ) : (
           <ul className="search-results" aria-label="Search results">
-            {(hits.data ?? []).map((hit) => (
+            {(hits.data?.results ?? []).map((hit) => (
               <li key={hit.symbol}>
                 <button
                   type="button"
@@ -631,7 +675,7 @@ export function InstrumentSearch({
                 >
                   <strong>{hit.symbol}</strong> {hit.name}{' '}
                   <span className="quiet-copy">
-                    {hit.exchange} · {hit.quote_type}
+                    {hit.exchange} · {hit.country === 'Global' ? 'Global' : hit.country} · {hit.quote_type}
                   </span>
                 </button>
               </li>
@@ -640,6 +684,21 @@ export function InstrumentSearch({
         )
       ) : null}
     </div>
+  )
+}
+
+/** [key, total count] pairs, biggest first, India always leading. */
+function countByKey<T extends { count: number }>(items: T[], key: (item: T) => string): [string, number][] {
+  const totals = new Map<string, number>()
+  for (const item of items) totals.set(key(item), (totals.get(key(item)) ?? 0) + item.count)
+  return [...totals].sort((a, b) => Number(b[0] === 'India') - Number(a[0] === 'India') || b[1] - a[1])
+}
+
+function FilterChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button type="button" className="ghost-button filter-chip" aria-pressed={active} onClick={onClick}>
+      {children}
+    </button>
   )
 }
 
