@@ -42,7 +42,7 @@ Item states (GitHub labels):
 | Order | Issue | Goal | State | Blocked by |
 |---|---|---|---|---|
 | 1 | [#108](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/108) | Plain-language pass on the Compare tab | `agent-ready` | — |
-| 2 | [#109](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/109) | Record real GDELT fixtures; check news from Railway | `agent-ready` | — |
+| 2 | [#109](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/109) | News in production: GDELT blocks Railway's shared IP (static IP or another source?); record real fixtures | `needs-owner-input` | — |
 | 3 | [#45](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/45) | NSE bhavcopy cross-check and fallback (spike: is it reachable from Railway?) | `agent-ready` | — |
 | 4 | [#71](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/71) | Replace chrono (RUSTSEC advisory) | `agent-ready` | — |
 | 5 | [#64](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/64) | Market-model event study (α + β, CAR significance) | `agent-ready` | — |
