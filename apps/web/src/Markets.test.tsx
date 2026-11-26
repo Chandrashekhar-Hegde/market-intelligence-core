@@ -333,13 +333,23 @@ function mockApi(routes: Routes = {}) {
     '/api/v1/bars': () => Response.json(barsResponse()),
     '/api/v1/intraday': () => Response.json(intradayResponse()),
     '/api/v1/news': () => Response.json(newsResponse()),
-    '/api/v1/instruments/search': () =>
-      Response.json({
-        results: [
-          { symbol: 'INFY.NS', name: 'Infosys Limited', exchange: 'NSE', quote_type: 'EQUITY' },
-          { symbol: 'INFY.BO', name: 'Infosys Limited', exchange: 'Bombay', quote_type: 'EQUITY' },
+    '/api/v1/instruments/search': (url) => {
+      // Mirrors the server: `markets` counts every match, `results` honours the filters.
+      const all = [
+        { symbol: 'INFY.NS', name: 'Infosys Limited', exchange: 'NSE', country: 'India', quote_type: 'EQUITY' },
+        { symbol: 'INFY.BO', name: 'Infosys Limited', exchange: 'BSE', country: 'India', quote_type: 'EQUITY' },
+        { symbol: 'INFY', name: 'Infosys Limited ADR', exchange: 'NYSE', country: 'USA', quote_type: 'EQUITY' },
+      ]
+      const keep = (filter: string | null, value: string) => !filter || filter === 'all' || filter === value
+      return Response.json({
+        results: all.filter((h) => keep(url.searchParams.get('country'), h.country) && keep(url.searchParams.get('exchange'), h.exchange)),
+        markets: [
+          { country: 'India', exchange: 'BSE', count: 1 },
+          { country: 'India', exchange: 'NSE', count: 1 },
+          { country: 'USA', exchange: 'NYSE', count: 1 },
         ],
-      }),
+      })
+    },
   }
   const all = { ...defaults, ...routes }
   const fetchMock = vi.fn<typeof fetch>(async (input) => {
@@ -624,8 +634,29 @@ describe('Markets view', () => {
     )
   })
 
+  test('market and exchange chips filter the results, India first', async () => {
+    const fetchMock = mockApi()
+    renderMarkets()
+    await userEvent.type(screen.getByLabelText(/search stocks/i), 'infy')
+    const results = await screen.findByRole('list', { name: 'Search results' })
+    expect(await within(results).findByRole('button', { name: /^INFY Infosys Limited ADR NYSE · USA/ })).toBeInTheDocument()
+    expect(within(results).getByRole('button', { name: /INFY\.BO/ })).toHaveTextContent('BSE · India')
+
+    const markets = screen.getByRole('group', { name: 'instrument-search country' })
+    expect(within(markets).getAllByRole('button').map((b) => b.textContent)).toEqual(['All', 'India 2', 'USA 1'])
+    await userEvent.click(within(markets).getByRole('button', { name: /India/ }))
+    const exchanges = await screen.findByRole('group', { name: 'instrument-search exchange' })
+    await userEvent.click(within(exchanges).getByRole('button', { name: /BSE/ }))
+    await waitFor(() =>
+      expect(within(screen.getByRole('list', { name: 'Search results' })).getAllByRole('button').map((b) => b.textContent)).toEqual([
+        'INFY.BO Infosys Limited BSE · India · EQUITY',
+      ]),
+    )
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('country=India&exchange=BSE'), expect.anything())
+  })
+
   test('empty search results say so', async () => {
-    mockApi({ '/api/v1/instruments/search': () => Response.json({ results: [] }) })
+    mockApi({ '/api/v1/instruments/search': () => Response.json({ results: [], markets: [] }) })
     renderMarkets()
     await userEvent.type(screen.getByLabelText(/search stocks/i), 'zzzz')
     expect(await screen.findByText(/No matches for “zzzz”/)).toBeInTheDocument()

@@ -114,7 +114,9 @@ pub const INTRADAY_RANGES: [(&str, &str); 2] = [("1d", "1m"), ("5d", "5m")];
 pub struct SearchHit {
     pub symbol: String,
     pub name: String,
+    /// Display name of the exchange (NSE, BSE, NASDAQ, Tokyo, …).
     pub exchange: String,
+    pub country: String,
     pub quote_type: String,
 }
 
@@ -467,13 +469,19 @@ pub fn parse_search(body: &str) -> Result<Vec<SearchHit>, ProviderError> {
                 .is_some_and(|t| ANALYSABLE_TYPES.contains(&t))
         })
         .filter_map(|q| {
+            let symbol = q.symbol?;
+            let (exchange, country) =
+                crate::markets::listing_market(&symbol, q.exchange.as_deref());
+            let display = if exchange == "Other" {
+                q.exch_disp.or(q.exchange)?
+            } else {
+                exchange.to_string()
+            };
             Some(SearchHit {
-                name: q
-                    .longname
-                    .or(q.shortname)
-                    .unwrap_or_else(|| q.symbol.clone().unwrap_or_default()),
-                symbol: q.symbol?,
-                exchange: q.exch_disp.or(q.exchange)?,
+                name: q.longname.or(q.shortname).unwrap_or_else(|| symbol.clone()),
+                symbol,
+                exchange: display,
+                country: country.to_string(),
                 quote_type: q.quote_type.unwrap_or_default(),
             })
         })
@@ -625,7 +633,8 @@ impl YahooClient {
         Ok(data)
     }
 
-    pub async fn search(&self, query: &str) -> Result<Vec<SearchHit>, ProviderError> {
+    /// `region` ("IN", "US", …) steers Yahoo's ranking towards that market's listings.
+    pub async fn search(&self, query: &str, region: &str) -> Result<Vec<SearchHit>, ProviderError> {
         let query = query.trim();
         if query.is_empty() || query.len() > 64 {
             return Err(ProviderError::InvalidRequest(
@@ -637,8 +646,10 @@ impl YahooClient {
         url.set_path("/v1/finance/search");
         url.query_pairs_mut()
             .append_pair("q", query)
-            .append_pair("quotesCount", "15")
-            .append_pair("newsCount", "0");
+            .append_pair("quotesCount", "25")
+            .append_pair("newsCount", "0")
+            .append_pair("region", region)
+            .append_pair("lang", if region == "IN" { "en-IN" } else { "en-US" });
         parse_search(&self.get_with_retry(url).await?)
     }
 
@@ -820,6 +831,25 @@ mod tests {
         assert!(parse_search(r#"{"quotes":[]}"#).unwrap().is_empty());
     }
 
+    const SEARCH_RELIANCE_IN: &str =
+        include_str!("../tests/fixtures/yahoo_search_reliance_in.json");
+
+    #[test]
+    fn search_hits_carry_exchange_and_country() {
+        let hits = parse_search(SEARCH_RELIANCE_IN).unwrap();
+        let reliance = hits.iter().find(|h| h.symbol == "RELIANCE.NS").unwrap();
+        assert_eq!(
+            (reliance.exchange.as_str(), reliance.country.as_str()),
+            ("NSE", "India")
+        );
+        let nfty = parse_search(SEARCH).unwrap();
+        let us = nfty.iter().find(|h| h.symbol == "NFTY").unwrap();
+        assert_eq!(
+            (us.exchange.as_str(), us.country.as_str()),
+            ("NASDAQ", "USA")
+        );
+    }
+
     #[test]
     fn search_covers_every_exchange() {
         let hits = parse_search(SEARCH).unwrap();
@@ -855,7 +885,7 @@ mod tests {
         let client = YahooClient::default();
         let data = client.chart("RELIANCE.NS", "1mo").await.unwrap();
         assert!(data.bars.len() > 10);
-        assert!(!client.search("reliance").await.unwrap().is_empty());
+        assert!(!client.search("reliance", "IN").await.unwrap().is_empty());
         let intraday = client.intraday("BTC-USD", "1d").await.unwrap();
         assert!(intraday.points.len() > 100, "crypto trades round the clock");
     }

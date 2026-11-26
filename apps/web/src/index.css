@@ -1832,3 +1832,41 @@ ol {
   margin-top: 2px;
   font-size: 0.9rem;
 }
+
+/* ---- search market filters ---- */
+.search-filters {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-label {
+  min-width: 70px;
+  color: #4f5654;
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+
+.filter-chip {
+  min-height: 30px;
+  padding: 3px 10px;
+}
+
+.chip-count {
+  margin-left: 4px;
+  font-size: 0.78rem;
+  opacity: 0.8;
+}
+
+@media (max-width: 760px) {
+  .filter-chip {
+    width: auto;
+  }
+}

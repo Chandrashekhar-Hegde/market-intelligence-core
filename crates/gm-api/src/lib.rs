@@ -465,6 +465,10 @@ async fn grant_access(State(state): State<AppState>, Form(form): Form<AccessForm
 #[derive(Debug, Deserialize)]
 struct SearchQuery {
     q: String,
+    /// Keep only listings in this country ("India", "USA", …); case-insensitive.
+    country: Option<String>,
+    /// Keep only listings on this exchange ("NSE", "BSE", "NASDAQ", …); case-insensitive.
+    exchange: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -482,12 +486,83 @@ async fn search_instruments(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let hits = state
+    use gm_integrations::yahoo::SearchHit;
+    let wants = |filter: &Option<String>, value: &str| {
+        filter.as_deref().map(str::trim).is_none_or(|f| {
+            f.is_empty() || f.eq_ignore_ascii_case("all") || f.eq_ignore_ascii_case(value)
+        })
+    };
+    let india_ok = wants(&query.country, "India");
+    // Yahoo ranks by region; India first unless the user asked for another market.
+    let region = if india_ok { "IN" } else { "US" };
+    let mut hits = state
         .yahoo
-        .search(&query.q)
+        .search(&query.q, region)
         .await
         .map_err(ApiError::provider)?;
-    Ok(Json(serde_json::json!({ "results": hits })))
+
+    // Yahoo's search rarely returns BSE listings, and a typed ticker may not be "found" by
+    // name. Both are resolved through the (cached) quote endpoint and kept only if they exist.
+    let mut candidates = Vec::new();
+    let typed = query.q.trim();
+    if typed.contains(['.', '^', '=', '-'])
+        && !hits.iter().any(|h| h.symbol.eq_ignore_ascii_case(typed))
+    {
+        candidates.push(typed.to_uppercase());
+    }
+    if india_ok && wants(&query.exchange, "BSE") {
+        candidates.extend(
+            hits.iter()
+                .filter(|h| h.symbol.ends_with(".NS") && h.quote_type == "EQUITY")
+                .map(|h| h.symbol.replace(".NS", ".BO"))
+                .filter(|twin| !hits.iter().any(|h| &h.symbol == twin))
+                .take(6),
+        );
+    }
+    let resolved = futures_util::future::join_all(candidates.iter().map(|symbol| {
+        let yahoo = state.yahoo.clone();
+        async move { yahoo.chart(symbol, "5d").await.ok() }
+    }))
+    .await;
+    for chart in resolved.into_iter().flatten() {
+        let meta = &chart.meta;
+        let (exchange, country) = markets::listing_market(&meta.symbol, None);
+        hits.push(SearchHit {
+            symbol: meta.symbol.clone(),
+            name: meta.name.clone().unwrap_or_else(|| meta.symbol.clone()),
+            exchange: exchange.to_string(),
+            country: country.to_string(),
+            quote_type: meta.instrument_type.clone().unwrap_or_default(),
+        });
+    }
+
+    // Which markets the matches came from, before filtering, so the UI can offer them.
+    let mut summary: std::collections::BTreeMap<(String, String), usize> = Default::default();
+    for h in &hits {
+        *summary
+            .entry((h.country.clone(), h.exchange.clone()))
+            .or_default() += 1;
+    }
+    let markets: Vec<_> = summary
+        .into_iter()
+        .map(|((country, exchange), count)| serde_json::json!({ "country": country, "exchange": exchange, "count": count }))
+        .collect();
+
+    hits.retain(|h| wants(&query.country, &h.country) && wants(&query.exchange, &h.exchange));
+    // Indian listings first, each BSE twin right after its NSE listing; otherwise Yahoo's
+    // relevance order (the sort is stable).
+    let base = |symbol: &str| {
+        symbol
+            .rsplit_once('.')
+            .map_or(symbol, |(code, _)| code)
+            .to_string()
+    };
+    let first_seen: Vec<String> = hits.iter().map(|h| base(&h.symbol)).collect();
+    let rank = |h: &SearchHit| first_seen.iter().position(|b| *b == base(&h.symbol));
+    hits.sort_by_key(|h| (h.country != "India", rank(h)));
+    Ok(Json(
+        serde_json::json!({ "results": hits, "markets": markets }),
+    ))
 }
 
 async fn bars(
@@ -1662,10 +1737,14 @@ async fn openapi() -> Json<serde_json::Value> {
             },
             "/api/v1/instruments/search": {
                 "get": {
-                    "summary": "Search NSE/BSE stocks and indices (Yahoo search)",
-                    "parameters": [{ "name": "q", "in": "query", "required": true, "schema": { "type": "string" } }],
+                    "summary": "Search listings on any exchange, India first, with BSE twins and typed tickers resolved",
+                    "parameters": [
+                        { "name": "q", "in": "query", "required": true, "schema": { "type": "string" } },
+                        { "name": "country", "in": "query", "required": false, "description": "India, USA, UK, Japan, Global (crypto/FX), … or all", "schema": { "type": "string" } },
+                        { "name": "exchange", "in": "query", "required": false, "description": "NSE, BSE, NASDAQ, NYSE, London, … or all", "schema": { "type": "string" } }
+                    ],
                     "responses": {
-                        "200": { "description": "Matching NSE/BSE listings" },
+                        "200": { "description": "`results` (filtered, India first) and `markets` (country, exchange, count before filtering)" },
                         "400": { "description": "Query empty or longer than 64 characters" },
                         "503": { "description": "Upstream data provider unavailable" }
                     }
@@ -2433,6 +2512,8 @@ mod tests {
         include_str!("../../gm-integrations/tests/fixtures/yahoo_chart_reliance_10y.json");
     const INTRADAY: &str =
         include_str!("../../gm-integrations/tests/fixtures/yahoo_chart_reliance_1d_1m.json");
+    const SEARCH_RELIANCE: &str =
+        include_str!("../../gm-integrations/tests/fixtures/yahoo_search_reliance_in.json");
     const FRAMES: &str =
         include_str!("../../gm-integrations/tests/fixtures/yahoo_stream_frames.txt");
 
@@ -2449,16 +2530,21 @@ mod tests {
                         (StatusCode::OK, INTRADAY.to_string())
                     }
                     (false, "RELIANCE.NS") if ten_years => (StatusCode::OK, CHART_10Y.to_string()),
+                    // RELIANCE.BO: the BSE twin of the NSE fixture.
+                    (false, "RELIANCE.BO") => (
+                        StatusCode::OK,
+                        CHART.replace("\"symbol\":\"RELIANCE.NS\"", "\"symbol\":\"RELIANCE.BO\""),
+                    ),
                     // ^NSEI doubles as the trading calendar; the RELIANCE fixture has the same days.
                     (false, "RELIANCE.NS" | "^NSEI") => (StatusCode::OK, CHART.to_string()),
                     (false, _) => (StatusCode::NOT_FOUND, NOT_FOUND.to_string()),
                 }
             };
-        let search = move || async move {
-            if fail {
-                (StatusCode::INTERNAL_SERVER_ERROR, String::new())
-            } else {
-                (StatusCode::OK, SEARCH.to_string())
+        let search = move |Query(params): Query<std::collections::HashMap<String, String>>| async move {
+            match (fail, params.get("q").map(String::as_str)) {
+                (true, _) => (StatusCode::INTERNAL_SERVER_ERROR, String::new()),
+                (false, Some("reliance")) => (StatusCode::OK, SEARCH_RELIANCE.to_string()),
+                _ => (StatusCode::OK, SEARCH.to_string()),
             }
         };
         let stub = Router::new()
@@ -2666,6 +2752,58 @@ mod tests {
         assert!(body["error"].as_str().unwrap().contains("500"));
         let (status, _) = get_json(failing, "/api/v1/instruments/search?q=nifty").await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn search_filters_by_country_and_exchange_and_finds_bse_twins() {
+        let app = market_app(false, None).await;
+        let (status, body) = get_json(app.clone(), "/api/v1/instruments/search?q=reliance").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let symbols: Vec<_> = body["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["symbol"].as_str().unwrap().to_string())
+            .collect();
+        // Yahoo returned NSE only; the BSE twin was checked against the quote endpoint and
+        // added, while twins that don't exist (the stub 404s them) were dropped.
+        assert!(symbols.contains(&"RELIANCE.BO".to_string()), "{symbols:?}");
+        assert!(!symbols.contains(&"RPOWER.BO".to_string()), "{symbols:?}");
+        let markets = body["markets"].as_array().unwrap();
+        assert!(
+            markets
+                .iter()
+                .any(|m| m["exchange"] == "BSE" && m["country"] == "India")
+        );
+
+        let (_, bse) = get_json(
+            app.clone(),
+            "/api/v1/instruments/search?q=reliance&country=india&exchange=BSE",
+        )
+        .await;
+        let bse = bse["results"].as_array().unwrap();
+        assert!(
+            !bse.is_empty() && bse.iter().all(|r| r["exchange"] == "BSE"),
+            "{bse:?}"
+        );
+
+        // A typed exact ticker is resolved even if name search would not find it.
+        let (_, typed) = get_json(app.clone(), "/api/v1/instruments/search?q=RELIANCE.BO").await;
+        assert!(
+            typed["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["symbol"] == "RELIANCE.BO")
+        );
+
+        // Another country: India's listings are filtered out, US ones kept.
+        let (_, us) = get_json(app, "/api/v1/instruments/search?q=nifty&country=USA").await;
+        let us = us["results"].as_array().unwrap();
+        assert!(
+            !us.is_empty() && us.iter().all(|r| r["country"] == "USA"),
+            "{us:?}"
+        );
     }
 
     #[tokio::test]
