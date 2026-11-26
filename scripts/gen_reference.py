@@ -56,6 +56,8 @@ def reference(name):
     ppy = n / years
     out = {"n_returns": n, "periods_per_year": ppy}
 
+    from arch.bootstrap import optimal_block_length
+    out["block_length_sq"] = float(optimal_block_length(r**2)["stationary"].iloc[0])
     out["mean_daily"] = r.mean()
     out["vol_daily"] = r.std(ddof=1)
     out["skewness"] = stats.skew(r)

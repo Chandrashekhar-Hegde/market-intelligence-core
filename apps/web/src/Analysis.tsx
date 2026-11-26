@@ -2,13 +2,14 @@ import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'rea
 import { createChart, LineSeries, LineStyle, type LineData } from 'lightweight-charts'
 
 import { type AnalysisRange, type AnalyzeResponse, type PriceBar, type Projection, type Signal, describeApiError, useAnalysis } from './api'
-import { fanLines, formatP, formatPct, formatPrice } from './marketData'
+import { fanLines, formatP, formatPct, formatPrice, futureSessions } from './marketData'
 import {
   formatMoney,
   horizonWords,
   maxPosition,
   meaningCards,
   preferredProjection,
+  projectionSource,
   stanceGuidance,
   yearsCovered,
 } from './plainLanguage'
@@ -16,9 +17,12 @@ import {
 const isDomTest = typeof navigator !== 'undefined' && navigator.userAgent.includes('jsdom')
 
 const MODEL_LABEL: Record<Projection['model'], string> = {
+  bootstrap: 'Own history (stationary bootstrap of past daily returns)',
   gbm: 'GBM (constant volatility, normal shocks)',
   garch_t: 'GARCH-t (volatility clustering, fat tails)',
 }
+
+const MODEL_SHORT: Record<Projection['model'], string> = { bootstrap: 'Own history', gbm: 'GBM', garch_t: 'GARCH-t' }
 
 const METHOD_LABEL: Record<string, string> = {
   historical: 'Historical',
@@ -325,8 +329,9 @@ function MeaningPanel({
         <>
           <h4 className="advice-subhead">Range of outcomes over the next three months</h4>
           <p className="quiet-copy">
-            The middle line is the typical path; half of the simulated futures stay between the dotted lines and 9 in 10
-            between the dashed ones.
+            {projectionSource(projection)} Each faint grey line is one of those futures; the middle line is the typical
+            one, half stay between the dotted lines and 9 in 10 between the dashed ones. The scale is % up or down from
+            today.
           </p>
           <FanChart projection={projection} report={analysis.report} history={history} />
         </>
@@ -386,9 +391,7 @@ function SignalsPanel({ analysis }: { analysis: AnalyzeResponse }) {
 
 function ForecastPanel({ analysis }: { analysis: AnalyzeResponse }) {
   const { report, data } = analysis
-  const [model, setModel] = useState<Projection['model']>(
-    report.projections.some((p) => p.model === 'garch_t') ? 'garch_t' : 'gbm',
-  )
+  const [model, setModel] = useState<Projection['model']>(preferredProjection(analysis)?.model ?? 'gbm')
   const projection = report.projections.find((p) => p.model === model) ?? report.projections[0]
   if (!projection) return null
   return (
@@ -409,7 +412,7 @@ function ForecastPanel({ analysis }: { analysis: AnalyzeResponse }) {
               aria-pressed={p.model === model}
               onClick={() => setModel(p.model)}
             >
-              {p.model === 'gbm' ? 'GBM' : 'GARCH-t'}
+              {MODEL_SHORT[p.model]}
             </button>
           ))}
         </div>
@@ -476,13 +479,34 @@ function FanChart({
       rightPriceScale: { borderColor: '#d7dcda' },
       timeScale: { borderColor: '#d7dcda' },
     })
+    // Everything as % change from the last close, so stocks at ₹100 and ₹10,000 compare.
+    const lastPrice = report.last_price
+    const pct = (value: number) => (value / lastPrice - 1) * 100
+    const percentFormat = { type: 'custom' as const, formatter: (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(0)}%` }
+    const dates = futureSessions(report.last_date, projection.fan.length, report.periods_per_year)
+    // Real simulated paths, faint, behind the bands: each is one possible future.
+    for (const path of projection.sample_paths) {
+      chart
+        .addSeries(LineSeries, {
+          color: 'rgba(32, 36, 35, 0.14)',
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+          priceFormat: percentFormat,
+        })
+        .setData([
+          { time: report.last_date, value: 0 },
+          ...path.map((price, i) => ({ time: dates[i] ?? report.last_date, value: pct(price) })),
+        ] as LineData<string>[])
+    }
     const past = (history ?? [])
       .filter((b) => b.date <= report.last_date)
       .slice(-126)
-      .map((b) => ({ time: b.date, value: b.adj_close ?? b.close }))
-    chart.addSeries(LineSeries, { color: '#202423', lineWidth: 2, priceLineVisible: false }).setData(
-      past as LineData<string>[],
-    )
+      .map((b) => ({ time: b.date, value: pct(b.adj_close ?? b.close) }))
+    chart
+      .addSeries(LineSeries, { color: '#202423', lineWidth: 2, priceLineVisible: false, priceFormat: percentFormat })
+      .setData(past as LineData<string>[])
     const style = [
       { color: '#b4443a', lineStyle: LineStyle.Dashed },
       { color: '#1f7a68', lineStyle: LineStyle.Dotted },
@@ -492,18 +516,24 @@ function FanChart({
     ]
     lines.forEach((points, q) => {
       chart
-        .addSeries(LineSeries, { ...style[q], lineWidth: 2, priceLineVisible: false, lastValueVisible: q === 2 })
-        .setData(points as LineData<string>[])
+        .addSeries(LineSeries, {
+          ...style[q],
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: q === 2,
+          priceFormat: percentFormat,
+        })
+        .setData(points.map((p) => ({ ...p, value: pct(p.value) })) as LineData<string>[])
     })
     chart.timeScale().fitContent()
     return () => chart.remove()
-  }, [history, lines, report.last_date])
+  }, [history, lines, projection, report])
 
   return (
     <>
       <div className="chart-accessible-summary" role="img" aria-label="Simulated price fan chart">
         {last
-          ? `After ${last.day} sessions: 5% of paths end below ${last.price[0].toFixed(2)}, half below ${last.price[2].toFixed(2)}, 95% below ${last.price[4].toFixed(2)}.`
+          ? `After ${last.day} sessions: 5% of paths end below ${formatPct(last.price[0] / report.last_price - 1)}, half below ${formatPct(last.price[2] / report.last_price - 1)}, 95% below ${formatPct(last.price[4] / report.last_price - 1)} from today.`
           : 'No projection.'}
       </div>
       {isDomTest ? (

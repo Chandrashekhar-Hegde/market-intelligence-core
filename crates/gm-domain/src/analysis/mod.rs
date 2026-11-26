@@ -107,6 +107,8 @@ pub fn analyze(input: &AnalysisInput) -> Result<AnalysisReport, AnalysisError> {
     let predictability = predictability::test(&returns, &log_prices);
     let volatility = volatility::estimate(&returns, periods_per_year);
     let projections = montecarlo::project(&montecarlo::Inputs {
+        symbol: input.symbol,
+        returns: &returns,
         last_price: prices[prices.len() - 1].1,
         mu: distribution.mean_daily,
         sigma: distribution.vol_daily,

@@ -60,8 +60,24 @@ honest finding (Fama 1970).
 
 ## Forward distribution (Monte Carlo)
 
-- **Paths.** 2,000 by default (range 100–20,000), using a ChaCha8 generator seeded by `seed`.
-  Each model draws its own stream, so the same inputs always give byte-identical output.
+- **Paths.** 2,000 by default (range 100–20,000), using a ChaCha8 generator.
+  - **Seed:** `seed` XOR a hash of the model name XOR FNV-1a(symbol). The same inputs, symbol and
+    seed always give byte-identical output, but two instruments never share random draws.
+  - **Why the symbol is in the seed:** until 27 Nov 2026 every symbol used the same draws, so
+    every GBM fan had the same shape, only stretched by σ, and looked fake.
+- **Own history (`bootstrap`, the default display).** A stationary bootstrap (Politis & Romano
+  1994) of the instrument's own daily log returns.
+  - **How it runs:** each path starts on a random past day. Each next day continues the same run of
+    history, with probability 1 − 1/*L*, or jumps to a new random day.
+  - ***L*:** the Politis & White (2004) automatic block length with the Patton, Politis & White
+    (2009) correction, computed on **squared** returns. Volatility clustering is the dependence
+    that matters for risk, and plain returns barely show it.
+  - **Check:** *L* matches `arch.bootstrap.optimal_block_length` to 1e-9 on the AAPL, S&P 500 and
+    NIFTY fixtures (17, 27 and 8 days).
+  - **Effect:** the stock's own crash spells and calm periods shape its fan. It is also the
+    historical-simulation family that every model is scored against in validation.
+- **Sample paths.** The first 30 simulated paths of each model are returned and drawn faintly
+  behind the bands, so the fan is visibly made of possible futures.
 - **GBM.** Log returns are μ + σZ, with Z ~ N(0,1) and μ, σ the historical daily mean and
   standard deviation.
 - **GARCH-t.** rₜ = μ + σₜzₜ, with σ² updated by the fitted GARCH recursion from today's

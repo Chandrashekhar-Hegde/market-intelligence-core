@@ -219,8 +219,10 @@ fn same_seed_same_projection_different_seed_different() {
 #[test]
 fn projections_are_coherent_distributions() {
     let r = report(AAPL, None);
-    assert_eq!(r.projections.len(), 2);
+    let models: Vec<_> = r.projections.iter().map(|p| p.model.as_str()).collect();
+    assert_eq!(models, ["gbm", "garch_t", "bootstrap"]);
     for proj in &r.projections {
+        assert_eq!(proj.sample_paths.len(), super::montecarlo::SAMPLE_PATHS);
         assert_eq!(proj.fan.len(), 63);
         for pt in &proj.fan {
             assert!(
@@ -435,5 +437,24 @@ fn signals_match_statsmodels_on_aapl() {
         close(t.hit_rate.unwrap(), &e["hit_rate"], 1e-12, &what("hit"));
         close(t.hit_low.unwrap(), &e["hit_low"], 1e-9, &what("hit low"));
         close(t.hit_high.unwrap(), &e["hit_high"], 1e-9, &what("hit high"));
+    }
+}
+
+/// The stationary-bootstrap block length (on squared returns) matches arch's
+/// optimal_block_length on all three real series.
+#[test]
+fn bootstrap_block_length_matches_arch() {
+    for (csv, key) in [(AAPL, "aapl"), (GSPC, "gspc"), (NSEI, "nsei")] {
+        let prices = load(csv);
+        let squared: Vec<f64> = prices
+            .windows(2)
+            .map(|w| (w[1].1 / w[0].1).ln().powi(2))
+            .collect();
+        close(
+            super::montecarlo::optimal_block_length(&squared),
+            &reference()[key]["block_length_sq"],
+            1e-9,
+            key,
+        );
     }
 }
