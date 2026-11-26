@@ -806,15 +806,20 @@ async fn analyze_instrument(
             .flatten()
         {
             Some((signals, every_day)) => {
-                // Today's news can drive or veto the call (owner decision, 27 Nov 2026).
+                // Today's news can drive or veto the call (owner decision, 27 Nov 2026), but
+                // only for a company: news found for "NIFTY 50" or "Bitcoin" is market
+                // commentary, which the reader isn't built for.
                 // Best-effort: a news outage leaves the rules' advice as it is.
                 let name = meta.name.clone().unwrap_or_else(|| meta.symbol.clone());
-                let news = match gather_news(&state, &name).await {
-                    Ok((_, stories, _)) => {
-                        let readings = read_stories(&state, &stories).await;
-                        Some(vote_on(&stories, &readings))
-                    }
-                    Err(_) => None,
+                let news = match news_votes_for(meta.instrument_type.as_deref()) {
+                    false => None,
+                    true => match gather_news(&state, &name).await {
+                        Ok((_, stories, _)) => {
+                            let readings = read_stories(&state, &stories).await;
+                            Some(vote_on(&stories, &readings))
+                        }
+                        Err(_) => None,
+                    },
                 };
                 let input = news.as_ref().map(|(vote, headlines)| {
                     gm_domain::analysis::signals::NewsInput { vote, headlines }
@@ -1082,6 +1087,12 @@ async fn read_stories(
         }
     }
     stories.iter().map(|s| read_headline(&s.title)).collect()
+}
+
+/// News votes in the advice only for single companies; indices, ETFs, funds, FX and crypto
+/// get market commentary, not company news.
+fn news_votes_for(instrument_type: Option<&str>) -> bool {
+    instrument_type == Some("EQUITY")
 }
 
 /// Today's news vote from the readings, and the headlines behind it.
@@ -2830,6 +2841,22 @@ mod tests {
             "{gdelt}"
         );
         assert_eq!(body["benchmark"], "^NSEI");
+    }
+
+    #[test]
+    fn news_votes_only_for_companies() {
+        assert!(news_votes_for(Some("EQUITY")));
+        for other in [
+            "INDEX",
+            "ETF",
+            "MUTUALFUND",
+            "CRYPTOCURRENCY",
+            "CURRENCY",
+            "FUTURE",
+        ] {
+            assert!(!news_votes_for(Some(other)), "{other}");
+        }
+        assert!(!news_votes_for(None));
     }
 
     #[tokio::test]

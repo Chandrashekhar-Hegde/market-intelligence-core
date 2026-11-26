@@ -343,6 +343,11 @@ covered by many outlets.
   2026, to let news vote before it can be tested) and are to be calibrated by #107 once news
   history is stored (#80).
 
+**Only for companies.** News votes only for single company stocks (`EQUITY`). For an index,
+ETF, fund, currency or crypto, a name search returns market commentary, which the reader isn't
+built for. On 27 Nov 2026 NIFTY 50 got a news-driven Buy from a story about exchange operators'
+shares.
+
 **Combining with the trading rules** (`signals::advise_with_news`):
 | Situation | Call |
 |---|---|
