@@ -351,7 +351,7 @@ export type Signals = {
 
 export type Advice = {
   stance: 'buy' | 'sell' | 'hold'
-  basis: 'proven' | 'conflict' | 'proven_but_quiet' | 'no_evidence'
+  basis: 'proven' | 'conflict' | 'proven_but_quiet' | 'no_evidence' | 'news_driven' | 'news_conflict'
   headline: string
   drivers: string[]
   horizon_days: number | null
@@ -359,13 +359,29 @@ export type Advice = {
   confidence: { hit_rate: number; low: number; high: number; n: number } | null
   flip_level: number | null
   reasons: string[]
+  /** Headlines behind a news-driven or news-conflicted call, strongest first. */
+  news_headlines: string[]
 }
+
+export type NewsReading = {
+  kind: string
+  /** +1 good for the company, −1 bad, 0 unclear. */
+  direction: -1 | 0 | 1
+  /** 1 low, 2 medium, 3 high. */
+  materiality: 1 | 2 | 3
+  reason: string
+  reader: string
+}
+
+export type NewsVote = { score: number; stance: -1 | 0 | 1; n_stories: number; drivers: number[] }
 
 export type AnalyzeResponse = {
   report: AnalysisReport
   signals: Signals | null
   advice: Advice | null
   signals_note: string | null
+  /** Today's news, read and weighed; null when no news source answered. */
+  news_vote: NewsVote | null
   data: {
     symbol: string
     name: string | null
@@ -423,8 +439,12 @@ export type NewsResponse = {
   query: string
   articles: {
     article: { title: string; url: string; publisher: string; source: string; seen_at: string; summary: string | null }
+    reading: NewsReading
     impact: NewsImpact | null
   }[]
+  vote: NewsVote
+  /** "built-in" or the model that read the headlines. */
+  reader: string
   /** Every source tried, and what it returned. */
   sources: NewsSource[]
   benchmark: string | null

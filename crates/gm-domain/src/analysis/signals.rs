@@ -101,6 +101,17 @@ pub enum Basis {
     ProvenButQuiet,
     /// No rule earned its place on this instrument.
     NoEvidence,
+    /// No proven rule is active, and strong news today points one way. No track record.
+    NewsDriven,
+    /// A proven rule is active, but strong news today points the other way.
+    NewsConflict,
+}
+
+/// Today's news as the advice needs it: the vote and the headlines behind it.
+pub struct NewsInput<'a> {
+    pub vote: &'a super::news_reader::NewsVote,
+    /// Headlines of the vote's drivers, strongest first.
+    pub headlines: &'a [String],
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -125,6 +136,8 @@ pub struct Advice {
     pub flip_level: Option<f64>,
     /// One line per rule: what it sees today and whether it has worked here.
     pub reasons: Vec<String>,
+    /// Headlines behind a news-driven or news-conflicted call, strongest first.
+    pub news_headlines: Vec<String>,
 }
 
 /// Daily closes (split- and dividend-adjusted) and volumes, oldest first.
@@ -745,7 +758,71 @@ pub fn advise(signals: &Signals, every_day: bool) -> Advice {
         }),
         flip_level: lead.and_then(|(s, _)| s.flip_level),
         reasons,
+        news_headlines: Vec::new(),
     }
+}
+
+/// The rules' advice, adjusted for strong news (owner decision, 27 Nov 2026):
+/// - a proven call that news contradicts becomes Hold;
+/// - with no proven call active, strong news makes the call, labelled as having no track record.
+pub fn advise_with_news(signals: &Signals, every_day: bool, news: Option<&NewsInput>) -> Advice {
+    let mut advice = advise(signals, every_day);
+    let Some(news) = news.filter(|n| n.vote.stance != 0) else {
+        return advice;
+    };
+    let news_stance = if news.vote.stance > 0 {
+        Stance::Buy
+    } else {
+        Stance::Sell
+    };
+    let top = news
+        .headlines
+        .first()
+        .map_or(String::new(), |h| format!(" Leading story: “{h}”."));
+    advice.news_headlines = news.headlines.to_vec();
+    match advice.basis {
+        Basis::Proven if advice.stance == news_stance => {
+            advice
+                .headline
+                .push_str(" Today's news points the same way.");
+        }
+        Basis::Proven => {
+            advice.headline = format!(
+                "Hold. A rule that has worked on this stock says {}, but today's news points the other way.{top}",
+                if advice.stance == Stance::Buy {
+                    "buy"
+                } else {
+                    "sell"
+                }
+            );
+            advice.stance = Stance::Hold;
+            advice.basis = Basis::NewsConflict;
+            advice.confidence = None;
+            advice.horizon_days = None;
+            advice.review_date = None;
+            advice.flip_level = None;
+        }
+        Basis::Conflict => {}
+        Basis::ProvenButQuiet | Basis::NoEvidence | Basis::NewsDriven | Basis::NewsConflict => {
+            advice.stance = news_stance;
+            advice.basis = Basis::NewsDriven;
+            advice.headline = format!(
+                "{}, based on today's news. No track record yet: news-driven calls haven't been tested on past data.{top}",
+                if news_stance == Stance::Buy {
+                    "Buy"
+                } else {
+                    "Sell or stay out"
+                }
+            );
+            // News is read as a few-days effect; look again within a week.
+            advice.horizon_days = Some(5);
+            advice.review_date = Some(add_sessions(signals.last_date, 5, every_day));
+            advice.confidence = None;
+            advice.flip_level = None;
+            advice.drivers = Vec::new();
+        }
+    }
+    advice
 }
 
 #[cfg(test)]
@@ -904,5 +981,108 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(a, b);
+    }
+
+    mod news {
+        use super::super::*;
+        use crate::analysis::news_reader::NewsVote;
+
+        fn signals(position: i8, proven: bool) -> Signals {
+            let test = SignalTest {
+                horizon_days: 21,
+                n_obs: 2000,
+                n_independent: 90,
+                effect: 0.01,
+                t_stat: 4.0,
+                p_value: 0.0001,
+                p_holm: 0.001,
+                effect_first_half: 0.01,
+                effect_second_half: 0.01,
+                hit_rate: Some(0.6),
+                hit_n: 90,
+                hit_low: Some(0.5),
+                hit_high: Some(0.7),
+                mean_return_long: Some(0.01),
+                mean_return_short: None,
+                earns_place: proven,
+                verdict: String::new(),
+            };
+            Signals {
+                first_date: NaiveDate::from_ymd_opt(2016, 11, 25).unwrap(),
+                last_date: NaiveDate::from_ymd_opt(2026, 11, 27).unwrap(),
+                n_days: 2470,
+                round_trip_cost: ROUND_TRIP_COST,
+                n_tests: 3,
+                signals: vec![Signal {
+                    id: "trend_200d".into(),
+                    name: "Long-term trend".into(),
+                    rule: String::new(),
+                    source: String::new(),
+                    position_today: position,
+                    today: String::new(),
+                    flip_level: Some(100.0),
+                    tests: vec![test],
+                }],
+            }
+        }
+
+        fn vote(stance: i8) -> NewsVote {
+            NewsVote {
+                score: f64::from(stance),
+                stance,
+                n_stories: 3,
+                drivers: vec![0],
+            }
+        }
+
+        #[test]
+        fn news_drives_a_call_only_without_a_proven_rule() {
+            let v = vote(-1);
+            let headlines = ["SEBI orders forensic audit".to_string()];
+            let input = NewsInput {
+                vote: &v,
+                headlines: &headlines,
+            };
+            // Nothing proven: the news makes the call, labelled, with a short review.
+            let a = advise_with_news(&signals(1, false), false, Some(&input));
+            assert_eq!((a.stance, a.basis), (Stance::Sell, Basis::NewsDriven));
+            assert!(
+                a.headline.contains("No track record yet") && a.headline.contains("forensic audit"),
+                "{}",
+                a.headline
+            );
+            assert_eq!(a.horizon_days, Some(5));
+            assert!(a.confidence.is_none());
+            // A proven Buy contradicted by strong bad news: Hold.
+            let b = advise_with_news(&signals(1, true), false, Some(&input));
+            assert_eq!((b.stance, b.basis), (Stance::Hold, Basis::NewsConflict));
+            // A proven Buy with good news: unchanged, and says so.
+            let good = vote(1);
+            let agree = advise_with_news(
+                &signals(1, true),
+                false,
+                Some(&NewsInput {
+                    vote: &good,
+                    headlines: &headlines,
+                }),
+            );
+            assert_eq!((agree.stance, agree.basis), (Stance::Buy, Basis::Proven));
+            assert!(
+                agree
+                    .headline
+                    .ends_with("Today's news points the same way.")
+            );
+            // Weak news changes nothing.
+            let quiet = vote(0);
+            let same = advise_with_news(
+                &signals(1, false),
+                false,
+                Some(&NewsInput {
+                    vote: &quiet,
+                    headlines: &[],
+                }),
+            );
+            assert_eq!(same, advise(&signals(1, false), false));
+        }
     }
 }

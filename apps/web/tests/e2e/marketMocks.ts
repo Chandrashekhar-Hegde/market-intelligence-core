@@ -148,8 +148,11 @@ export async function mockMarketData(page: Page, { liveTicks = false } = {}) {
             title: 'Reliance wins a large order', url: 'https://example.test/r', publisher: 'Livemint', source: 'Google News',
             seen_at: new Date(Date.now() - 3600_000).toISOString(), summary: null,
           },
+          reading: { kind: 'order_win', direction: 1, materiality: 2, reason: 'A new order or contract adds future revenue.', reader: 'built-in' },
           impact: { instrument_move: 0.021, market_move: 0.002, abnormal_move: 0.019, sessions_elapsed: 0.2, z: 2.9, one_in: 270 },
         }],
+        vote: { score: 0.5, stance: 0, n_stories: 1, drivers: [] },
+        reader: 'built-in',
         sources: [
           { name: 'Google News', ok: true, count: 1, error: null },
           { name: 'Economic Times', ok: true, count: 0, error: null },
@@ -286,9 +289,10 @@ function analysis(symbol: string) {
     advice: {
       stance: 'hold', basis: 'no_evidence',
       headline: 'Hold. No rule has a proven edge on this instrument: its past moves have not predicted its next ones well enough to beat trading costs.',
-      drivers: [], horizon_days: null, review_date: null, confidence: null, flip_level: null, reasons: [],
+      drivers: [], horizon_days: null, review_date: null, confidence: null, flip_level: null, reasons: [], news_headlines: [],
     },
     signals_note: null,
+    news_vote: { score: 0.5, stance: 0, n_stories: 1, drivers: [] },
   }
 }
 

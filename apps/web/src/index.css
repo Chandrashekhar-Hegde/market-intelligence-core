@@ -1908,3 +1908,16 @@ ol {
 .history-picker {
   margin-top: 8px;
 }
+
+.news-reading {
+  margin-top: 4px;
+  font-size: 0.9rem;
+}
+
+.news-behind {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  background: #fff8ec;
+  border: 1px solid #f0d9a8;
+  border-radius: 8px;
+}

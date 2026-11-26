@@ -58,6 +58,8 @@ pub struct ApiConfig {
     pub gdelt_base_url: Option<String>,
     /// Serve Google News and the publisher feeds from one stub (tests).
     pub news_base_url: Option<String>,
+    /// Optional OpenAI-compatible model that reads headlines (GM_LLM_* env vars).
+    pub llm: Option<gm_integrations::llm::LlmConfig>,
 }
 
 impl Default for ApiConfig {
@@ -76,6 +78,7 @@ impl Default for ApiConfig {
             yahoo_stream_url: None,
             gdelt_base_url: None,
             news_base_url: None,
+            llm: None,
         }
     }
 }
@@ -89,6 +92,7 @@ struct AppState {
     stream: YahooStream,
     gdelt: gm_integrations::gdelt::GdeltClient,
     news: gm_integrations::news::NewsClient,
+    llm: Option<gm_integrations::llm::LlmReader>,
     access_token: Option<Arc<str>>,
 }
 
@@ -337,6 +341,7 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
             .as_deref()
             .map(gm_integrations::news::NewsClient::stub)
             .unwrap_or_default(),
+        llm: config.llm.map(gm_integrations::llm::LlmReader::new),
         access_token: config
             .access_token
             .filter(|token| !token.trim().is_empty())
@@ -793,13 +798,35 @@ async fn analyze_instrument(
     });
     // Rules are tested on up to 10 years: the 3-month horizon needs 30+ separate calls.
     // Best-effort: the rest of the analysis does not depend on it.
+    let mut news_vote = None;
     let (signals, advice, signals_note) = match state.yahoo.chart(&meta.symbol, "10y").await {
         Ok(long) => match tokio::task::spawn_blocking(move || trading_signals(&long))
             .await
             .ok()
             .flatten()
         {
-            Some((s, a)) => (Some(s), Some(a), None),
+            Some((signals, every_day)) => {
+                // Today's news can drive or veto the call (owner decision, 27 Nov 2026).
+                // Best-effort: a news outage leaves the rules' advice as it is.
+                let name = meta.name.clone().unwrap_or_else(|| meta.symbol.clone());
+                let news = match gather_news(&state, &name).await {
+                    Ok((_, stories, _)) => {
+                        let readings = read_stories(&state, &stories).await;
+                        Some(vote_on(&stories, &readings))
+                    }
+                    Err(_) => None,
+                };
+                let input = news.as_ref().map(|(vote, headlines)| {
+                    gm_domain::analysis::signals::NewsInput { vote, headlines }
+                });
+                let advice = gm_domain::analysis::signals::advise_with_news(
+                    &signals,
+                    every_day,
+                    input.as_ref(),
+                );
+                news_vote = news.map(|(vote, _)| vote);
+                (Some(signals), Some(advice), None)
+            }
             None => (
                 None,
                 None,
@@ -845,6 +872,7 @@ async fn analyze_instrument(
         "signals": signals,
         "advice": advice,
         "signals_note": signals_note,
+        "news_vote": news_vote,
         "data": {
             "symbol": meta.symbol,
             "name": meta.name,
@@ -952,28 +980,28 @@ async fn quote(
     })))
 }
 
-/// Recent news that mentions the instrument (GDELT), the tone of its coverage, and how the price
-/// moved after each story beyond what the market explains. Measurement only; nothing is stored.
-async fn news(
-    State(state): State<AppState>,
-    Query(query): Query<QuoteQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    use gm_domain::analysis::news::{ImpactInput, impact};
+/// Stories naming the company from every news source, newest first and de-duplicated, with
+/// each source's outcome. Errors only when every source fails.
+async fn gather_news(
+    state: &AppState,
+    name: &str,
+) -> Result<
+    (
+        String,
+        Vec<gm_integrations::news::Story>,
+        Vec<serde_json::Value>,
+    ),
+    ApiError,
+> {
+    use gm_integrations::news::Story;
     use gm_integrations::{
         gdelt::{company_phrase, news_query},
-        news::{Story, dedupe_key, mentions},
+        news::{dedupe_key, mentions},
     };
-    let chart = state
-        .yahoo
-        .chart(&query.symbol, "1y")
-        .await
-        .map_err(ApiError::provider)?;
-    let meta = &chart.meta;
-    let name = meta.name.clone().unwrap_or_else(|| meta.symbol.clone());
-    let phrase = company_phrase(&name).ok_or_else(|| {
+    let phrase = company_phrase(name).ok_or_else(|| {
         ApiError::bad_request(format!("{name:?} is too short to search news for"))
     })?;
-    let gdelt_query = news_query(&name).unwrap_or_default();
+    let gdelt_query = news_query(name).unwrap_or_default();
 
     // Every source at once; each one's outcome is reported, and one failing never hides others.
     let (google, feeds, gdelt) = tokio::join!(
@@ -1033,6 +1061,66 @@ async fn news(
     stories.sort_by_key(|s| std::cmp::Reverse(s.seen_at));
     let mut seen = std::collections::HashSet::new();
     stories.retain(|s| seen.insert(dedupe_key(&s.title)));
+    Ok((phrase, stories, sources))
+}
+
+/// One reading per story: the configured model's when it answers, otherwise the built-in reader.
+async fn read_stories(
+    state: &AppState,
+    stories: &[gm_integrations::news::Story],
+) -> Vec<gm_domain::analysis::news_reader::Reading> {
+    use gm_domain::analysis::news_reader::read_headline;
+    if let Some(llm) = &state.llm
+        && !stories.is_empty()
+    {
+        let titles: Vec<String> = stories.iter().map(|s| s.title.clone()).collect();
+        match llm.read(&titles).await {
+            Ok(readings) => return readings,
+            Err(e) => {
+                tracing::warn!(error = %e, "llm news reader failed; using the built-in reader")
+            }
+        }
+    }
+    stories.iter().map(|s| read_headline(&s.title)).collect()
+}
+
+/// Today's news vote from the readings, and the headlines behind it.
+fn vote_on(
+    stories: &[gm_integrations::news::Story],
+    readings: &[gm_domain::analysis::news_reader::Reading],
+) -> (gm_domain::analysis::news_reader::NewsVote, Vec<String>) {
+    let now = chrono::Utc::now();
+    let aged: Vec<_> = readings
+        .iter()
+        .cloned()
+        .zip(stories)
+        .map(|(r, s)| (r, (now - s.seen_at).num_minutes() as f64 / 60.0))
+        .collect();
+    let vote = gm_domain::analysis::news_reader::news_vote(&aged);
+    let headlines = vote
+        .drivers
+        .iter()
+        .map(|&i| stories[i].title.clone())
+        .collect();
+    (vote, headlines)
+}
+
+/// Recent news that mentions the instrument (GDELT), the tone of its coverage, and how the price
+/// moved after each story beyond what the market explains. Measurement only; nothing is stored.
+async fn news(
+    State(state): State<AppState>,
+    Query(query): Query<QuoteQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use gm_domain::analysis::news::{ImpactInput, impact};
+    let chart = state
+        .yahoo
+        .chart(&query.symbol, "1y")
+        .await
+        .map_err(ApiError::provider)?;
+    let meta = &chart.meta;
+    let name = meta.name.clone().unwrap_or_else(|| meta.symbol.clone());
+    let (phrase, stories, sources) = gather_news(&state, &name).await?;
+    let readings = read_stories(&state, &stories).await;
 
     // Reaction: 5-minute bars of the instrument and its home index over the last 5 sessions.
     let bench_symbol = markets::default_benchmark(
@@ -1099,11 +1187,13 @@ async fn news(
         },
         session_seconds,
     };
+    let (vote, _) = vote_on(&stories, &readings);
     let articles: Vec<_> = stories
         .into_iter()
-        .map(|story| {
+        .zip(readings)
+        .map(|(story, reading)| {
             let reaction = impact(&input, story.seen_at.timestamp());
-            serde_json::json!({ "article": story, "impact": reaction })
+            serde_json::json!({ "article": story, "reading": reading, "impact": reaction })
         })
         .collect();
     Ok(Json(serde_json::json!({
@@ -1111,6 +1201,8 @@ async fn news(
         "query": phrase,
         "articles": articles,
         "sources": sources,
+        "vote": vote,
+        "reader": state.llm.as_ref().map_or("built-in", |l| l.model()),
         "benchmark": exposure.as_ref().map(|e| e.symbol.clone()),
         "beta": exposure.as_ref().map(|e| e.beta),
         "fetched_at": chrono::Utc::now(),
@@ -1118,13 +1210,9 @@ async fn news(
 }
 
 /// Literature trading rules tested walk-forward on this history, and the advice they support.
-fn trading_signals(
-    chart: &ChartData,
-) -> Option<(
-    gm_domain::analysis::signals::Signals,
-    gm_domain::analysis::signals::Advice,
-)> {
-    use gm_domain::analysis::signals::{SignalInput, advise, evaluate};
+/// Also returns whether the history trades every day (crypto), for review dates.
+fn trading_signals(chart: &ChartData) -> Option<(gm_domain::analysis::signals::Signals, bool)> {
+    use gm_domain::analysis::signals::{SignalInput, evaluate};
     let dates: Vec<_> = chart.bars.iter().map(|b| b.date).collect();
     let closes: Vec<f64> = chart.bars.iter().map(|b| b.adjusted_close()).collect();
     let volume: Vec<f64> = chart.bars.iter().map(|b| b.volume as f64).collect();
@@ -1142,8 +1230,7 @@ fn trading_signals(
         close: &closes,
         volume: has_volume.then_some(volume.as_slice()),
     })?;
-    let advice = advise(&signals, every_day);
-    Some((signals, advice))
+    Some((signals, every_day))
 }
 
 /// Intraday bars for the live chart: `1d` (1-minute) or `5d` (5-minute). Display-only.
@@ -2746,6 +2833,128 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn news_is_read_and_votes_in_the_analysis() {
+        let app = news_app(false, false).await;
+        let (status, body) = get_json(app.clone(), "/api/v1/news?symbol=RELIANCE.NS").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["reader"], "built-in");
+        // The Supreme Court ruling in the recorded feed reads as relief: a good legal outcome.
+        let sc = body["articles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| {
+                a["article"]["title"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("SC Dismisses")
+            })
+            .unwrap();
+        assert_eq!(sc["reading"]["kind"], "legal");
+        assert_eq!(sc["reading"]["direction"], 1);
+        assert!(body["vote"]["n_stories"].as_u64().unwrap() > 20);
+
+        let (status, analysis) = get_json(app, "/api/v1/analyze?symbol=RELIANCE.NS&range=1y").await;
+        assert_eq!(status, StatusCode::OK, "{analysis}");
+        // The vote reached the advice (its stance depends on how old the recorded stories are).
+        assert!(
+            analysis["news_vote"]["n_stories"].as_u64().unwrap() > 20,
+            "{}",
+            analysis["news_vote"]
+        );
+        let basis = analysis["advice"]["basis"].as_str().unwrap();
+        assert!(
+            [
+                "proven",
+                "conflict",
+                "proven_but_quiet",
+                "no_evidence",
+                "news_driven",
+                "news_conflict"
+            ]
+            .contains(&basis)
+        );
+    }
+
+    /// An OpenAI-compatible chat stub: reads every headline as bad legal news, or fails.
+    async fn llm_stub(fail: bool) -> String {
+        let chat = move |Json(request): Json<serde_json::Value>| async move {
+            if fail {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({})),
+                );
+            }
+            let lines = request["messages"][1]["content"]
+                .as_str()
+                .unwrap_or("")
+                .lines()
+                .count();
+            let readings: Vec<_> = (0..lines)
+                .map(|_| serde_json::json!({ "kind": "legal", "direction": -1, "materiality": 3, "reason": "stub" }))
+                .collect();
+            let content = serde_json::to_string(&readings).unwrap();
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "choices": [{ "message": { "content": content } }] })),
+            )
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/v1/chat/completions", post(chat)),
+            )
+            .await
+            .unwrap()
+        });
+        format!("http://{addr}/v1")
+    }
+
+    async fn llm_news_app(fail: bool) -> Router {
+        build_app(ApiConfig {
+            yahoo_base_url: Some(yahoo_stub(false).await),
+            yahoo_stream_url: Some(stream_stub().await),
+            gdelt_base_url: Some(gdelt_stub(true).await),
+            news_base_url: Some(news_stub(false).await),
+            llm: Some(gm_integrations::llm::LlmConfig {
+                base_url: llm_stub(fail).await,
+                model: "stub-model".into(),
+                api_key: Some("k".into()),
+            }),
+            ..ApiConfig::default()
+        })
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_configured_model_reads_the_news_and_falls_back_when_it_fails() {
+        let (status, body) =
+            get_json(llm_news_app(false).await, "/api/v1/news?symbol=RELIANCE.NS").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["reader"], "stub-model");
+        let first = &body["articles"][0]["reading"];
+        assert_eq!(
+            (first["kind"].as_str(), first["reader"].as_str()),
+            (Some("legal"), Some("stub-model"))
+        );
+
+        let (status, body) =
+            get_json(llm_news_app(true).await, "/api/v1/news?symbol=RELIANCE.NS").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        // The model failed: every headline was still read, by the built-in reader.
+        assert!(
+            body["articles"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|a| a["reading"]["reader"] == "built-in")
+        );
+    }
+
+    #[tokio::test]
     async fn news_survives_a_failed_source_and_503s_only_when_all_fail() {
         let (status, body) = get_json(
             news_app(true, true).await,
@@ -2795,6 +3004,9 @@ mod tests {
         build_app(ApiConfig {
             yahoo_base_url: Some(yahoo_stub(fail).await),
             yahoo_stream_url: Some(stream_stub().await),
+            // No network in tests: every news source fails fast, so advice ignores news.
+            gdelt_base_url: Some(gdelt_stub(true).await),
+            news_base_url: Some("http://127.0.0.1:9".to_string()),
             access_token: access_token.map(str::to_string),
             ..ApiConfig::default()
         })
@@ -3084,6 +3296,9 @@ mod tests {
         assert!(["buy", "sell", "hold"].contains(&advice["stance"].as_str().unwrap()));
         assert_eq!(advice["reasons"].as_array().unwrap().len(), ids.len());
         assert!(body["signals_note"].is_null());
+        // No news source answered: no vote, and the rules' advice stands on its own.
+        assert!(body["news_vote"].is_null());
+        assert!(advice["news_headlines"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
