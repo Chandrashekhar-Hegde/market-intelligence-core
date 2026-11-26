@@ -222,8 +222,7 @@ including its Definition of Done.
 The design behind the queue is in [docs/plans/](docs/plans/README.md). Commit a plan there
 *before* starting significant new work.
 
-Snapshot (2026-11-25):
-- **Shipped:** 0.1–0.5.
-- **In progress:** Phase 0.6 (#98–#101): live intraday data, validated advice, news.
-- **Ready after that:** #45, #71, #64, #91, #9, #94, #67.
+Snapshot (2026-11-27):
+- **Shipped:** 0.1–0.6 (0.6: live intraday data, validated advice, news).
+- **Ready now:** #108, #109, #45, #71, #64, #91, #9, #94, #67.
 - **Waiting on owner decisions:** #80 (Postgres cost), #83, #85, #89.
