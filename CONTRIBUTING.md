@@ -68,7 +68,8 @@ An issue is done when **all** of these are true:
 
 ## Rules that don't bend
 
-- **Distributions, not calls.** No buy/sell outputs. Forecasts are ranges with a horizon.
+- **Calls only when proven.** Forecasts are ranges with a horizon. Buy/Sell only from a signal that
+  passed walk-forward validation on that instrument, shown with its evidence.
 - **A model earns its place.** It must beat the baseline out of sample in the validation harness
   before the UI presents it as useful.
 - **Cite or calibrate.** Every constant has a source in METHODOLOGY or is estimated from data.

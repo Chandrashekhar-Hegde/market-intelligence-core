@@ -40,27 +40,31 @@ Item states (GitHub labels):
 
 | Order | Issue | Goal | State | Blocked by |
 |---|---|---|---|---|
-| 1 | [#45](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/45) | NSE bhavcopy cross-check and fallback (spike: is it reachable from Railway?) | `agent-ready` | — |
-| 2 | [#71](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/71) | Replace chrono (RUSTSEC advisory) | `agent-ready` | — |
-| 3 | [#64](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/64) | Market-model event study (α + β, CAR significance) | `agent-ready` | — |
-| 4 | [#91](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/91) | Portfolio risk from pasted holdings (stateless) | `agent-ready` | — |
-| 5 | [#9](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/9) | Operations status panel: provider health, cache, stream | `agent-ready` | — |
-| 6 | [#94](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/94) | Link each panel to its How it works section (good first issue) | `agent-ready` | — |
-| 7 | [#67](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/67) | Two-state HMM regimes, kept only if validation says so | `agent-ready` | — |
-| 8 | [#80](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/80) | Attach Postgres on Railway; event store | `needs-owner-input` (cost) | — |
-| 9 | [#83](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/83) | Decide a lawful India announcements source | `needs-owner-input` | — |
-| 10 | [#85](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/85) | Decide a free fundamentals source | `needs-owner-input` | — |
-| 11 | [#89](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/89) | Decide the authentication approach | `needs-owner-input` | — |
-| 12 | [#81](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/81), [#82](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/82) | GDELT news; SEC EDGAR filings | `blocked` | #80 |
-| 13 | [#84](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/84) | Link events to instruments | `blocked` | #81, #82 |
-| 14 | [#13](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/13) | Event markers and CAR chart | `blocked` | #64, #84 |
-| 15 | [#65](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/65) | Calibrate or retire `/decide` | `needs-owner-input` | #64, #17 |
-| 16 | [#86](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/86) → [#87](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/87) → [#88](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/88) | Fundamentals provider → quality metrics → Monte Carlo DCF | `blocked` | #85, #80 |
-| 17 | [#90](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/90) | Accounts and sessions; retire the shared token | `blocked` | #89, #80 |
-| 18 | [#92](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/92) | Sizing and rebalancing ranges | `blocked` | #91 |
-| 19 | [#93](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/93) | Saved portfolios | `blocked` | #90, #91 |
-| 20 | [#18](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/18) | Broker holdings sync (read-only) | `needs-owner-input` (keys) | #93 |
-| 21 | [#68](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/68) | Broker live ticks | `needs-owner-input` (keys) | — |
+| 1 | [#98](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/98) | Intraday chart and live watchlist | `agent-ready` (in progress) | — |
+| 2 | [#99](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/99) | Signal library, walk-forward backtests, validated advice | `agent-ready` | — |
+| 3 | [#100](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/100) | Advice card, plain-language panels, live forecast; retire `/decide` | `blocked` | #99 |
+| 4 | [#101](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/101) | Real-time news (GDELT) with measured price impact | `agent-ready` | — |
+| 5 | [#45](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/45) | NSE bhavcopy cross-check and fallback (spike: is it reachable from Railway?) | `agent-ready` | — |
+| 6 | [#71](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/71) | Replace chrono (RUSTSEC advisory) | `agent-ready` | — |
+| 7 | [#64](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/64) | Market-model event study (α + β, CAR significance) | `agent-ready` | — |
+| 8 | [#91](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/91) | Portfolio risk from pasted holdings (stateless) | `agent-ready` | — |
+| 9 | [#9](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/9) | Operations status panel: provider health, cache, stream | `agent-ready` | — |
+| 10 | [#94](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/94) | Link each panel to its How it works section (good first issue) | `agent-ready` | — |
+| 11 | [#67](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/67) | Two-state HMM regimes, kept only if validation says so | `agent-ready` | — |
+| 12 | [#80](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/80) | Attach Postgres on Railway; event store | `needs-owner-input` (cost) | — |
+| 13 | [#83](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/83) | Decide a lawful India announcements source | `needs-owner-input` | — |
+| 14 | [#85](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/85) | Decide a free fundamentals source | `needs-owner-input` | — |
+| 15 | [#89](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/89) | Decide the authentication approach | `needs-owner-input` | — |
+| 16 | [#81](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/81), [#82](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/82) | GDELT news; SEC EDGAR filings | `blocked` | #80 |
+| 17 | [#84](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/84) | Link events to instruments | `blocked` | #81, #82 |
+| 18 | [#13](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/13) | Event markers and CAR chart | `blocked` | #64, #84 |
+| 19 | [#65](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/65) | Calibrate or retire `/decide` | `needs-owner-input` | #64, #17 |
+| 20 | [#86](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/86) → [#87](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/87) → [#88](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/88) | Fundamentals provider → quality metrics → Monte Carlo DCF | `blocked` | #85, #80 |
+| 21 | [#90](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/90) | Accounts and sessions; retire the shared token | `blocked` | #89, #80 |
+| 22 | [#92](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/92) | Sizing and rebalancing ranges | `blocked` | #91 |
+| 23 | [#93](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/93) | Saved portfolios | `blocked` | #90, #91 |
+| 24 | [#18](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/18) | Broker holdings sync (read-only) | `needs-owner-input` (keys) | #93 |
+| 25 | [#68](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/68) | Broker live ticks | `needs-owner-input` (keys) | — |
 
 Parent issues that group the steps: [#17](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/17)
 (events), [#66](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/66) (fundamentals),

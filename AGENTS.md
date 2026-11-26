@@ -14,7 +14,8 @@ any exchange** and gets the following, built on real data:
   Carlo forecast ranges, VaR/ES and benchmark beta;
 - **out-of-sample validation** of every forecast model against a baseline.
 
-Forecasts are always distributions, never buy/sell calls.
+Forecasts are always distributions. Buy/Hold/Sell advice appears only when a signal has proven itself
+out of sample on that instrument (Phase 0.6).
 
 - **Live:** https://gm-api-production-911a7e90.up.railway.app (private beta, token-gated).
 - **Repo:** https://github.com/Chandrashekhar-Hegde/market-intelligence-core.
@@ -22,7 +23,10 @@ Forecasts are always distributions, never buy/sell calls.
 
 ## Principles (non-negotiable)
 
-1. **Distributions, not calls.** Every forecast is quantiles or a fan with a horizon.
+1. **Calls only when proven.** Every forecast is quantiles or a fan with a horizon. A Buy/Sell call
+   comes only from a signal that passed walk-forward validation on that instrument, and is always
+   shown with its evidence (hit rate, sample size, horizon). Otherwise the app says "Hold: no proven
+   edge". Changed by the owner on 2026-11-26; see `docs/plans/phase-0.6-advice.md`.
 2. **A model earns its place.** It must beat historical simulation out of sample (Diebold–Mariano)
    and pass VaR backtests (Kupiec, Christoffersen). Otherwise the app says "no evidence".
 3. **Cite or calibrate.** Every constant is estimated from data or cites a source in
@@ -220,5 +224,6 @@ The design behind the queue is in [docs/plans/](docs/plans/README.md). Commit a 
 
 Snapshot (2026-11-25):
 - **Shipped:** 0.1–0.5.
-- **Ready now:** #45, #71, #64, #91, #9, #94, #67.
+- **In progress:** Phase 0.6 (#98–#101): live intraday data, validated advice, news.
+- **Ready after that:** #45, #71, #64, #91, #9, #94, #67.
 - **Waiting on owner decisions:** #80 (Postgres cost), #83, #85, #89.
