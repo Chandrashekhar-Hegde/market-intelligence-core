@@ -175,6 +175,15 @@ fixtures.
 - **Performance.** Total and annual return, volatility, Sharpe and maximum drawdown on the common
   period, each in its own currency. When currencies differ the response says so.
 
+**Plain words on the Compare tab** (`plainLanguage.ts`).
+- **Moving together:** a correlation is described with the Evans (1996) verbal scale on |ρ|:
+  - ≥ 0.8 very closely; ≥ 0.6 closely; ≥ 0.4 somewhat; ≥ 0.2 loosely;
+  - below 0.2 independently;
+  - with "in opposite directions" when ρ < 0.
+  - Weekly correlations are used when the markets close at different times.
+- **Mixing them:** the equal mix's yearly swing is √(wᵀΣw), with w = 1/n and Σ the annualised
+  covariance. It is compared with the average of each instrument's own swing.
+
 ## Data quality (`/api/v1/bars` and `/analyze`)
 
 Every series is checked for:
@@ -355,4 +364,4 @@ JBES 13; Gneiting & Raftery (2007) JASA 102; Kupiec (1995) J. Derivatives 3; Fab
 Granville (1963) New Key to Stock Market Profits; Hansen & Hodrick (1980) JPE 88; Holm (1979) Scand.
 J. Statistics 6; Jegadeesh (1990) J. Finance 45; Jegadeesh & Titman (1993) J. Finance 48; Lehmann
 (1990) QJE 105; Moskowitz, Ooi & Pedersen (2012) JFE 104; Newey & West (1987) Econometrica 55;
-Wilder (1978) New Concepts in Technical Trading Systems; Wilson (1927) JASA 22. MacKinlay (1997) J. Economic Literature 35.
+Wilder (1978) New Concepts in Technical Trading Systems; Wilson (1927) JASA 22. MacKinlay (1997) J. Economic Literature 35. Evans (1996) Straightforward Statistics for the Behavioral Sciences.

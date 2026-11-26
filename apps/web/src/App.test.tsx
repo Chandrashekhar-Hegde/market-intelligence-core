@@ -60,5 +60,5 @@ test('the Compare tab opens the comparison view', async () => {
   mockFetch()
   renderApp()
   await userEvent.click(screen.getByRole('tab', { name: /compare/i }))
-  expect(screen.getByRole('heading', { name: /how instruments move together/i })).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: /which did better, which is riskier/i })).toBeInTheDocument()
 })
