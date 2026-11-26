@@ -102,6 +102,7 @@ function analysis(overrides: Partial<AnalyzeResponse['report']> = {}): AnalyzeRe
     day: i + 1,
     price: [0.9, 0.95, 1, 1.05, 1.1].map((f) => 25349.65 * (1 + (f - 1) * Math.sqrt((i + 1) / 63))) as [number, number, number, number, number],
   }))
+  const samples = [0.97, 1.03].map((f) => Array.from({ length: 63 }, (_, i) => 25349.65 * (1 + (f - 1) * Math.sqrt((i + 1) / 63))))
   const horizons = [5, 21, 63].map((h) => ({
     horizon_days: h,
     return_quantiles: [-0.08, -0.02, 0.004, 0.03, 0.09] as [number, number, number, number, number],
@@ -137,8 +138,9 @@ function analysis(overrides: Partial<AnalyzeResponse['report']> = {}): AnalyzeRe
         },
       },
       projections: [
-        { model: 'gbm', n_paths: 2000, seed: 42, fan, horizons },
-        { model: 'garch_t', n_paths: 2000, seed: 42, fan, horizons: horizons.map((h) => ({ ...h, prob_gain: 0.51 })) },
+        { model: 'gbm', n_paths: 2000, seed: 42, fan, horizons, sample_paths: samples, block_length: null },
+        { model: 'garch_t', n_paths: 2000, seed: 42, fan, horizons: horizons.map((h) => ({ ...h, prob_gain: 0.52 })), sample_paths: samples, block_length: null },
+        { model: 'bootstrap', n_paths: 2000, seed: 42, fan, horizons: horizons.map((h) => ({ ...h, prob_gain: 0.51 })), sample_paths: samples, block_length: 12.4 },
       ],
       risk: {
         var_es: [
@@ -671,8 +673,8 @@ describe('analysis panels', () => {
     const findings = await screen.findByTestId('findings')
     expect(findings).toHaveTextContent('No evidence of predictability')
     expect(screen.getByTestId('fan-days')).toHaveTextContent('63')
-    // GARCH-t is preferred when it was fitted; GBM is one click away.
-    expect(screen.getByRole('button', { name: 'GARCH-t' })).toHaveAttribute('aria-pressed', 'true')
+    // The stock's own history replayed is preferred; GARCH-t and GBM are one click away.
+    expect(screen.getByRole('button', { name: 'Own history' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('row', { name: /^21 sessions/ })).toHaveTextContent('51%')
     await userEvent.click(screen.getByRole('button', { name: 'GBM' }))
     expect(screen.getByRole('row', { name: /^21 sessions/ })).toHaveTextContent('54%')
@@ -769,6 +771,9 @@ describe('plain language', () => {
     expect(cards['bad-day']).toMatch(/1 day in 20 it has fallen more than 1\.7% \(₹171 on ₹10,000\).*average fall was 2\.5% \(₹254\)/)
     expect(cards['worst-fall']).toMatch(/25% \(Jan 2022 to Oct 2022\), and it recovered by Jan 2024/)
     expect(cards['where-it-could-be']).toMatch(/in 1 month, between ₹9,200 and ₹10,900 \(chance of being higher: 51%\)/)
+    expect(meaningCards(analysis(), 10_000).find((c) => c.id === 'where-it-could-be')?.why).toMatch(
+      /^From 2,000 possible futures built by replaying this stock’s own past days in runs of about 12 days/,
+    )
     expect(cards['predictable']).toMatch(/^No\./)
     expect(cards['trust']).toMatch(/^Yes/)
     // An index is the market: no comparison with itself.

@@ -210,7 +210,13 @@ function analysis(symbol: string) {
         adf: { statistic: -1.5, critical_values: [-3.5, -2.9, -2.6], reject_unit_root_5pct: false },
       },
       volatility: { ewma_annual: 0.21, garch: null },
-      projections: [{ model: 'gbm', n_paths: 2000, seed: 42, fan, horizons }],
+      projections: [
+        { model: 'gbm', n_paths: 2000, seed: 42, fan, horizons, sample_paths: [], block_length: null },
+        {
+          model: 'bootstrap', n_paths: 2000, seed: 42, fan, horizons, block_length: 12,
+          sample_paths: [0.95, 1.04, 1.0].map((f) => fan.map((p) => p.price[2] * (1 + (f - 1) * Math.sqrt(p.day / 63)))),
+        },
+      ],
       risk: {
         var_es: [
           { method: 'historical', confidence: 0.95, var: 0.021, es: 0.027 },

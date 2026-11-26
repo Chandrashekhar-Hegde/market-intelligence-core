@@ -26,10 +26,25 @@ function monthYear(date: string): string {
   return new Date(`${date}T00:00:00Z`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric', timeZone: 'UTC' })
 }
 
-/** The forecast to read: GARCH-t when it was fitted (it tracks today's volatility), else GBM. */
+/**
+ * The forecast to read: the instrument's own history replayed (its real crashes and calm
+ * spells), else GARCH-t (today's volatility), else GBM.
+ */
 export function preferredProjection(analysis: AnalyzeResponse): Projection | undefined {
   const { projections } = analysis.report
-  return projections.find((p) => p.model === 'garch_t') ?? projections[0]
+  return projections.find((p) => p.model === 'bootstrap') ?? projections.find((p) => p.model === 'garch_t') ?? projections[0]
+}
+
+/** One line on how a projection's futures were made. */
+export function projectionSource(projection: Projection): string {
+  const n = projection.n_paths.toLocaleString('en-IN')
+  if (projection.model === 'bootstrap') {
+    return `From ${n} possible futures built by replaying this stock’s own past days in runs of about ${Math.round(
+      projection.block_length ?? 1,
+    )} days, so its real crashes and calm spells shape the range.`
+  }
+  if (projection.model === 'garch_t') return `From ${n} simulated futures that start from today’s volatility, with fat tails.`
+  return `From ${n} simulated futures with constant volatility and bell-curve shocks.`
 }
 
 function historical95(analysis: AnalyzeResponse) {
@@ -97,7 +112,7 @@ export function meaningCards(analysis: AnalyzeResponse, amount: number): Card[] 
       id: 'where-it-could-be',
       title: 'Where it could be',
       headline: `9 times in 10, ${money(amount)} ends up ${lines.join('; ')}.`,
-      why: `From ${projection.n_paths.toLocaleString('en-IN')} simulated futures that use today's volatility. These are ranges, not predictions.`,
+      why: `${projectionSource(projection)} These are ranges, not predictions.`,
     })
   }
 

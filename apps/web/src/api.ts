@@ -208,10 +208,14 @@ export function describeApiError(error: unknown): string {
 export type TestResult = { statistic: number; p_value: number; reject_5pct: boolean }
 
 export type Projection = {
-  model: 'gbm' | 'garch_t'
+  model: 'gbm' | 'garch_t' | 'bootstrap'
   n_paths: number
   seed: number
   fan: { day: number; price: [number, number, number, number, number] }[]
+  /** The first simulated price paths, one price per day, for drawing. */
+  sample_paths: number[][]
+  /** Mean block length of the stationary bootstrap, in days (bootstrap only). */
+  block_length: number | null
   horizons: {
     horizon_days: number
     return_quantiles: [number, number, number, number, number]

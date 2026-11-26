@@ -2928,7 +2928,14 @@ mod tests {
             report["validation"].is_null(),
             "1y is too short to validate"
         );
-        assert_eq!(report["projections"].as_array().unwrap().len(), 1);
+        // No GARCH on 247 returns: GBM plus the bootstrap of the stock's own history.
+        let models: Vec<_> = report["projections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["model"].as_str().unwrap())
+            .collect();
+        assert_eq!(models, ["gbm", "bootstrap"]);
         assert_eq!(
             report["projections"][0]["fan"].as_array().unwrap().len(),
             63
