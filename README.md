@@ -121,7 +121,7 @@ Operational and Event lab (fixtures):
 - `GET /openapi.json`
 - `GET /rules`
 - `POST /score`
-- `POST /decide`
+- `POST /decide` (retired: 410 Gone)
 - `POST /quant/features`
 - `POST /predict/gbm`
 - `POST /macro/context`

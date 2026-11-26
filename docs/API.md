@@ -124,33 +124,11 @@ origins, and the Dockerfile sets it to `none` because the deployed bundle is
 same-origin. The server listens on `PORT` when it is set (Railway), otherwise on
 `GM_PORT`.
 
-## Decision Endpoint
+## Decision Endpoint (retired)
 
-`POST /decide` accepts:
-
-- `event`: a normalized event with a stable `event_id` and `version`.
-- `facts`: optional as-of facts such as macro context, entry price, exchange,
-  features, prediction, and knowledge-graph modifier.
-
-If persistence is configured, a successful decision writes:
-
-- the normalized event
-- the score projection on the event row
-- matched rule traces
-- the decision
-- the replay input snapshot and input hash
-
-If any configured persistence write fails, the endpoint returns `500` instead of
-returning an unaudited decision.
-
-Every decision response includes:
-
-- `model_version`
-- `input_hash`
-- `expected_return`
-- `downside`
-- structured `explanation` with pipeline, evidence, gates, utilities, and
-  missing facts
+`POST /decide` answers `410 Gone` since 26 Nov 2026 (#65). It turned events into BUY/SELL calls with
+about 40 hand-picked, uncalibrated constants. Advice now comes from `GET /api/v1/analyze` →
+`advice`, built only from trading rules validated walk-forward on that instrument.
 
 ## Event Review Endpoints
 
@@ -203,6 +181,6 @@ make smoke-api
 ```
 
 The smoke script checks `/health`, `/ready`, `/version`, `/openapi.json`, the
-payment test-mode order and signature flow, signed webhook verification, and the
-deterministic BUY fixture on `/decide`. API unit tests also cover `/events`,
+payment test-mode order and signature flow, signed webhook verification, that `/decide`
+answers 410, intraday bars, and news (a GDELT 503 is tolerated). API unit tests also cover `/events`,
 `/events/{event_id}`, and payment bad-signature paths.

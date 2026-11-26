@@ -26,8 +26,8 @@ Planned work, in order, is in [ROADMAP.md](ROADMAP.md) and the
 ## Retired from the UI
 
 The **Event lab** fixture tab (5 hard-coded events, the `/decide` workbench, Razorpay test mode) was
-removed from the app on 26 Nov 2026; validated advice replaces it. The `/decide` and payment API
-routes still exist and will be removed in a follow-up (#65).
+removed from the app on 26 Nov 2026; validated advice replaces it. `POST /decide` now answers
+410 Gone (#65). The payment test-mode and `/events` fixture routes remain in the API only.
 
 ## Doesn't work yet / limits to know
 

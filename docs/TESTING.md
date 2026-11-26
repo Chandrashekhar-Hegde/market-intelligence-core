@@ -69,9 +69,7 @@ The smoke test verifies:
   signature fixture.
 - Checkout signature verification succeeds for the fixture and webhook
   verification succeeds for a signed raw body.
-- `POST /decide` returns an executable BUY for a strong earnings event with an
-  injected price.
-- Quantity, target, stop, and score are stable.
+- `POST /decide` answers 410 Gone and points to `/api/v1/analyze` (retired, #65).
 
 ## Browser Smoke Test
 
@@ -108,8 +106,7 @@ This runs:
 The Rust decision-path check measures score plus decision generation over a
 deterministic fixture. Default budget: `DECISION_P95_MAX_MICROS=25000`.
 
-The UI p95 check measures the `/decide` request and resulting DOM update through
-the browser workflow. Default budget: `UI_DECISION_P95_MAX_MS=2500`.
+The browser p95 check of the old `/decide` workflow was removed with the Event lab (#100).
 
 ## PostgreSQL Migration Check
 

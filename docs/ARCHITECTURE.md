@@ -79,8 +79,8 @@ and persistence checks; the domain and API smoke tests can run without a
 database.
 
 When `DATABASE_URL` is configured for `gm-api`, startup applies migrations by
-default. `POST /decide` then stores the normalized event, rule traces, decision,
-and replay input snapshot. The domain crate remains database-free.
+default. The retired `POST /decide` used to store the normalized event, rule traces,
+decision and replay input snapshot; the tables remain for history. The domain crate remains database-free.
 
 Provider adapters live outside the domain. They normalize external market,
 filing, payment, event, entity, and broker surfaces into explicit inputs that

@@ -46,7 +46,7 @@ crates/
                       montecarlo, risk, validation (walk-forward), multi (comparison),
                       numeric (OLS, Nelder–Mead)
     src/quality.rs    data-quality report for bar series
-    src/{features,stochastic,indicators,event_study,model,...}.rs   older decision path (/decide)
+    src/{features,stochastic,indicators,event_study,model,...}.rs   older decision path (its /decide route is retired: 410)
     tests/fixtures/   5y real adjusted closes (AAPL, ^GSPC, ^NSEI) + reference.json
   gm-integrations/    providers
     src/yahoo.rs        Yahoo chart/search client (retries, TTL cache), parsing, validation
@@ -55,7 +55,7 @@ crates/
     src/lib.rs          provider traits, mock providers, Razorpay test mode
     tests/fixtures/     recorded Yahoo responses and stream frames
   gm-api/             Axum HTTP: /api/v1/{instruments/search,bars,quote,stream,analyze,compare},
-                      access gate, CORS, legacy fixture routes (/events, /decide, /payments/*)
+                      access gate, CORS, legacy fixture routes (/events, /payments/*; /decide answers 410)
   gm-persistence/     Postgres (optional; nothing in the market path needs it yet)
   gm-worker/          migration CLI
 apps/web/             React + Vite + TanStack Query + lightweight-charts

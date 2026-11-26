@@ -145,59 +145,10 @@ assert payload["event"]["provider_order_id"] == "order_test_webhook", payload
 assert payload["event"]["provider_payment_id"] == "pay_test_webhook", payload
 PY
 
-request='{
-  "event": {
-    "event_id": "norm-smoke-earnings",
-    "version": 1,
-    "causal_parent_id": "raw-smoke-earnings",
-    "event_type": "EARNINGS",
-    "headline": "Quarterly earnings beat estimates",
-    "body": "Profit rose and revenue grew higher than expected.",
-    "occurred_at": "2026-07-06T09:15:00Z",
-    "symbol": "RELIANCE",
-    "sector": "Oil & Gas",
-    "source": "NSE",
-    "region": "IN",
-    "impact_level": null,
-    "impact_category": null
-  },
-  "facts": {
-    "macro_context": {
-      "sp500_futures_change": 0,
-      "nasdaq_futures_change": 0,
-      "brent_crude_change": 0,
-      "usd_inr_change": 0,
-      "fii_net_flow": 0,
-      "gold_change": 0,
-      "total_macro_score": 0
-    },
-    "entry_price": 1000,
-    "exchange": "NSE",
-    "features": null,
-    "prediction": null,
-    "kg_modifier": 0
-  }
-}'
-
-decision="$(curl -fsS -X POST "$BASE_URL/decide" -H "Content-Type: application/json" -d "$request")"
-python3 - "$decision" <<'PY'
-import json
-import sys
-
-payload = json.loads(sys.argv[1])
-assert payload["action"] == "BUY", payload
-assert payload["execution_ready"] is True, payload
-assert payload["quantity"] == 20, payload
-assert payload["entry_price"] == 1000.0, payload
-assert payload["target_price"] == 1030.0, payload
-assert payload["stop_loss"] == 980.0, payload
-assert payload["total_score"] == 0.72, payload
-assert payload["model_version"], payload
-assert payload["input_hash"], payload
-assert payload["expected_return"] is not None, payload
-assert payload["downside"] is not None, payload
-assert payload["explanation"]["pipeline"], payload
-PY
+# /decide is retired (#65): it must answer 410 and point to validated advice.
+decide_code="$(curl -s -o /tmp/gm_decide.json -w '%{http_code}' -X POST "$BASE_URL/decide" -H "Content-Type: application/json" -d '{}')"
+test "$decide_code" = "410" || { echo "/decide returned $decide_code, expected 410"; exit 1; }
+grep -q "/api/v1/analyze" /tmp/gm_decide.json
 
 if [ "${SMOKE_MARKET_DATA:-1}" = "1" ]; then
   search="$(curl -fsS "$BASE_URL/api/v1/instruments/search?q=reliance")"
