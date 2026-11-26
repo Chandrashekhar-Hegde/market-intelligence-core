@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createChart, LineSeries, LineStyle, type LineData } from 'lightweight-charts'
 
-import { type AnalyzeResponse, type PriceBar, type Projection, describeApiError, fetchAnalysis } from './api'
+import { type AnalyzeResponse, type PriceBar, type Projection, type Signal, describeApiError, useAnalysis } from './api'
 import { fanLines, formatP, formatPct, formatPrice } from './marketData'
+import { formatMoney, horizonWords, maxPosition, meaningCards, preferredProjection } from './plainLanguage'
 
 const isDomTest = typeof navigator !== 'undefined' && navigator.userAgent.includes('jsdom')
 
@@ -18,14 +18,22 @@ const METHOD_LABEL: Record<string, string> = {
   garch_t: 'GARCH-t (today’s volatility)',
 }
 
-/** Analysis of five years of daily data for any symbol: findings, forecast fan, risk, tests. */
-export function AnalysisPanels({ symbol, history }: { symbol: string; history: PriceBar[] | undefined }) {
-  const analysis = useQuery<AnalyzeResponse>({
-    queryKey: ['analysis', symbol],
-    queryFn: () => fetchAnalysis(symbol),
-    staleTime: 15 * 60_000,
-    retry: (count, error) => count < 1 && !/^4\d\d/.test(error.message),
-  })
+/**
+ * What to do, what it means for your money, and (folded away) all the statistics behind it,
+ * for five years of daily data on any symbol.
+ */
+export function AnalysisPanels({
+  symbol,
+  history,
+  livePrice,
+  extraMaths,
+}: {
+  symbol: string
+  history: PriceBar[] | undefined
+  livePrice?: number | null
+  extraMaths?: ReactNode
+}) {
+  const analysis = useAnalysis(symbol)
 
   if (analysis.error) {
     return (
@@ -34,6 +42,7 @@ export function AnalysisPanels({ symbol, history }: { symbol: string; history: P
         <p className="error-state" role="alert">
           {describeApiError(analysis.error)}
         </p>
+        {extraMaths}
       </section>
     )
   }
@@ -41,36 +50,283 @@ export function AnalysisPanels({ symbol, history }: { symbol: string; history: P
     return (
       <section className="panel chart-panel" aria-labelledby="analysis-heading">
         <h3 id="analysis-heading">Analysis</h3>
-        <p className="empty-state">Analysing five years of daily data…</p>
+        <p className="empty-state">Testing trading rules and analysing ten years of daily data…</p>
       </section>
     )
   }
   const { report, data, benchmark } = analysis.data
   return (
     <>
-      <section className="panel chart-panel" aria-labelledby="findings-heading">
-        <p className="eyebrow">
-          Analysis · {report.first_date} → {report.last_date} · {report.n_returns} sessions · {data.source}
-        </p>
-        <h3 id="findings-heading">What the data says</h3>
-        <ul className="plain-list findings" data-testid="findings">
-          {report.findings.map((finding) => (
-            <li key={finding}>{finding}</li>
-          ))}
-        </ul>
-        {benchmark?.note ? <p className="quiet-copy">{benchmark.note}</p> : null}
-      </section>
-      <ForecastPanel analysis={analysis.data} history={history} />
-      <RiskPanel analysis={analysis.data} />
-      <VolatilityPanel analysis={analysis.data} />
-      <ValidationPanel analysis={analysis.data} />
-      <TestsPanel analysis={analysis.data} />
-      <BenchmarkPanel analysis={analysis.data} />
+      <AdviceCard analysis={analysis.data} livePrice={livePrice ?? null} />
+      <MeaningPanel analysis={analysis.data} history={history} />
+      <details className="panel chart-panel maths-all">
+        <summary>
+          <span className="maths-title">Show all the maths</span>
+          <span className="quiet-copy"> Statistical tests, model scores and data checks behind everything above</span>
+        </summary>
+        <div className="maths-grid">
+          <section className="panel chart-panel" aria-labelledby="findings-heading">
+            <p className="eyebrow">
+              Analysis · {report.first_date} → {report.last_date} · {report.n_returns} sessions · {data.source}
+            </p>
+            <h3 id="findings-heading">What the data says</h3>
+            <ul className="plain-list findings" data-testid="findings">
+              {report.findings.map((finding) => (
+                <li key={finding}>{finding}</li>
+              ))}
+            </ul>
+            {benchmark?.note ? <p className="quiet-copy">{benchmark.note}</p> : null}
+          </section>
+          <SignalsPanel analysis={analysis.data} />
+          <ForecastPanel analysis={analysis.data} />
+          <RiskPanel analysis={analysis.data} />
+          <VolatilityPanel analysis={analysis.data} />
+          <ValidationPanel analysis={analysis.data} />
+          <TestsPanel analysis={analysis.data} />
+          <BenchmarkPanel analysis={analysis.data} />
+          {extraMaths}
+        </div>
+      </details>
     </>
   )
 }
 
-function ForecastPanel({ analysis, history }: { analysis: AnalyzeResponse; history: PriceBar[] | undefined }) {
+const STANCE_LABEL = { buy: 'Buy', sell: 'Sell / stay out', hold: 'Hold' } as const
+const STANCE_TONE = { buy: 'green', sell: 'red', hold: 'neutral' } as const
+
+function lean(position: number): { label: string; tone: string } {
+  if (position > 0) return { label: 'Leans buy', tone: 'green' }
+  if (position < 0) return { label: 'Leans sell', tone: 'red' }
+  return { label: 'No view', tone: 'neutral' }
+}
+
+function provenTest(signal: Signal) {
+  return signal.tests.filter((t) => t.earns_place).sort((a, b) => a.p_holm - b.p_holm)[0]
+}
+
+/** "Tue, 22 Dec 2026" */
+function formatDate(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`)
+  const dayMonth = d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
+  return `${dayMonth} ${d.getUTCFullYear()}`
+}
+
+/** Buy / Sell / Hold, only from rules that have worked on this instrument, with the evidence. */
+function AdviceCard({ analysis, livePrice }: { analysis: AnalyzeResponse; livePrice: number | null }) {
+  const { advice, signals, signals_note: note, data } = analysis
+  const [maxLoss, setMaxLoss] = useState(500)
+  const lossId = useId()
+  const currency = data.currency
+  if (!advice || !signals) {
+    return (
+      <section className="panel chart-panel advice-card" aria-labelledby="advice-heading">
+        <p className="eyebrow">What to do</p>
+        <h3 id="advice-heading">No call possible yet</h3>
+        <p>{note ?? 'The trading rules could not be tested on this instrument.'}</p>
+      </section>
+    )
+  }
+  const cap = maxPosition(analysis, maxLoss)
+  const confidence = advice.confidence
+  return (
+    <section className="panel chart-panel advice-card" aria-labelledby="advice-heading" data-testid="advice">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">What to do · tested on {signals.n_days.toLocaleString('en-IN')} trading days</p>
+          <h3 id="advice-heading">
+            <span className={`stance stance-${advice.stance}`} data-testid="stance">
+              {STANCE_LABEL[advice.stance]}
+            </span>
+          </h3>
+        </div>
+        <span className={`status-chip tone-${STANCE_TONE[advice.stance]}`}>
+          {advice.basis === 'proven' ? 'Backed by a proven rule' : advice.basis === 'conflict' ? 'Rules disagree' : 'No proven edge'}
+        </span>
+      </div>
+      <p className="advice-headline">{advice.headline}</p>
+
+      {confidence ? (
+        <div className="confidence" aria-label="How often this rule was right">
+          <p>
+            Right <strong>{formatPct(confidence.hit_rate, 0)}</strong> of the time over {confidence.n} past calls (likely
+            between {formatPct(confidence.low, 0)} and {formatPct(confidence.high, 0)}).
+          </p>
+          <div className="confidence-bar" aria-hidden="true">
+            <span className="confidence-range" style={{ left: `${confidence.low * 100}%`, width: `${(confidence.high - confidence.low) * 100}%` }} />
+            <span className="confidence-mark" style={{ left: `${confidence.hit_rate * 100}%` }} />
+            <span className="confidence-coin" style={{ left: '50%' }} />
+          </div>
+          <p className="quiet-copy">The dashed line is a coin toss (50%).</p>
+        </div>
+      ) : null}
+
+      {advice.horizon_days && advice.review_date ? (
+        <p>
+          Time frame: <strong>{horizonWords(advice.horizon_days)}</strong>. Look again on{' '}
+          <strong>{formatDate(advice.review_date)}</strong>.
+          {advice.flip_level !== null
+            ? ` The call changes if the price closes ${advice.stance === 'buy' ? 'below' : 'above'} ${formatPrice(advice.flip_level, currency)}.`
+            : ''}
+        </p>
+      ) : null}
+
+      <h4 className="advice-subhead">What each rule sees today</h4>
+      <ul className="rule-list" data-testid="rules">
+        {signals.signals.map((signal) => {
+          const proven = provenTest(signal)
+          const l = lean(signal.position_today)
+          const liveFlip =
+            livePrice !== null && signal.flip_level !== null && signal.position_today !== 0
+              ? (livePrice > signal.flip_level) !== signal.position_today > 0
+              : false
+          return (
+            <li key={signal.id}>
+              <div className="rule-head">
+                <strong>{signal.name}</strong>
+                <span className={`status-chip tone-${l.tone}`}>{l.label}</span>
+                <span className={proven ? 'rule-proven' : 'rule-unproven'}>
+                  {proven ? `✓ Has worked here (${horizonWords(proven.horizon_days)})` : 'Not proven here'}
+                </span>
+              </div>
+              <p className="quiet-copy">{signal.today}</p>
+              {liveFlip && livePrice !== null ? (
+                <p className="live-flip" role="status">
+                  Live: at {formatPrice(livePrice, currency)} this rule would switch to “
+                  {signal.position_today > 0 ? 'leans sell' : 'leans buy'}” if the day closed here.
+                </p>
+              ) : null}
+            </li>
+          )
+        })}
+      </ul>
+      <p className="quiet-copy">
+        A rule counts only if, on this instrument’s own history, it beat trading costs, held up in both halves of the
+        data and passed a test that allows for having tried {signals.n_tests} rule-and-time-frame combinations. Most
+        rules fail on most stocks; that is normal.
+      </p>
+
+      <div className="position-size">
+        <label htmlFor={lossId}>The most I’m willing to lose on a bad day</label>
+        <input
+          id={lossId}
+          type="number"
+          min={0}
+          step={100}
+          inputMode="numeric"
+          value={maxLoss}
+          onChange={(event) => setMaxLoss(Math.max(0, Number(event.target.value) || 0))}
+        />
+        <p data-testid="position-size">
+          {cap !== null
+            ? `Put in at most ${formatMoney(cap, currency)}. On its bad days (the worst 1 in 20) it has fallen ${formatPct(
+                maxLoss / cap,
+              )} on average, which on that amount is ${formatMoney(maxLoss, currency)}.`
+            : 'Enter an amount to see a size.'}
+        </p>
+      </div>
+    </section>
+  )
+}
+
+/** The numbers translated into money: what a typical day, a bad day and the next months look like. */
+function MeaningPanel({ analysis, history }: { analysis: AnalyzeResponse; history: PriceBar[] | undefined }) {
+  const [amount, setAmount] = useState(10_000)
+  const amountId = useId()
+  const cards = meaningCards(analysis, amount)
+  const projection = preferredProjection(analysis)
+  return (
+    <section className="panel chart-panel" aria-labelledby="meaning-heading">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">From five years of daily prices</p>
+          <h3 id="meaning-heading">What this means for your money</h3>
+        </div>
+        <div className="amount-input">
+          <label htmlFor={amountId}>If you put in</label>
+          <input
+            id={amountId}
+            type="number"
+            min={0}
+            step={1000}
+            inputMode="numeric"
+            value={amount}
+            onChange={(event) => setAmount(Math.max(0, Number(event.target.value) || 0))}
+          />
+        </div>
+      </div>
+      <ul className="meaning-cards" data-testid="meaning-cards">
+        {cards.map((card) => (
+          <li key={card.id} className="meaning-card" data-card={card.id}>
+            <h4>{card.title}</h4>
+            <p>{card.headline}</p>
+            <p className="quiet-copy">{card.why}</p>
+          </li>
+        ))}
+      </ul>
+      {projection ? (
+        <>
+          <h4 className="advice-subhead">Range of outcomes over the next three months</h4>
+          <p className="quiet-copy">
+            The middle line is the typical path; half of the simulated futures stay between the dotted lines and 9 in 10
+            between the dashed ones.
+          </p>
+          <FanChart projection={projection} report={analysis.report} history={history} />
+        </>
+      ) : null}
+    </section>
+  )
+}
+
+/** Every rule at every time frame, with the test numbers. */
+function SignalsPanel({ analysis }: { analysis: AnalyzeResponse }) {
+  const { signals } = analysis
+  if (!signals) return null
+  return (
+    <section className="panel chart-panel" aria-labelledby="signals-heading">
+      <p className="eyebrow">
+        Walk-forward tests · {signals.first_date} → {signals.last_date} · Holm-corrected over {signals.n_tests} tests ·
+        cost {formatPct(signals.round_trip_cost, 2)} a round trip
+      </p>
+      <h3 id="signals-heading">Trading rules, tested on this instrument</h3>
+      <table className="event-table data-table" data-testid="signals-table">
+        <caption className="visually-hidden">Trading rule backtests</caption>
+        <thead>
+          <tr>
+            <th scope="col">Rule</th>
+            <th scope="col">Time frame</th>
+            <th scope="col">Effect per call</th>
+            <th scope="col">Hit rate</th>
+            <th scope="col">Adjusted p</th>
+            <th scope="col">Verdict</th>
+          </tr>
+        </thead>
+        <tbody>
+          {signals.signals.flatMap((signal) =>
+            signal.tests.map((t) => (
+              <tr key={`${signal.id}-${t.horizon_days}`}>
+                <th scope="row">{signal.name}</th>
+                <td>{horizonWords(t.horizon_days)}</td>
+                <td>{formatPct(t.effect, 2)}</td>
+                <td>{t.hit_rate === null ? '—' : `${formatPct(t.hit_rate, 0)} of ${t.hit_n}`}</td>
+                <td>{formatP(t.p_holm)}</td>
+                <td>{t.verdict}</td>
+              </tr>
+            )),
+          )}
+        </tbody>
+      </table>
+      <ul className="plain-list quiet-copy">
+        {signals.signals.map((signal) => (
+          <li key={signal.id}>
+            <strong>{signal.name}:</strong> {signal.rule} ({signal.source})
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function ForecastPanel({ analysis }: { analysis: AnalyzeResponse }) {
   const { report, data } = analysis
   const [model, setModel] = useState<Projection['model']>(
     report.projections.some((p) => p.model === 'garch_t') ? 'garch_t' : 'gbm',
@@ -104,7 +360,6 @@ function ForecastPanel({ analysis, history }: { analysis: AnalyzeResponse; histo
         {MODEL_LABEL[projection.model]}. Bands hold 50% and 90% of simulated paths. The drift is the
         historical average return, which is known only to ± {formatPct(report.distribution.mean_annual_se)} a year.
       </p>
-      <FanChart projection={projection} report={report} history={history} />
       <table className="event-table data-table">
         <caption className="visually-hidden">Simulated outcomes by horizon</caption>
         <thead>

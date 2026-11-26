@@ -3,7 +3,8 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
-import type { AnalyzeResponse, BarsResponse, InstrumentMeta, IntradayData, QuoteResponse, Tick } from './api'
+import type { Advice, AnalyzeResponse, BarsResponse, InstrumentMeta, IntradayData, QuoteResponse, SignalTest, Signals, Tick } from './api'
+import { maxPosition, meaningCards, relativeVolume, sessionLeft, sessionRange } from './plainLanguage'
 import { Markets } from './Markets'
 import {
   appendTick,
@@ -181,11 +182,68 @@ function analysis(overrides: Partial<AnalyzeResponse['report']> = {}): AnalyzeRe
       ...overrides,
     },
     data: {
-      symbol: '^NSEI', name: 'S&P 500', currency: 'USD', exchange: 'SNP', instrument_type: 'INDEX',
+      symbol: '^NSEI', name: 'NIFTY 50', currency: 'INR', exchange: 'NSE', instrument_type: 'INDEX',
       tradingview_symbol: 'SP:SPX', range: '5y', source: 'yahoo-chart-v8', fetched_at: '2026-11-24T09:00:00Z',
       quality: barsResponse().quality,
     },
     benchmark: null,
+    signals: signalsFixture(),
+    advice: HOLD_NO_EVIDENCE,
+    signals_note: null,
+  }
+}
+
+function signalTest(h: number, overrides: Partial<SignalTest> = {}): SignalTest {
+  return {
+    horizon_days: h, n_obs: 2000, n_independent: 400 / h, effect: 0.001, t_stat: 0.4, p_value: 0.34, p_holm: 1,
+    effect_first_half: 0.001, effect_second_half: 0.001, hit_rate: 0.52, hit_n: 400 / h, hit_low: 0.47, hit_high: 0.57,
+    mean_return_long: 0.002, mean_return_short: 0.001, earns_place: false,
+    verdict: 'No reliable edge over about a week: after checking 12 rule-and-horizon combinations, this could be luck (adjusted p = 1.00).',
+    ...overrides,
+  }
+}
+
+function signalsFixture(): Signals {
+  return {
+    first_date: '2016-11-24', last_date: '2026-11-23', n_days: 2466, round_trip_cost: 0.0025, n_tests: 6,
+    signals: [
+      {
+        id: 'trend_200d', name: 'Long-term trend', rule: 'Buy while the price is above its 200-day average; stay out below it.',
+        source: 'Faber (2007)', position_today: 1, today: 'The price (25349.65) is above its 200-day average (24800.00).',
+        flip_level: 24800, tests: [5, 21, 63].map((h) => signalTest(h)),
+      },
+      {
+        id: 'rsi_14', name: 'Overbought / oversold (RSI)', rule: 'Buy when the 14-day RSI is below 30.', source: 'Wilder (1978)',
+        position_today: 0, today: 'RSI is 52: neither overbought nor oversold.', flip_level: null,
+        tests: [5, 21, 63].map((h) => signalTest(h)),
+      },
+    ],
+  }
+}
+
+const HOLD_NO_EVIDENCE: Advice = {
+  stance: 'hold', basis: 'no_evidence',
+  headline: 'Hold. No rule has a proven edge on this instrument: its past moves have not predicted its next ones well enough to beat trading costs.',
+  drivers: [], horizon_days: null, review_date: null, confidence: null, flip_level: null, reasons: [],
+}
+
+/** Trend proven over a month and long today: a Buy. */
+function buyAnalysis(): AnalyzeResponse {
+  const base = analysis()
+  const signals = signalsFixture()
+  signals.signals[0]!.tests[1] = signalTest(21, {
+    effect: 0.012, p_holm: 0.01, earns_place: true, hit_rate: 0.64, hit_n: 110, hit_low: 0.55, hit_high: 0.72,
+    verdict: 'Has worked on this instrument over about a month (adjusted p = 0.010).',
+  })
+  return {
+    ...base,
+    signals,
+    advice: {
+      stance: 'buy', basis: 'proven',
+      headline: 'Buy for about a month. Long-term trend has worked on this instrument: right 64% of the time over 110 past calls.',
+      drivers: ['trend_200d'], horizon_days: 21, review_date: '2026-12-22',
+      confidence: { hit_rate: 0.64, low: 0.55, high: 0.72, n: 110 }, flip_level: 24800, reasons: [],
+    },
   }
 }
 
@@ -641,5 +699,102 @@ describe('validation panel', () => {
     mockApi({ '/api/v1/analyze': () => Response.json(analysis({ validation: null })) })
     renderMarkets()
     expect(await screen.findByText(/Validation needs at least 600 daily returns/)).toBeInTheDocument()
+  })
+})
+
+describe('plain language', () => {
+  test('cards put the numbers in money for the amount chosen', () => {
+    const cards = Object.fromEntries(meaningCards(analysis(), 10_000).map((c) => [c.id, c.headline]))
+    // 17.4% a year over 251 sessions is 1.1% a day: ₹110 on ₹10,000.
+    expect(cards['typical-day']).toMatch(/about 1\.1% up or down in a day: ₹110 on ₹10,000/)
+    expect(cards['bad-day']).toMatch(/1 day in 20 it has fallen more than 1\.7% \(₹171 on ₹10,000\).*average fall was 2\.5% \(₹254\)/)
+    expect(cards['worst-fall']).toMatch(/25% \(Jan 2022 to Oct 2022\), and it recovered by Jan 2024/)
+    expect(cards['where-it-could-be']).toMatch(/in 1 month, between ₹9,200 and ₹10,900 \(chance of being higher: 51%\)/)
+    expect(cards['predictable']).toMatch(/^No\./)
+    expect(cards['trust']).toMatch(/^Yes/)
+    // An index is the market: no comparison with itself.
+    expect(cards['vs-market']).toBeUndefined()
+    expect(meaningCards(analysis(), 20_000).find((c) => c.id === 'typical-day')?.headline).toMatch(/₹220 on ₹20,000/)
+  })
+
+  test('a stock is compared with its market using β/ρ', () => {
+    const stock = analysis({
+      benchmark: { symbol: '^NSEI', n_common_days: 1240, beta: 1.2, beta_se: 0.04, alpha_annual: 0, alpha_annual_se: 0.05, r_squared: 0.36, correlation: 0.6, idiosyncratic_vol_annual: 0.2 },
+    })
+    const cards = Object.fromEntries(meaningCards(stock, 10_000).map((c) => [c.id, c.headline]))
+    expect(cards['vs-market']).toMatch(/about 2\.0× as bumpy as the \^NSEI/)
+    expect(cards['with-market']).toMatch(/moves 1%, this has moved about 1\.2%.*explains 36%/)
+  })
+
+  test('position size, session ranges and relative volume', () => {
+    // ₹500 bad-day loss at a 2.54% average bad-day fall: at most ₹19,685.
+    expect(maxPosition(analysis(), 500)).toBeCloseTo(500 / 0.0254, 6)
+    expect(maxPosition(analysis(), 0)).toBeNull()
+    // The fixture's 1-day quantiles are ±10%·√(1/63); half a session scales them by √0.5.
+    const [lo, hi] = sessionRange(analysis(), 100, 0.5)!
+    expect(lo).toBeCloseTo(100 * Math.exp(Math.log(1 - 0.1 / Math.sqrt(63)) * Math.sqrt(0.5)), 9)
+    expect(hi).toBeGreaterThan(100)
+    expect(sessionRange(analysis(), 100, 0)).toEqual([100, 100])
+    expect(sessionLeft(0, 100, 25)).toBeCloseTo(0.75)
+    expect(sessionLeft(0, 100, -5)).toBe(1)
+    expect(sessionLeft(0, 100, 200)).toBe(0)
+    expect(sessionLeft(null, 100, 5)).toBeNull()
+    expect(relativeVolume(500, 1000, 0.25)).toBeCloseTo(2)
+    expect(relativeVolume(500, 1000, 0.01)).toBeNull()
+  })
+})
+
+describe('advice card', () => {
+  test('no proven rule: Hold, with what each rule sees and why none counts', async () => {
+    mockApi()
+    renderMarkets()
+    const card = await screen.findByTestId('advice')
+    expect(within(card).getByTestId('stance')).toHaveTextContent('Hold')
+    expect(card).toHaveTextContent('No proven edge')
+    expect(card).toHaveTextContent(/No rule has a proven edge/)
+    const rules = within(card).getByTestId('rules')
+    expect(within(rules).getAllByRole('listitem')).toHaveLength(2)
+    expect(rules).toHaveTextContent('Long-term trendLeans buyNot proven here')
+    expect(within(card).getByTestId('position-size')).toHaveTextContent('Put in at most ₹19,685')
+    await userEvent.clear(within(card).getByLabelText(/most i’m willing to lose/i))
+    await userEvent.type(within(card).getByLabelText(/most i’m willing to lose/i), '1000')
+    expect(within(card).getByTestId('position-size')).toHaveTextContent('Put in at most ₹39,370')
+  })
+
+  test('a proven rule: Buy with its hit rate, time frame, review date and flip level', async () => {
+    mockApi({ '/api/v1/analyze': () => Response.json(buyAnalysis()) })
+    renderMarkets()
+    const card = await screen.findByTestId('advice')
+    expect(within(card).getByTestId('stance')).toHaveTextContent('Buy')
+    expect(card).toHaveTextContent('Right 64% of the time over 110 past calls (likely between 55% and 72%)')
+    expect(card).toHaveTextContent(/Time frame: 1 month\. Look again on Tue, 22 Dec 2026/)
+    expect(card).toHaveTextContent(/changes if the price closes below ₹24,800\.00/)
+    expect(card).toHaveTextContent('✓ Has worked here (1 month)')
+  })
+
+  test('a live price across the flip level says the rule would switch', async () => {
+    mockApi({ '/api/v1/analyze': () => Response.json(buyAnalysis()) })
+    renderMarkets()
+    await screen.findByTestId('advice')
+    FakeEventSource.instances.at(-1)!.emit('tick', tick({ price: 24500, tick_time: new Date().toISOString() }))
+    expect(await screen.findByText(/would switch to “leans sell” if the day closed here/)).toBeInTheDocument()
+  })
+
+  test('too little history: no call, and the reason', async () => {
+    mockApi({
+      '/api/v1/analyze': () =>
+        Response.json({ ...analysis(), signals: null, advice: null, signals_note: 'Not enough history to test the trading rules (needs about 1.5 years).' }),
+    })
+    renderMarkets()
+    expect(await screen.findByRole('heading', { name: 'No call possible yet' })).toBeInTheDocument()
+    expect(screen.getByText(/needs about 1\.5 years/)).toBeInTheDocument()
+  })
+
+  test('the meaning cards and the folded maths both render', async () => {
+    mockApi()
+    renderMarkets()
+    expect(await screen.findByTestId('meaning-cards')).toHaveTextContent('A typical day')
+    expect(screen.getByText('Show all the maths')).toBeInTheDocument()
+    expect(screen.getByTestId('signals-table')).toHaveTextContent('Long-term trend')
   })
 })

@@ -41,7 +41,12 @@ export function Guide() {
           that instrument. Usually none beats a simple baseline, and the app says so.
         </p>
         <p>
-          <strong>It is analysis, not advice.</strong> It never tells you to buy or sell, and it cannot place orders.
+          <strong>It gives a call only when the evidence supports one.</strong> Six well-known trading rules (trend,
+          momentum, short-term bounce, RSI, unusual volume, buying pressure) are tested on that instrument’s own past, the
+          fair way: each day’s signal uses only what was known that day. A rule may say Buy or Sell only if it beat
+          trading costs, held up in both halves of the history, and passed a test that allows for having tried many
+          rules. Otherwise the app says Hold and shows why. On most stocks, most of the time, the honest answer is Hold.
+          It cannot place orders, and it is not personal financial advice.
         </p>
       </section>
 
@@ -91,9 +96,7 @@ export function Guide() {
             data always gives the same numbers.
           </li>
           <li>
-            <strong>The database that does exist</strong> (PostgreSQL) belongs to the Event lab, the experimental fixture
-            console: events, decisions, their audit trail and test payments. It is only used when the server is given a
-            database to connect to. The hosted beta currently runs without one, so nothing is written anywhere.
+            <strong>The hosted beta runs without a database</strong>, so nothing you look at is written anywhere.
           </li>
           <li>
             <strong>Your browser</strong> keeps recent answers in memory while the page is open and forgets them when you close
@@ -105,8 +108,30 @@ export function Guide() {
       <section className="panel chart-panel guide" aria-labelledby="guide-read">
         <h3 id="guide-read">How to read the analysis</h3>
         <dl className="guide-list">
-          <dt>What the data says</dt>
-          <dd>Plain-language conclusions, each tied to a number further down. Start here.</dd>
+          <dt>What to do</dt>
+          <dd>
+            Buy, Sell or Hold, from the rules that have worked on this instrument. With a call you also see how often the
+            rule was right in the past (and a likely range for that), the time frame, the day to look again, and the price
+            at which the call changes. Below it, each rule says what it sees today and whether it is proven here. If a live
+            price would flip a rule, it says so as it happens.
+          </dd>
+          <dt>How much to put in</dt>
+          <dd>
+            Enter the most you are willing to lose on a bad day. The app divides it by the average fall on this
+            instrument’s worst 1 day in 20, which gives the largest amount that keeps a typical bad day within your limit.
+          </dd>
+          <dt>Likely close today and tomorrow</dt>
+          <dd>
+            Next to the live price: where 9 in 10 simulated outcomes end by today’s close, and by the next one. It is
+            recomputed with every price tick, and narrows as the session runs out.
+          </dd>
+          <dt>What this means for your money</dt>
+          <dd>
+            Cards that turn the statistics into rupees for the amount you enter: a typical day, a bad day, the worst fall,
+            where it could be in a week, a month and three months, and whether it moves with the market.
+          </dd>
+          <dt>Show all the maths</dt>
+          <dd>Every test, model score and data check behind the cards, for anyone who wants to check the working.</dd>
           <dt>Range of outcomes</dt>
           <dd>
             2,000 simulated futures for the price over the next 63 trading days (about 3 months). The dotted lines enclose half
