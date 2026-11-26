@@ -13,6 +13,7 @@ gm-domain = { path = "../gm-domain" }
 hex.workspace = true
 hmac.workspace = true
 prost.workspace = true
+regex.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
 serde.workspace = true

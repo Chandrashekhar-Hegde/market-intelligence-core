@@ -1,13 +1,8 @@
-//! How the price reacted after a news story, and whether this week's coverage is unusually
-//! negative or positive. Measurement only: news does not vote in the advice until stored tone
-//! history lets it be tested like the trading rules (see docs/METHODOLOGY.md, "News").
+//! How the price reacted after a news story, beyond what the market explains
+//! (see docs/METHODOLOGY.md, "News").
 
-use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use statrs::distribution::{ContinuousCDF, Normal};
-
-/// Two-sided 5% critical value.
-const Z_5PCT: f64 = 1.959_963_984_540_054;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Impact {
@@ -76,58 +71,6 @@ pub fn impact(input: &ImpactInput, story_at: i64) -> Option<Impact> {
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ToneSummary {
-    /// Mean daily tone over the last 7 days of coverage.
-    pub recent_mean: f64,
-    /// Mean and standard deviation of daily tone before that.
-    pub baseline_mean: f64,
-    pub baseline_sd: f64,
-    pub n_recent: usize,
-    pub n_baseline: usize,
-    /// (recent − baseline) / (baseline_sd / √n_recent).
-    pub z: f64,
-    /// "more negative than usual", "more positive than usual" or "about usual" (|z| < 1.96).
-    pub label: String,
-}
-
-/// None with fewer than 30 baseline days.
-pub fn tone_summary(daily: &[(NaiveDate, f64)]) -> Option<ToneSummary> {
-    const RECENT: usize = 7;
-    if daily.len() < RECENT + 30 {
-        return None;
-    }
-    let (base, recent) = daily.split_at(daily.len() - RECENT);
-    let mean = |x: &[(NaiveDate, f64)]| x.iter().map(|(_, v)| v).sum::<f64>() / x.len() as f64;
-    let (recent_mean, baseline_mean) = (mean(recent), mean(base));
-    let baseline_sd = (base
-        .iter()
-        .map(|(_, v)| (v - baseline_mean).powi(2))
-        .sum::<f64>()
-        / (base.len() - 1) as f64)
-        .sqrt();
-    if !positive(baseline_sd) {
-        return None;
-    }
-    let z = (recent_mean - baseline_mean) / (baseline_sd / (RECENT as f64).sqrt());
-    let label = if z <= -Z_5PCT {
-        "more negative than usual"
-    } else if z >= Z_5PCT {
-        "more positive than usual"
-    } else {
-        "about usual"
-    };
-    Some(ToneSummary {
-        recent_mean,
-        baseline_mean,
-        baseline_sd,
-        n_recent: RECENT,
-        n_baseline: base.len(),
-        z,
-        label: label.into(),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,25 +123,5 @@ mod tests {
             "no bar after the story yet"
         );
         assert_eq!(impact(&input, 9_000).unwrap().z, 0.0);
-    }
-
-    #[test]
-    fn tone_flags_only_clear_shifts() {
-        let day = |i: u32| {
-            NaiveDate::from_ymd_opt(2026, 8, 1).unwrap() + chrono::Duration::days(i.into())
-        };
-        // Baseline alternates −1 ± 0.5 (sd ≈ 0.5); the last week sits at −2.
-        let mut daily: Vec<_> = (0..60)
-            .map(|i| (day(i), if i % 2 == 0 { -0.5 } else { -1.5 }))
-            .collect();
-        daily.extend((60..67).map(|i| (day(i), -2.0)));
-        let s = tone_summary(&daily).unwrap();
-        assert_eq!(s.label, "more negative than usual");
-        assert!((s.baseline_mean + 1.0).abs() < 1e-12);
-        let calm: Vec<_> = (0..67)
-            .map(|i| (day(i), if i % 2 == 0 { -0.5 } else { -1.5 }))
-            .collect();
-        assert_eq!(tone_summary(&calm).unwrap().label, "about usual");
-        assert!(tone_summary(&daily[..20]).is_none());
     }
 }

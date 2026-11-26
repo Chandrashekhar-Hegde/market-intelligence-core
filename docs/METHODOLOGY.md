@@ -273,9 +273,13 @@ These are computed in `apps/web/src/plainLanguage.ts`, from API numbers only.
 
 ## News (`/api/v1/news`)
 
-**Source.** GDELT DOC 2.0: English-language articles from the last 3 days whose text contains the
-instrument's name (legal suffixes such as "Limited" or "Inc." are dropped). Matching is by name,
-so some stories are off-topic.
+**Sources.** All are matched by the instrument's name, with legal suffixes such as "Limited" or
+"Inc." dropped, so some stories are off-topic.
+- Google News RSS search, India edition, last 3 days.
+- The Economic Times and Mint markets RSS feeds: items whose title or summary contains the name.
+- GDELT DOC 2.0 English articles.
+
+Stories are de-duplicated by their first 60 alphanumeric characters of title.
 
 **Reaction to a story.** Code: `crates/gm-domain/src/analysis/news.rs`.
 1. Take the close of the last 5-minute bar that had finished when GDELT first saw the story
@@ -291,15 +295,7 @@ so some stories are off-topic.
 
 This is the market-model abnormal return (MacKinlay 1997), applied intraday.
 
-**Tone.**
-- GDELT's daily average tone runs from about −10 to +10.
-- The last 7 days are compared with the earlier days: *z* = (recent mean − baseline mean) /
-  (baseline sd / √7). The coverage is "more negative/positive than usual" at |*z*| ≥ 1.96.
-- At least 30 baseline days are needed.
-
-**Why news does not vote in the advice yet.** GDELT only searches about 3 months back. Testing
-news tone like the trading rules (walk-forward, Holm, costs) needs years of stored daily tone per
-instrument, which needs the database (#80).
+**How news enters the advice:** see "News reading" (Phase 0.7, #114).
 
 ## References
 
