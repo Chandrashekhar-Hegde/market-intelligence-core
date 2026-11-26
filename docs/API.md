@@ -76,7 +76,7 @@ Invalid input returns `400`, an unknown symbol `404`, and an upstream failure `5
 
 ## Analysis Endpoint
 
-`GET /api/v1/analyze?symbol=&range=5y&benchmark=auto&seed=42&paths=2000` analyses any symbol:
+`GET /api/v1/analyze?symbol=&range=10y&benchmark=auto&seed=42&paths=2000` analyses any symbol (default `10y` since 27 Nov 2026; the app offers 5 or 10 years):
 
 - `report` holds `distribution`, `predictability`, `volatility` (EWMA and GARCH-t),
   `projections` (Monte Carlo fans for `gbm` and `garch_t`), `risk` (VaR/ES, drawdown,

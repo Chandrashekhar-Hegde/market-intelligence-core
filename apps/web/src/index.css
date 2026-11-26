@@ -1870,3 +1870,41 @@ ol {
     width: auto;
   }
 }
+
+/* ---- owner / non-owner guidance and the label legend ---- */
+.guidance {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.guidance > div {
+  padding: 10px 12px;
+  background: #f4f6f5;
+  border-radius: 8px;
+}
+
+.guidance dt {
+  font-weight: 700;
+}
+
+.guidance dd {
+  margin: 4px 0 0;
+}
+
+.label-legend {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  color: #3d4242;
+  font-size: 0.9rem;
+  list-style: none;
+  border: 1px dashed #c9d0cd;
+  border-radius: 8px;
+}
+
+.history-picker {
+  margin-top: 8px;
+}

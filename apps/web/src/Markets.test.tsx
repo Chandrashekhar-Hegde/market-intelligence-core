@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import type { Advice, AnalyzeResponse, NewsResponse, BarsResponse, InstrumentMeta, IntradayData, QuoteResponse, SignalTest, Signals, Tick } from './api'
-import { maxPosition, meaningCards, relativeVolume, sessionLeft, sessionRange } from './plainLanguage'
+import { maxPosition, meaningCards, relativeVolume, sessionLeft, sessionRange, stanceGuidance } from './plainLanguage'
 import { Markets } from './Markets'
 import {
   appendTick,
@@ -685,7 +685,7 @@ describe('analysis panels', () => {
     expect(within(screen.getByTestId('tests-table')).getByRole('row', { name: /Volatility clustering/ })).toHaveTextContent('Clusters')
     // An index is the market itself: no benchmark needed, and the UI says why.
     expect(screen.getByText(/Indices, currencies, futures and crypto are the market themselves/)).toBeInTheDocument()
-    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/analyze?symbol=%5ENSEI&range=5y'), expect.anything())
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/analyze?symbol=%5ENSEI&range=10y'), expect.anything())
   })
 
   test('shows benchmark exposure and the currency note for a foreign listing', async () => {
@@ -803,7 +803,45 @@ describe('plain language', () => {
   })
 })
 
+describe('owner and non-owner guidance', () => {
+  const base = { headline: '', drivers: [], horizon_days: null, review_date: null, confidence: null, flip_level: null, reasons: [] }
+  test('the same call means different actions for holders and buyers', () => {
+    const buy = stanceGuidance({ ...base, stance: 'buy', basis: 'proven' }, 19_685, 'INR')
+    expect(buy.owner).toBe('You can add more, keeping the total under ₹19,685 so a bad day stays within your limit.')
+    expect(buy.buyer).toMatch(/^You can buy, keeping the total under ₹19,685/)
+    const sell = stanceGuidance({ ...base, stance: 'sell', basis: 'proven' }, 19_685, 'INR')
+    expect(sell).toEqual({ owner: 'Consider selling or reducing it: the evidence points down from here.', buyer: 'Don’t buy it now.' })
+    const hold = stanceGuidance({ ...base, stance: 'hold', basis: 'no_evidence' }, 19_685, 'INR')
+    expect(hold.owner).toMatch(/^Keep it if it still fits your plan/)
+    expect(hold.buyer).toMatch(/^No tested reason to buy now.*under ₹19,685/)
+    expect(stanceGuidance({ ...base, stance: 'hold', basis: 'conflict' }, null, 'INR').buyer).toMatch(/^Wait/)
+    expect(stanceGuidance({ ...base, stance: 'hold', basis: 'proven_but_quiet' }, null, 'INR').owner).toMatch(/^Keep it/)
+  })
+})
+
 describe('advice card', () => {
+  test('explains Hold for owners and buyers, and what the labels mean', async () => {
+    mockApi()
+    renderMarkets()
+    const guidance = await screen.findByTestId('guidance')
+    expect(guidance).toHaveTextContent('If you already own itKeep it if it still fits your plan')
+    expect(guidance).toHaveTextContent('If you don’t own it yetNo tested reason to buy now')
+    const legend = screen.getByRole('list', { name: 'What the labels mean' })
+    expect(legend).toHaveTextContent('the rule’s reading today points up / down')
+    expect(legend).toHaveTextContent('does not change the call')
+  })
+
+  test('the history switch reloads the analysis on 5 years', async () => {
+    const fetchMock = mockApi()
+    renderMarkets()
+    const picker = await screen.findByRole('group', { name: 'History used' })
+    expect(within(picker).getByRole('button', { name: '10 years' })).toHaveAttribute('aria-pressed', 'true')
+    await userEvent.click(within(picker).getByRole('button', { name: '5 years' }))
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/analyze?symbol=%5ENSEI&range=5y'), expect.anything()),
+    )
+  })
+
   test('no proven rule: Hold, with what each rule sees and why none counts', async () => {
     mockApi()
     renderMarkets()
