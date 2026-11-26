@@ -717,7 +717,8 @@ async fn analyze_instrument(
     Query(query): Query<AnalyzeQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     use gm_domain::analysis::{AnalysisInput, DEFAULT_HORIZONS, DEFAULT_PATHS, MAX_PATHS, analyze};
-    let range = query.range.as_deref().unwrap_or("5y");
+    // Ten years by default: more out-of-sample days for validation (owner, 27 Nov 2026).
+    let range = query.range.as_deref().unwrap_or("10y");
     let paths = query.paths.unwrap_or(DEFAULT_PATHS);
     if !(100..=MAX_PATHS).contains(&paths) {
         return Err(ApiError::bad_request(format!(

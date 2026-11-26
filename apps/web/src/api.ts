@@ -384,15 +384,17 @@ export type AnalyzeResponse = {
   }
 }
 
-export function fetchAnalysis(symbol: string, range = '5y'): Promise<AnalyzeResponse> {
+export type AnalysisRange = '5y' | '10y'
+
+export function fetchAnalysis(symbol: string, range: AnalysisRange = '10y'): Promise<AnalyzeResponse> {
   return request<AnalyzeResponse>(`/api/v1/analyze?symbol=${encodeURIComponent(symbol)}&range=${range}`)
 }
 
 /** One cached analysis per symbol, shared by every panel that needs it. */
-export function useAnalysis(symbol: string) {
+export function useAnalysis(symbol: string, range: AnalysisRange = '10y') {
   return useQuery<AnalyzeResponse>({
-    queryKey: ['analysis', symbol],
-    queryFn: () => fetchAnalysis(symbol),
+    queryKey: ['analysis', symbol, range],
+    queryFn: () => fetchAnalysis(symbol, range),
     staleTime: 15 * 60_000,
     retry: (count, error) => count < 1 && !/^4\d\d/.test(error.message),
   })

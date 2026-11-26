@@ -211,7 +211,7 @@ Production-like (one origin, gated): build the web app with `VITE_API_BASE_URL=`
   - Under 60 returns the request is rejected with 400.
   - Under 250 there is no GARCH (the UI says so).
   - Under 600 there is no validation.
-  - Ranges `1y` and below are too short for validation; the default is `5y`.
+  - Ranges `1y` and below are too short for validation; the default is `10y` (trading rules always use 10y).
 - **`gm-api` test helper names.** In `gm-api` tests the request helper is `get_req`, not `get`,
   because `get` shadows axum's router function.
 

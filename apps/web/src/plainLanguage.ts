@@ -1,7 +1,7 @@
 // Plain-language reading of an analysis: what the numbers mean for someone putting money in.
 // Pure and unit-tested. Every number is one the API computed, or an exact identity of them
 // (documented in docs/METHODOLOGY.md, "Plain-language cards"); nothing is estimated here.
-import type { AnalyzeResponse, Projection } from './api'
+import type { Advice, AnalyzeResponse, Projection } from './api'
 
 export type Card = { id: string; title: string; headline: string; why: string }
 
@@ -48,7 +48,7 @@ export function meaningCards(analysis: AnalyzeResponse, amount: number): Card[] 
     id: 'typical-day',
     title: 'A typical day',
     headline: `It usually moves about ${pct(dailyVol)} up or down in a day: ${money(amount * dailyVol)} ${on}.`,
-    why: 'This is the day-to-day wobble to expect. It is the standard deviation of daily returns over five years.',
+    why: `This is the day-to-day wobble to expect. It is the standard deviation of daily returns over ${yearsCovered(analysis)} years.`,
   })
 
   const b = report.benchmark
@@ -178,4 +178,51 @@ export function sessionLeft(start: number | null, end: number | null, nowSec: nu
 export function relativeVolume(todayVolume: number, avgDailyVolume: number, elapsedFraction: number): number | null {
   if (!(avgDailyVolume > 0) || !(todayVolume > 0) || elapsedFraction < 0.05) return null
   return todayVolume / (avgDailyVolume * Math.min(elapsedFraction, 1))
+}
+
+/** Whole years of history the analysis used. */
+export function yearsCovered(analysis: AnalyzeResponse): number {
+  const { first_date: first, last_date: last } = analysis.report
+  return Math.max(1, Math.round((Date.parse(last) - Date.parse(first)) / (365.25 * 86_400_000)))
+}
+
+export type Guidance = { owner: string; buyer: string }
+
+/**
+ * What the call means for someone who already holds the instrument and for someone who
+ * doesn't: the same evidence, two different actions. `cap` is the most to hold for the
+ * user's bad-day loss limit (see maxPosition).
+ */
+export function stanceGuidance(advice: Advice, cap: number | null, currency: string | null): Guidance {
+  const upTo = cap !== null ? `, keeping the total under ${formatMoney(cap, currency)} so a bad day stays within your limit` : ''
+  if (advice.stance === 'buy') {
+    return {
+      owner: `You can add more${upTo}.`,
+      buyer: `You can buy${upTo}.`,
+    }
+  }
+  if (advice.stance === 'sell') {
+    return {
+      owner: 'Consider selling or reducing it: the evidence points down from here.',
+      buyer: 'Don’t buy it now.',
+    }
+  }
+  if (advice.basis === 'conflict') {
+    return {
+      owner: 'Keep it for now. The signals disagree, so there is no clear reason to sell.',
+      buyer: 'Wait. Buy only when the signals agree.',
+    }
+  }
+  if (advice.basis === 'proven_but_quiet') {
+    return {
+      owner: 'Keep it. The rules that have worked on this stock are not saying sell.',
+      buyer: 'Wait. The rules that have worked on this stock are not saying buy today; check again in a few days.',
+    }
+  }
+  return {
+    owner: 'Keep it if it still fits your plan. Nothing tested on its history says sell.',
+    buyer: `No tested reason to buy now. If you buy anyway as a long-term holding, keep it${
+      cap !== null ? ` under ${formatMoney(cap, currency)}` : ' small'
+    } and be ready to sit through falls like its worst one.`,
+  }
 }

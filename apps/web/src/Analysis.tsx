@@ -1,9 +1,17 @@
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createChart, LineSeries, LineStyle, type LineData } from 'lightweight-charts'
 
-import { type AnalyzeResponse, type PriceBar, type Projection, type Signal, describeApiError, useAnalysis } from './api'
+import { type AnalysisRange, type AnalyzeResponse, type PriceBar, type Projection, type Signal, describeApiError, useAnalysis } from './api'
 import { fanLines, formatP, formatPct, formatPrice } from './marketData'
-import { formatMoney, horizonWords, maxPosition, meaningCards, preferredProjection } from './plainLanguage'
+import {
+  formatMoney,
+  horizonWords,
+  maxPosition,
+  meaningCards,
+  preferredProjection,
+  stanceGuidance,
+  yearsCovered,
+} from './plainLanguage'
 
 const isDomTest = typeof navigator !== 'undefined' && navigator.userAgent.includes('jsdom')
 
@@ -20,7 +28,7 @@ const METHOD_LABEL: Record<string, string> = {
 
 /**
  * What to do, what it means for your money, and (folded away) all the statistics behind it,
- * for five years of daily data on any symbol.
+ * for up to ten years of daily data on any symbol.
  */
 export function AnalysisPanels({
   symbol,
@@ -33,7 +41,8 @@ export function AnalysisPanels({
   livePrice?: number | null
   extraMaths?: ReactNode
 }) {
-  const analysis = useAnalysis(symbol)
+  const [range, setRange] = useState<AnalysisRange>('10y')
+  const analysis = useAnalysis(symbol, range)
 
   if (analysis.error) {
     return (
@@ -58,7 +67,7 @@ export function AnalysisPanels({
   return (
     <>
       <AdviceCard analysis={analysis.data} livePrice={livePrice ?? null} />
-      <MeaningPanel analysis={analysis.data} history={history} />
+      <MeaningPanel analysis={analysis.data} history={history} range={range} onRange={setRange} />
       <details className="panel chart-panel maths-all">
         <summary>
           <span className="maths-title">Show all the maths</span>
@@ -127,6 +136,7 @@ function AdviceCard({ analysis, livePrice }: { analysis: AnalyzeResponse; livePr
     )
   }
   const cap = maxPosition(analysis, maxLoss)
+  const guidance = stanceGuidance(advice, cap, currency)
   const confidence = advice.confidence
   return (
     <section className="panel chart-panel advice-card" aria-labelledby="advice-heading" data-testid="advice">
@@ -144,6 +154,16 @@ function AdviceCard({ analysis, livePrice }: { analysis: AnalyzeResponse; livePr
         </span>
       </div>
       <p className="advice-headline">{advice.headline}</p>
+      <dl className="guidance" data-testid="guidance">
+        <div>
+          <dt>If you already own it</dt>
+          <dd>{guidance.owner}</dd>
+        </div>
+        <div>
+          <dt>If you don’t own it yet</dt>
+          <dd>{guidance.buyer}</dd>
+        </div>
+      </dl>
 
       {confidence ? (
         <div className="confidence" aria-label="How often this rule was right">
@@ -171,6 +191,21 @@ function AdviceCard({ analysis, livePrice }: { analysis: AnalyzeResponse; livePr
       ) : null}
 
       <h4 className="advice-subhead">What each rule sees today</h4>
+      <ul className="label-legend" aria-label="What the labels mean">
+        <li>
+          <span className="status-chip tone-green">Leans buy</span> / <span className="status-chip tone-red">Leans sell</span>{' '}
+          the rule’s reading today points up / down. <span className="status-chip tone-neutral">No view</span> it has nothing
+          to say today.
+        </li>
+        <li>
+          <span className="rule-proven">✓ Has worked here</span> following this rule on this stock’s own past beat trading
+          costs reliably, so its reading counts towards the call.
+        </li>
+        <li>
+          <span className="rule-unproven">Not proven here</span> it did not, so its reading is shown for information only
+          and does not change the call.
+        </li>
+      </ul>
       <ul className="rule-list" data-testid="rules">
         {signals.signals.map((signal) => {
           const proven = provenTest(signal)
@@ -229,7 +264,17 @@ function AdviceCard({ analysis, livePrice }: { analysis: AnalyzeResponse; livePr
 }
 
 /** The numbers translated into money: what a typical day, a bad day and the next months look like. */
-function MeaningPanel({ analysis, history }: { analysis: AnalyzeResponse; history: PriceBar[] | undefined }) {
+function MeaningPanel({
+  analysis,
+  history,
+  range,
+  onRange,
+}: {
+  analysis: AnalyzeResponse
+  history: PriceBar[] | undefined
+  range: AnalysisRange
+  onRange: (range: AnalysisRange) => void
+}) {
   const [amount, setAmount] = useState(10_000)
   const amountId = useId()
   const cards = meaningCards(analysis, amount)
@@ -238,8 +283,21 @@ function MeaningPanel({ analysis, history }: { analysis: AnalyzeResponse; histor
     <section className="panel chart-panel" aria-labelledby="meaning-heading">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">From five years of daily prices</p>
+          <p className="eyebrow">From {yearsCovered(analysis)} years of daily prices</p>
           <h3 id="meaning-heading">What this means for your money</h3>
+          <div className="range-picker history-picker" role="group" aria-label="History used">
+            {(['10y', '5y'] as const).map((option) => (
+              <button
+                key={option}
+                type="button"
+                className="ghost-button"
+                aria-pressed={option === range}
+                onClick={() => onRange(option)}
+              >
+                {option === '10y' ? '10 years' : '5 years'}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="amount-input">
           <label htmlFor={amountId}>If you put in</label>
