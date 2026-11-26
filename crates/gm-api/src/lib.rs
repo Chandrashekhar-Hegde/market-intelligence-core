@@ -54,6 +54,8 @@ pub struct ApiConfig {
     /// Override Yahoo endpoints (tests point these at local stubs).
     pub yahoo_base_url: Option<String>,
     pub yahoo_stream_url: Option<String>,
+    /// Override the GDELT news endpoint (tests point it at a local stub).
+    pub gdelt_base_url: Option<String>,
 }
 
 impl Default for ApiConfig {
@@ -70,6 +72,7 @@ impl Default for ApiConfig {
             cors_origins: Vec::new(),
             yahoo_base_url: None,
             yahoo_stream_url: None,
+            gdelt_base_url: None,
         }
     }
 }
@@ -82,6 +85,7 @@ struct AppState {
     payment_provider: Arc<MockPaymentProvider>,
     yahoo: YahooClient,
     stream: YahooStream,
+    gdelt: gm_integrations::gdelt::GdeltClient,
     access_token: Option<Arc<str>>,
 }
 
@@ -328,6 +332,10 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
             .yahoo_stream_url
             .map(YahooStream::new)
             .unwrap_or_default(),
+        gdelt: config
+            .gdelt_base_url
+            .map(gm_integrations::gdelt::GdeltClient::new)
+            .unwrap_or_default(),
         access_token: config
             .access_token
             .filter(|token| !token.trim().is_empty())
@@ -360,6 +368,7 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
         .route("/api/v1/bars", get(bars))
         .route("/api/v1/quote", get(quote))
         .route("/api/v1/intraday", get(intraday))
+        .route("/api/v1/news", get(news))
         .route("/api/v1/stream", get(stream))
         .route("/api/v1/analyze", get(analyze_instrument))
         .route("/api/v1/compare", get(compare_instruments))
@@ -863,6 +872,121 @@ async fn quote(
         "source": chart.source,
         "fetched_at": chart.fetched_at,
         "delayed": true,
+    })))
+}
+
+/// Recent news that mentions the instrument (GDELT), the tone of its coverage, and how the price
+/// moved after each story beyond what the market explains. Measurement only; nothing is stored.
+async fn news(
+    State(state): State<AppState>,
+    Query(query): Query<QuoteQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use gm_domain::analysis::news::{ImpactInput, impact, tone_summary};
+    use gm_integrations::gdelt::{SOURCE, news_query};
+    let chart = state
+        .yahoo
+        .chart(&query.symbol, "1y")
+        .await
+        .map_err(ApiError::provider)?;
+    let meta = &chart.meta;
+    let name = meta.name.clone().unwrap_or_else(|| meta.symbol.clone());
+    let search = news_query(&name).ok_or_else(|| {
+        ApiError::bad_request(format!("{name:?} is too short to search news for"))
+    })?;
+    let articles = state
+        .gdelt
+        .articles(&search)
+        .await
+        .map_err(ApiError::provider)?;
+    // Tone is a second request; best-effort, so headlines still show if it is rate-limited.
+    let tone = state.gdelt.tone(&search).await;
+
+    // Reaction: 5-minute bars of the instrument and its home index over the last 5 sessions.
+    let bench_symbol = markets::default_benchmark(
+        &meta.symbol,
+        meta.instrument_type.as_deref(),
+        meta.currency.as_deref(),
+    )
+    .map(|(s, _)| s.to_string())
+    .filter(|s| *s != meta.symbol);
+    let intraday = state.yahoo.intraday(&meta.symbol, "5d").await.ok();
+    let (bench_daily, bench_intraday) = match &bench_symbol {
+        Some(b) => (
+            state.yahoo.chart(b, "1y").await.ok(),
+            state.yahoo.intraday(b, "5d").await.ok(),
+        ),
+        None => (None, None),
+    };
+    let daily: Vec<_> = chart
+        .bars
+        .iter()
+        .map(|b| (b.date, b.adjusted_close()))
+        .collect();
+    let ppy = match (daily.first(), daily.last()) {
+        (Some(a), Some(b)) if b.0 > a.0 => {
+            (daily.len() - 1) as f64 / ((b.0 - a.0).num_days() as f64 / 365.25)
+        }
+        _ => 252.0,
+    };
+    let exposure = bench_symbol
+        .as_deref()
+        .zip(bench_daily.as_ref())
+        .and_then(|(symbol, bd)| {
+            let bench: Vec<_> = bd
+                .bars
+                .iter()
+                .map(|b| (b.date, b.adjusted_close()))
+                .collect();
+            gm_domain::analysis::risk::exposure(symbol, &daily, &bench, ppy)
+        });
+    let returns: Vec<f64> = daily.windows(2).map(|w| (w[1].1 / w[0].1).ln()).collect();
+    let sigma_daily = match &exposure {
+        Some(e) => e.idiosyncratic_vol_annual / ppy.sqrt(),
+        None => gm_domain::analysis::numeric::variance(&returns).sqrt(),
+    };
+    let points = |d: &gm_integrations::yahoo::IntradayData| -> Vec<(i64, f64)> {
+        d.points.iter().map(|p| (p.t, p.close)).collect()
+    };
+    let instrument_points = intraday.as_deref().map(points).unwrap_or_default();
+    let market_points = bench_intraday.as_deref().map(points);
+    let session_seconds = intraday
+        .as_deref()
+        .and_then(|d| Some((d.session_end? - d.session_start?) as f64))
+        .filter(|s| *s > 0.0)
+        .unwrap_or(86_400.0);
+    let input = ImpactInput {
+        instrument: &instrument_points,
+        market: market_points.as_deref().filter(|_| exposure.is_some()),
+        beta: exposure.as_ref().map_or(0.0, |e| e.beta),
+        sigma_daily,
+        bar_seconds: if intraday.as_deref().is_some_and(|d| d.interval == "1m") {
+            60
+        } else {
+            300
+        },
+        session_seconds,
+    };
+    let articles: Vec<_> = articles
+        .into_iter()
+        .map(|a| {
+            let reaction = impact(&input, a.seen_at.timestamp());
+            serde_json::json!({ "article": a, "impact": reaction })
+        })
+        .collect();
+    let (tone_summary_json, tone_note) = match &tone {
+        Ok(daily_tone) => (tone_summary(daily_tone), None),
+        Err(e) => (None, Some(e.to_string())),
+    };
+    Ok(Json(serde_json::json!({
+        "symbol": meta.symbol,
+        "query": search,
+        "articles": articles,
+        "tone": tone_summary_json,
+        "tone_note": tone_note,
+        "benchmark": exposure.as_ref().map(|e| e.symbol.clone()),
+        "beta": exposure.as_ref().map(|e| e.beta),
+        "source": SOURCE,
+        "fetched_at": chrono::Utc::now(),
     })))
 }
 
@@ -1610,6 +1734,18 @@ async fn openapi() -> Json<serde_json::Value> {
                     }
                 }
             },
+            "/api/v1/news": {
+                "get": {
+                    "summary": "Recent news mentioning the instrument (GDELT), coverage tone, and the price reaction after each story",
+                    "parameters": [{ "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" } }],
+                    "responses": {
+                        "200": { "description": "Articles (newest first) with measured reaction, tone summary, provenance" },
+                        "400": { "description": "Invalid symbol, or a name too short to search" },
+                        "404": { "description": "Unknown symbol" },
+                        "503": { "description": "GDELT unavailable or rate-limited (it allows one request every 5 s)" }
+                    }
+                }
+            },
             "/api/v1/stream": {
                 "get": {
                     "summary": "Live price ticks as Server-Sent Events (Yahoo streamer)",
@@ -2322,6 +2458,7 @@ mod tests {
             "/api/v1/bars",
             "/api/v1/quote",
             "/api/v1/intraday",
+            "/api/v1/news",
         ] {
             assert!(payload["paths"].get(path).is_some(), "{path}");
         }
@@ -2351,7 +2488,9 @@ mod tests {
                 let ten_years = params.get("range").is_some_and(|r| r == "10y");
                 match (fail, symbol.as_str()) {
                     (true, _) => (StatusCode::INTERNAL_SERVER_ERROR, String::new()),
-                    (false, "RELIANCE.NS") if intraday => (StatusCode::OK, INTRADAY.to_string()),
+                    (false, "RELIANCE.NS" | "^NSEI") if intraday => {
+                        (StatusCode::OK, INTRADAY.to_string())
+                    }
                     (false, "RELIANCE.NS") if ten_years => (StatusCode::OK, CHART_10Y.to_string()),
                     // ^NSEI doubles as the trading calendar; the RELIANCE fixture has the same days.
                     (false, "RELIANCE.NS" | "^NSEI") => (StatusCode::OK, CHART.to_string()),
@@ -2398,6 +2537,96 @@ mod tests {
             }
         });
         format!("ws://{addr}")
+    }
+
+    /// GDELT stub: articles and tone from fixtures, or the recorded rate-limit notice.
+    async fn gdelt_stub(rate_limited: bool) -> String {
+        let doc = move |Query(params): Query<std::collections::HashMap<String, String>>| async move {
+            if rate_limited {
+                return GDELT_LIMITED.to_string();
+            }
+            match params.get("mode").map(String::as_str) {
+                Some("artlist") => GDELT_ARTICLES.to_string(),
+                Some("timelinetone") => GDELT_TONE.to_string(),
+                _ => "unknown mode".to_string(),
+            }
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/api/v2/doc/doc", get(doc)))
+                .await
+                .unwrap()
+        });
+        format!("http://{addr}")
+    }
+
+    const GDELT_ARTICLES: &str =
+        include_str!("../../gm-integrations/tests/fixtures/gdelt_articles_reliance.json");
+    const GDELT_TONE: &str =
+        include_str!("../../gm-integrations/tests/fixtures/gdelt_tone_reliance.json");
+    const GDELT_LIMITED: &str =
+        include_str!("../../gm-integrations/tests/fixtures/gdelt_rate_limited.txt");
+
+    #[tokio::test]
+    async fn news_lists_headlines_with_tone_and_measured_reaction() {
+        let app = build_app(ApiConfig {
+            yahoo_base_url: Some(yahoo_stub(false).await),
+            yahoo_stream_url: Some(stream_stub().await),
+            gdelt_base_url: Some(gdelt_stub(false).await),
+            ..ApiConfig::default()
+        })
+        .await
+        .unwrap();
+        let (status, body) = get_json(app, "/api/v1/news?symbol=RELIANCE.NS").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        // The fixture chart's name is Reliance's; legal suffix dropped, quoted, English only.
+        assert_eq!(body["query"], "\"Reliance Industries\" sourcelang:english");
+        let articles = body["articles"].as_array().unwrap();
+        assert_eq!(articles.len(), 3);
+        // Seen 05:30 UTC, inside the recorded 1-minute session: a reaction is measured.
+        // The stub serves the same series for the stock and NIFTY (beta 1), so the move beyond
+        // the market is exactly zero: wiring checked here, the maths in gm-domain news tests.
+        let first = &articles[0]["impact"];
+        assert_eq!(body["benchmark"], "^NSEI");
+        assert!(
+            first["instrument_move"].as_f64().unwrap().abs() > 0.0,
+            "{first}"
+        );
+        assert!(
+            (first["instrument_move"].as_f64().unwrap() - first["market_move"].as_f64().unwrap())
+                .abs()
+                < 1e-12,
+            "{first}"
+        );
+        assert!(
+            first["abnormal_move"].as_f64().unwrap().abs() < 1e-9,
+            "{first}"
+        );
+        // Two days before the intraday window: no reaction claimed.
+        assert!(articles[2]["impact"].is_null());
+        assert_eq!(body["tone"]["label"], "more negative than usual");
+        assert_eq!(body["source"], "gdelt-doc-2.0");
+    }
+
+    #[tokio::test]
+    async fn news_rate_limit_is_a_503_with_gdelts_words() {
+        let app = build_app(ApiConfig {
+            yahoo_base_url: Some(yahoo_stub(false).await),
+            yahoo_stream_url: Some(stream_stub().await),
+            gdelt_base_url: Some(gdelt_stub(true).await),
+            ..ApiConfig::default()
+        })
+        .await
+        .unwrap();
+        let (status, body) = get_json(app, "/api/v1/news?symbol=RELIANCE.NS").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("one every 5 seconds")
+        );
     }
 
     async fn market_app(fail: bool, access_token: Option<&str>) -> Router {

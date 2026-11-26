@@ -1,0 +1,34 @@
+{
+ "articles": [
+  {
+   "url": "https://economictimes.indiatimes.com/example-shein",
+   "url_mobile": "",
+   "title": "Ambani Reliance struggles to revive Shein India fortunes",
+   "seendate": "20261126T053000Z",
+   "socialimage": "",
+   "domain": "economictimes.indiatimes.com",
+   "language": "English",
+   "sourcecountry": "India"
+  },
+  {
+   "url": "https://www.livemint.com/example-rotation",
+   "url_mobile": "",
+   "title": "Indian stocks defy Asia rout , hit fresh FY27 highs on global fund rotation",
+   "seendate": "20261126T021500Z",
+   "socialimage": "",
+   "domain": "livemint.com",
+   "language": "English",
+   "sourcecountry": "India"
+  },
+  {
+   "url": "https://www.reuters.com/example-older",
+   "url_mobile": "",
+   "title": "Reliance Industries weighs new energy spending",
+   "seendate": "20261124T101500Z",
+   "socialimage": "",
+   "domain": "reuters.com",
+   "language": "English",
+   "sourcecountry": "United States"
+  }
+ ]
+}

@@ -248,6 +248,23 @@ assert [p["t"] for p in chart["points"]] == sorted(p["t"] for p in chart["points
 assert chart["previous_close"] > 0, chart["previous_close"]
 PY
 
+  # News from GDELT: it rate-limits shared IPs, so 503 is tolerated; a 200 must be well-formed.
+  news_code="$(curl -s -o /tmp/gm_news.json -w '%{http_code}' "$BASE_URL/api/v1/news?symbol=RELIANCE.NS")"
+  if [ "$news_code" = "200" ]; then
+    python3 - /tmp/gm_news.json <<'PY'
+import json
+import sys
+
+body = json.load(open(sys.argv[1]))
+assert body["source"] == "gdelt-doc-2.0", body
+assert body["query"].startswith('"Reliance Industries"'), body["query"]
+assert isinstance(body["articles"], list), body
+PY
+  else
+    test "$news_code" = "503" || { echo "news returned $news_code"; exit 1; }
+    echo "  news: GDELT unavailable or rate-limited (503), tolerated"
+  fi
+
   # The engine on three markets: US stock (auto S&P 500), Japanese stock (auto Nikkei), crypto (none).
   for spec in "AAPL:^GSPC" "7203.T:^N225" "BTC-USD:"; do
     symbol="${spec%%:*}"; bench="${spec#*:}"

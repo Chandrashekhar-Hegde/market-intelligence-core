@@ -1813,3 +1813,22 @@ ol {
     font-size: 1.6rem;
   }
 }
+
+.news-list {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.news-list a {
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.news-impact {
+  margin-top: 2px;
+  font-size: 0.9rem;
+}

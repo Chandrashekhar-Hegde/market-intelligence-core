@@ -131,6 +131,19 @@ export async function mockMarketData(page: Page, { liveTicks = false } = {}) {
       },
     })
   })
+  await page.route('**/api/v1/news**', (route) =>
+    route.fulfill({
+      json: {
+        symbol: 'RELIANCE.NS', query: '"Reliance Industries" sourcelang:english',
+        articles: [{
+          article: { title: 'Reliance wins a large order', url: 'https://example.test/r', domain: 'livemint.com', source_country: 'India', seen_at: new Date(Date.now() - 3600_000).toISOString() },
+          impact: { instrument_move: 0.021, market_move: 0.002, abnormal_move: 0.019, sessions_elapsed: 0.2, z: 2.9, one_in: 270 },
+        }],
+        tone: { recent_mean: 0.4, baseline_mean: -0.5, baseline_sd: 1, n_recent: 7, n_baseline: 80, z: 2.4, label: 'more positive than usual' },
+        tone_note: null, benchmark: '^NSEI', beta: 1.1, source: 'gdelt-doc-2.0', fetched_at: new Date().toISOString(),
+      },
+    }),
+  )
   await page.route('**/api/v1/stream**', (route) => {
     const symbols = new URL(route.request().url()).searchParams.get('symbols') ?? ''
     const body =
