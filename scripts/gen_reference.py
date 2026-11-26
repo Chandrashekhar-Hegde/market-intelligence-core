@@ -170,10 +170,97 @@ def compare_reference(names):
     return out
 
 
+def signals_reference():
+    """Trading rules and their walk-forward tests (analysis/signals.rs) on AAPL closes, with a
+    deterministic synthetic volume series (the fixtures carry closes only)."""
+    from statsmodels.stats.multitest import multipletests
+    from statsmodels.stats.proportion import proportion_confint
+
+    c = load("aapl").to_numpy()
+    n = len(c)
+    i = np.arange(n)
+    vol = 1e6 * (1 + 0.5 * np.sin(i / 7)) + 1e5 * (i % 13)
+    nan = np.full(n, np.nan)
+
+    pos = {}
+    sma = pd.Series(c).rolling(200).mean().to_numpy()
+    pos["trend_200d"] = np.where(np.isnan(sma), np.nan, np.where(c > sma, 1.0, -1.0))
+    mom = nan.copy()
+    mom[252:] = np.where(np.log(c[231 : n - 21] / c[: n - 252]) > 0, 1.0, -1.0)
+    pos["momentum_12_1"] = mom
+
+    def trailing_rank(x, t):
+        return np.mean(x[t - 252 : t] < x[t])
+
+    r5 = np.zeros(n)
+    r5[5:] = np.log(c[5:] / c[:-5])
+    rev = nan.copy()
+    for t in range(257, n):
+        k = trailing_rank(r5, t)
+        rev[t] = 1.0 if k < 0.1 else (-1.0 if k >= 0.9 else 0.0)
+    pos["reversal_5d"] = rev
+
+    # Wilder RSI as an exponential average (alpha 1/14) seeded with the simple mean.
+    d = np.diff(c)
+    def wilder(x):
+        seeded = np.r_[np.full(14, np.nan), x[:14].mean(), x[14:]]
+        return pd.Series(seeded).ewm(alpha=1 / 14, adjust=False, ignore_na=True).mean().to_numpy()
+    g, l = wilder(np.clip(d, 0, None)), wilder(np.clip(-d, 0, None))
+    rsi = np.where(l == 0, 100.0, 100 - 100 / (1 + g / np.where(l == 0, 1, l)))
+    pos["rsi_14"] = np.where(np.isnan(rsi), np.nan, np.where(rsi < 30, 1.0, np.where(rsi > 70, -1.0, 0.0)))
+
+    spike = nan.copy()
+    for t in range(252, n):
+        spike[t] = 1.0 if trailing_rank(vol, t) >= 0.9 else 0.0
+    pos["volume_spike"] = spike
+    obv = np.r_[0.0, np.cumsum(np.sign(d) * vol[1:])]
+    pr = nan.copy()
+    pr[20:] = np.where(obv[20:] > obv[:-20], 1.0, -1.0)
+    pos["pressure_obv"] = pr
+
+    tests = []
+    for name, p in pos.items():
+        for h in (5, 21, 63):
+            days = [t for t in range(n - h) if not np.isnan(p[t])]
+            x = p[days]
+            y = np.log(c[np.array(days) + h] / c[days])
+            active = int(np.sum(x != 0))
+            if len(x) < 2 * h + 10 or active == 0:
+                continue
+            fit = OLS(y, np.column_stack([np.ones(len(x)), x])).fit(
+                cov_type="HAC", cov_kwds={"maxlags": h - 1, "kernel": "uniform", "use_correction": False}
+            )
+            n_ind = active // h
+            hits = calls = 0
+            nxt = 0
+            for k, t in enumerate(days):
+                if t < nxt or x[k] == 0 or y[k] == 0:
+                    continue
+                calls += 1
+                hits += (x[k] > 0) == (y[k] > 0)
+                nxt = t + h
+            half = len(x) // 2
+            slope = lambda a, b: OLS(b, np.column_stack([np.ones(len(a)), a])).fit().params[1]
+            lo, hi = proportion_confint(hits, calls, alpha=0.05, method="wilson")
+            tests.append({
+                "signal": name, "h": h, "n_obs": len(x), "n_independent": n_ind,
+                "effect": fit.params[1], "t_stat": fit.tvalues[1],
+                "p_value": float(stats.t.sf(fit.tvalues[1], max(n_ind, 2) - 1)),
+                "first_half": slope(x[:half], y[:half]), "second_half": slope(x[half:], y[half:]),
+                "hit_rate": hits / calls, "hit_n": calls, "hit_low": lo, "hit_high": hi,
+            })
+    holm = multipletests([t["p_value"] for t in tests], method="holm")[1]
+    for t, ph in zip(tests, holm):
+        t["p_holm"] = float(ph)
+    return {"rsi_last": float(rsi[-1]), "rsi_20": float(rsi[20]), "obv_last": float(obv[-1]),
+            "positions_today": {k: float(v[-1]) for k, v in pos.items()}, "tests": tests}
+
+
 def main():
     ref = {name: reference(name) for name in ("aapl", "gspc", "nsei")}
     ref["beta_aapl_gspc"] = beta("aapl", "gspc")
     ref["compare_aapl_gspc_nsei"] = compare_reference(["aapl", "gspc", "nsei"])
+    ref["signals_aapl"] = signals_reference()
     xs = np.array([1.0, 2, 3, 4, 5])
     y = 2 + 3 * xs + np.array([0.1, -0.1, 0, 0.1, -0.1])
     small = OLS(y, np.column_stack([np.ones(5), xs])).fit()

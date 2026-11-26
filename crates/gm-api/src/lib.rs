@@ -705,6 +705,31 @@ async fn analyze_instrument(
             .map(|bar| (bar.date, bar.adjusted_close()))
             .collect::<Vec<_>>()
     });
+    // Rules are tested on up to 10 years: the 3-month horizon needs 30+ separate calls.
+    // Best-effort: the rest of the analysis does not depend on it.
+    let (signals, advice, signals_note) = match state.yahoo.chart(&meta.symbol, "10y").await {
+        Ok(long) => match tokio::task::spawn_blocking(move || trading_signals(&long))
+            .await
+            .ok()
+            .flatten()
+        {
+            Some((s, a)) => (Some(s), Some(a), None),
+            None => (
+                None,
+                None,
+                Some(
+                    "Not enough history to test the trading rules (needs about 1.5 years)."
+                        .to_string(),
+                ),
+            ),
+        },
+        Err(e) => (
+            None,
+            None,
+            Some(format!("Trading rules could not be tested: {e}")),
+        ),
+    };
+
     let symbol = meta.symbol.clone();
     let bench_symbol = benchmark.as_ref().map(|(s, _)| s.clone());
     let report = tokio::task::spawn_blocking(move || {
@@ -731,6 +756,9 @@ async fn analyze_instrument(
     };
     Ok(Json(serde_json::json!({
         "report": report,
+        "signals": signals,
+        "advice": advice,
+        "signals_note": signals_note,
         "data": {
             "symbol": meta.symbol,
             "name": meta.name,
@@ -836,6 +864,35 @@ async fn quote(
         "fetched_at": chart.fetched_at,
         "delayed": true,
     })))
+}
+
+/// Literature trading rules tested walk-forward on this history, and the advice they support.
+fn trading_signals(
+    chart: &ChartData,
+) -> Option<(
+    gm_domain::analysis::signals::Signals,
+    gm_domain::analysis::signals::Advice,
+)> {
+    use gm_domain::analysis::signals::{SignalInput, advise, evaluate};
+    let dates: Vec<_> = chart.bars.iter().map(|b| b.date).collect();
+    let closes: Vec<f64> = chart.bars.iter().map(|b| b.adjusted_close()).collect();
+    let volume: Vec<f64> = chart.bars.iter().map(|b| b.volume as f64).collect();
+    // Indices and FX report no (or patchy) volume; volume rules need it on nearly every day.
+    let has_volume = volume.iter().filter(|v| **v > 0.0).count() * 10 >= volume.len() * 9;
+    // Crypto trades every day; the review date then counts calendar days.
+    let every_day = dates.iter().any(|d| {
+        matches!(
+            chrono::Datelike::weekday(d),
+            chrono::Weekday::Sat | chrono::Weekday::Sun
+        )
+    });
+    let signals = evaluate(&SignalInput {
+        dates: &dates,
+        close: &closes,
+        volume: has_volume.then_some(volume.as_slice()),
+    })?;
+    let advice = advise(&signals, every_day);
+    Some((signals, advice))
 }
 
 /// Intraday bars for the live chart: `1d` (1-minute) or `5d` (5-minute). Display-only.
@@ -2278,6 +2335,8 @@ mod tests {
         include_str!("../../gm-integrations/tests/fixtures/yahoo_chart_not_found.json");
     const SEARCH: &str =
         include_str!("../../gm-integrations/tests/fixtures/yahoo_search_nifty.json");
+    const CHART_10Y: &str =
+        include_str!("../../gm-integrations/tests/fixtures/yahoo_chart_reliance_10y.json");
     const INTRADAY: &str =
         include_str!("../../gm-integrations/tests/fixtures/yahoo_chart_reliance_1d_1m.json");
     const FRAMES: &str =
@@ -2289,9 +2348,11 @@ mod tests {
             move |Path(symbol): Path<String>,
                   Query(params): Query<std::collections::HashMap<String, String>>| async move {
                 let intraday = params.get("interval").is_some_and(|i| i != "1d");
+                let ten_years = params.get("range").is_some_and(|r| r == "10y");
                 match (fail, symbol.as_str()) {
                     (true, _) => (StatusCode::INTERNAL_SERVER_ERROR, String::new()),
                     (false, "RELIANCE.NS") if intraday => (StatusCode::OK, INTRADAY.to_string()),
+                    (false, "RELIANCE.NS") if ten_years => (StatusCode::OK, CHART_10Y.to_string()),
                     // ^NSEI doubles as the trading calendar; the RELIANCE fixture has the same days.
                     (false, "RELIANCE.NS" | "^NSEI") => (StatusCode::OK, CHART.to_string()),
                     (false, _) => (StatusCode::NOT_FOUND, NOT_FOUND.to_string()),
@@ -2555,6 +2616,24 @@ mod tests {
         assert_eq!(body["data"]["tradingview_symbol"], "NSE:RELIANCE");
         assert_eq!(body["data"]["quality"]["passed"], true);
         assert_eq!(body["data"]["source"], "yahoo-chart-v8");
+
+        // Trading rules run on 10 years of real RELIANCE closes; advice always comes with reasons.
+        let signals = &body["signals"];
+        assert!(signals["n_days"].as_u64().unwrap() > 2400, "{signals}");
+        let ids: Vec<_> = signals["signals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["id"].as_str().unwrap())
+            .collect();
+        assert!(
+            ids.contains(&"trend_200d") && ids.contains(&"pressure_obv"),
+            "{ids:?}"
+        );
+        let advice = &body["advice"];
+        assert!(["buy", "sell", "hold"].contains(&advice["stance"].as_str().unwrap()));
+        assert_eq!(advice["reasons"].as_array().unwrap().len(), ids.len());
+        assert!(body["signals_note"].is_null());
     }
 
     #[tokio::test]

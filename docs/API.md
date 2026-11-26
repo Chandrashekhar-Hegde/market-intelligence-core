@@ -68,6 +68,12 @@ Invalid input returns `400`, an unknown symbol `404`, and an upstream failure `5
   data-quality report.
 - `benchmark` records which index was used (`selection`: `auto` or `requested`), whether it
   loaded, and a currency note when currencies differ.
+- `signals` holds six literature trading rules, each tested walk-forward on up to 10 years of this
+  instrument at 5, 21 and 63 sessions (effect, Hansen–Hodrick t, Holm-adjusted p, hit rate with a
+  Wilson interval, `earns_place`, and a plain `verdict`). `advice` holds `stance` (`buy` / `sell` /
+  `hold`), `basis` (`proven`, `conflict`, `proven_but_quiet`, `no_evidence`), `headline`,
+  `horizon_days`, `review_date`, `confidence`, `flip_level` and one `reasons` line per rule. Both
+  are null when the history is too short, and `signals_note` then says why. See METHODOLOGY.md.
 - **`benchmark=auto`** picks the home-market index from the listing suffix: the S&P 500 for US
   listings, MSCI ACWI for unknown exchanges, and none for indices, FX, futures and crypto.
   `none` skips the exposure section; any other value is used as a symbol.
