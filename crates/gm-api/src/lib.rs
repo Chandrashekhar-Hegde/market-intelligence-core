@@ -359,6 +359,7 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
         .route("/api/v1/instruments/search", get(search_instruments))
         .route("/api/v1/bars", get(bars))
         .route("/api/v1/quote", get(quote))
+        .route("/api/v1/intraday", get(intraday))
         .route("/api/v1/stream", get(stream))
         .route("/api/v1/analyze", get(analyze_instrument))
         .route("/api/v1/compare", get(compare_instruments))
@@ -835,6 +836,19 @@ async fn quote(
         "fetched_at": chart.fetched_at,
         "delayed": true,
     })))
+}
+
+/// Intraday bars for the live chart: `1d` (1-minute) or `5d` (5-minute). Display-only.
+async fn intraday(
+    State(state): State<AppState>,
+    Query(query): Query<BarsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let chart = state
+        .yahoo
+        .intraday(&query.symbol, query.range.as_deref().unwrap_or("1d"))
+        .await
+        .map_err(ApiError::provider)?;
+    Ok(Json(serde_json::json!({ "chart": &*chart })))
 }
 
 async fn health() -> Json<HealthResponse> {
@@ -1519,6 +1533,21 @@ async fn openapi() -> Json<serde_json::Value> {
                     "responses": {
                         "200": { "description": "Delayed quote" },
                         "400": { "description": "Invalid symbol" },
+                        "404": { "description": "Unknown symbol" },
+                        "503": { "description": "Upstream data provider unavailable" }
+                    }
+                }
+            },
+            "/api/v1/intraday": {
+                "get": {
+                    "summary": "Intraday bars for the live chart (1d = 1-minute, 5d = 5-minute); display only",
+                    "parameters": [
+                        { "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" } },
+                        { "name": "range", "in": "query", "required": false, "schema": { "type": "string", "enum": ["1d", "5d"], "default": "1d" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Intraday points, previous close and session window, with provenance" },
+                        "400": { "description": "Invalid symbol or range" },
                         "404": { "description": "Unknown symbol" },
                         "503": { "description": "Upstream data provider unavailable" }
                     }
@@ -2235,6 +2264,7 @@ mod tests {
             "/api/v1/instruments/search",
             "/api/v1/bars",
             "/api/v1/quote",
+            "/api/v1/intraday",
         ] {
             assert!(payload["paths"].get(path).is_some(), "{path}");
         }
@@ -2248,19 +2278,25 @@ mod tests {
         include_str!("../../gm-integrations/tests/fixtures/yahoo_chart_not_found.json");
     const SEARCH: &str =
         include_str!("../../gm-integrations/tests/fixtures/yahoo_search_nifty.json");
+    const INTRADAY: &str =
+        include_str!("../../gm-integrations/tests/fixtures/yahoo_chart_reliance_1d_1m.json");
     const FRAMES: &str =
         include_str!("../../gm-integrations/tests/fixtures/yahoo_stream_frames.txt");
 
     /// Recorded chart/search responses on an ephemeral port. `fail` answers 500 to everything.
     async fn yahoo_stub(fail: bool) -> String {
-        let chart = move |Path(symbol): Path<String>| async move {
-            match (fail, symbol.as_str()) {
-                (true, _) => (StatusCode::INTERNAL_SERVER_ERROR, String::new()),
-                // ^NSEI doubles as the trading calendar; the RELIANCE fixture has the same days.
-                (false, "RELIANCE.NS" | "^NSEI") => (StatusCode::OK, CHART.to_string()),
-                (false, _) => (StatusCode::NOT_FOUND, NOT_FOUND.to_string()),
-            }
-        };
+        let chart =
+            move |Path(symbol): Path<String>,
+                  Query(params): Query<std::collections::HashMap<String, String>>| async move {
+                let intraday = params.get("interval").is_some_and(|i| i != "1d");
+                match (fail, symbol.as_str()) {
+                    (true, _) => (StatusCode::INTERNAL_SERVER_ERROR, String::new()),
+                    (false, "RELIANCE.NS") if intraday => (StatusCode::OK, INTRADAY.to_string()),
+                    // ^NSEI doubles as the trading calendar; the RELIANCE fixture has the same days.
+                    (false, "RELIANCE.NS" | "^NSEI") => (StatusCode::OK, CHART.to_string()),
+                    (false, _) => (StatusCode::NOT_FOUND, NOT_FOUND.to_string()),
+                }
+            };
         let search = move || async move {
             if fail {
                 (StatusCode::INTERNAL_SERVER_ERROR, String::new())
@@ -2347,6 +2383,25 @@ mod tests {
         assert!(body["quote"]["last_price"].as_f64().unwrap() > 0.0);
         assert_eq!(body["quote"]["market_open"], false);
         assert_eq!(body["delayed"], true);
+    }
+
+    #[tokio::test]
+    async fn intraday_returns_minute_points_and_rejects_bad_ranges() {
+        let app = market_app(false, None).await;
+        let (status, body) = get_json(app.clone(), "/api/v1/intraday?symbol=RELIANCE.NS").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let chart = &body["chart"];
+        assert_eq!(chart["interval"], "1m");
+        assert_eq!(chart["points"].as_array().unwrap().len(), 362);
+        assert!((chart["previous_close"].as_f64().unwrap() - 1373.9).abs() < 1e-9);
+        assert_eq!(chart["source"], "yahoo-chart-v8");
+        assert!(chart["fetched_at"].is_string());
+
+        let (status, body) =
+            get_json(app.clone(), "/api/v1/intraday?symbol=RELIANCE.NS&range=1y").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        let (status, body) = get_json(app, "/api/v1/intraday?symbol=NOPE.NS").await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     }
 
     #[tokio::test]

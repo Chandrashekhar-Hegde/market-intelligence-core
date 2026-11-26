@@ -32,6 +32,10 @@ pub struct InstrumentMeta {
     /// Last traded price (delayed).
     pub last_price: Option<f64>,
     pub last_trade_at: Option<DateTime<Utc>>,
+    /// Change and % change vs the previous session's close, as Yahoo reports them.
+    pub change: Option<f64>,
+    pub change_pct: Option<f64>,
+    pub day_volume: Option<i64>,
     /// Regular session in progress at fetch time. Yahoo keeps the previous session's window on
     /// exchange holidays, so this is also false on holidays without a calendar of our own.
     pub market_open: bool,
@@ -72,6 +76,39 @@ pub struct ChartData {
     pub source: String,
     pub fetched_at: DateTime<Utc>,
 }
+
+/// One intraday bar (1 or 5 minutes). Display-only: the analysis path stays on daily bars.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IntradayPoint {
+    /// Bar start, Unix seconds (UTC).
+    pub t: i64,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub volume: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IntradayData {
+    pub meta: InstrumentMeta,
+    /// "1m" or "5m".
+    pub interval: String,
+    /// The price today's change is measured from: last price minus Yahoo's day change. Yahoo's
+    /// own `previousClose` can be stale (on 26 Nov 2026 it was two sessions old for NIFTY after a
+    /// holiday), and for crypto the change is over 24 hours; this keeps the line and the change
+    /// shown next to it consistent. Falls back to `chartPreviousClose`.
+    pub previous_close: Option<f64>,
+    /// Regular session window of the latest session (Unix seconds), when Yahoo gives one.
+    pub session_start: Option<i64>,
+    pub session_end: Option<i64>,
+    pub points: Vec<IntradayPoint>,
+    pub source: String,
+    pub fetched_at: DateTime<Utc>,
+}
+
+/// Intraday ranges and the bar size used for each.
+pub const INTRADAY_RANGES: [(&str, &str); 2] = [("1d", "1m"), ("5d", "5m")];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SearchHit {
@@ -122,6 +159,10 @@ struct WireMeta {
     short_name: Option<String>,
     regular_market_price: Option<f64>,
     regular_market_time: Option<i64>,
+    chart_previous_close: Option<f64>,
+    fullday_change: Option<f64>,
+    regular_market_change_percent: Option<f64>,
+    regular_market_volume: Option<i64>,
     #[serde(default)]
     gmtoffset: i64,
     current_trading_period: Option<TradingPeriods>,
@@ -210,9 +251,11 @@ fn local_date(ts: i64, gmtoffset: i64) -> Option<NaiveDate> {
 }
 
 /// Parse a v8 chart response. `now` decides whether the last bar is a still-forming session bar.
-pub fn parse_chart(body: &str, now: DateTime<Utc>) -> Result<ChartData, ProviderError> {
-    let envelope: ChartEnvelope = serde_json::from_str(body)
-        .map_err(|e| ProviderError::Unavailable(format!("malformed chart response: {e}")))?;
+fn chart_result(body: &str) -> Result<ChartResult, ProviderError> {
+    let envelope: ChartEnvelope = serde_json::from_str(body).map_err(|e| {
+        let snippet = body.chars().take(200).collect::<String>();
+        ProviderError::Unavailable(format!("malformed chart response ({e}): {snippet}"))
+    })?;
     if let Some(error) = envelope.chart.error {
         let code = error.code.unwrap_or_default();
         let description = error.description.unwrap_or_default();
@@ -222,12 +265,88 @@ pub fn parse_chart(body: &str, now: DateTime<Utc>) -> Result<ChartData, Provider
             ProviderError::Unavailable(format!("{code}: {description}"))
         });
     }
-    let result = envelope
+    envelope
         .chart
         .result
         .and_then(|mut results| results.pop())
-        .ok_or_else(|| ProviderError::Unavailable("empty chart result".to_string()))?;
+        .ok_or_else(|| ProviderError::Unavailable("empty chart result".to_string()))
+}
 
+fn instrument_meta(meta: &WireMeta, market_open: bool) -> InstrumentMeta {
+    InstrumentMeta {
+        symbol: meta.symbol.clone(),
+        name: meta.long_name.clone().or_else(|| meta.short_name.clone()),
+        currency: meta.currency.clone(),
+        exchange: meta.full_exchange_name.clone(),
+        instrument_type: meta.instrument_type.clone(),
+        timezone: meta.exchange_timezone_name.clone(),
+        last_price: meta.regular_market_price,
+        last_trade_at: meta
+            .regular_market_time
+            .and_then(|ts| DateTime::from_timestamp(ts, 0)),
+        change: meta.fullday_change,
+        change_pct: meta.regular_market_change_percent,
+        day_volume: meta.regular_market_volume,
+        market_open,
+        tradingview_symbol: crate::markets::tradingview_symbol(&meta.symbol),
+    }
+}
+
+fn regular_session(meta: &WireMeta) -> Option<&TradingPeriod> {
+    meta.current_trading_period
+        .as_ref()
+        .and_then(|periods| periods.regular.as_ref())
+}
+
+/// Parse a v8 chart response at an intraday interval. Rows with any missing price are gaps in
+/// trading (Yahoo emits all-null minutes), not bars.
+pub fn parse_intraday(
+    body: &str,
+    interval: &str,
+    now: DateTime<Utc>,
+) -> Result<IntradayData, ProviderError> {
+    let result = chart_result(body)?;
+    let quote = result
+        .indicators
+        .quote
+        .first()
+        .ok_or_else(|| ProviderError::Unavailable("chart has no quote block".to_string()))?;
+    let at = |v: &[Option<f64>], i: usize| v.get(i).copied().flatten();
+    let points = result
+        .timestamp
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &t)| {
+            Some(IntradayPoint {
+                t,
+                open: at(&quote.open, i)?,
+                high: at(&quote.high, i)?,
+                low: at(&quote.low, i)?,
+                close: at(&quote.close, i)?,
+                volume: quote.volume.get(i).copied().flatten().unwrap_or(0),
+            })
+        })
+        .collect();
+    let session = regular_session(&result.meta);
+    let now_ts = now.timestamp();
+    let market_open = session.is_some_and(|s| now_ts >= s.start && now_ts < s.end);
+    Ok(IntradayData {
+        meta: instrument_meta(&result.meta, market_open),
+        interval: interval.to_string(),
+        previous_close: match (result.meta.regular_market_price, result.meta.fullday_change) {
+            (Some(price), Some(change)) => Some(price - change),
+            _ => result.meta.chart_previous_close,
+        },
+        session_start: session.map(|s| s.start),
+        session_end: session.map(|s| s.end),
+        points,
+        source: SOURCE.to_string(),
+        fetched_at: now,
+    })
+}
+
+pub fn parse_chart(body: &str, now: DateTime<Utc>) -> Result<ChartData, ProviderError> {
+    let result = chart_result(body)?;
     let meta = &result.meta;
     let offset = meta.gmtoffset;
     let quote = result
@@ -273,10 +392,7 @@ pub fn parse_chart(body: &str, now: DateTime<Utc>) -> Result<ChartData, Provider
     }
     let mut bars = by_date.into_values().collect::<Vec<_>>();
 
-    let session = meta
-        .current_trading_period
-        .as_ref()
-        .and_then(|periods| periods.regular.as_ref());
+    let session = regular_session(meta);
     let now_ts = now.timestamp();
     let market_open = session.is_some_and(|s| now_ts >= s.start && now_ts < s.end);
     let mut dropped_partial_bar = false;
@@ -312,20 +428,7 @@ pub fn parse_chart(body: &str, now: DateTime<Utc>) -> Result<ChartData, Provider
     corporate_actions.sort_by_key(CorporateAction::date);
 
     Ok(ChartData {
-        meta: InstrumentMeta {
-            symbol: meta.symbol.clone(),
-            name: meta.long_name.clone().or_else(|| meta.short_name.clone()),
-            currency: meta.currency.clone(),
-            exchange: meta.full_exchange_name.clone(),
-            instrument_type: meta.instrument_type.clone(),
-            timezone: meta.exchange_timezone_name.clone(),
-            last_price: meta.regular_market_price,
-            last_trade_at: meta
-                .regular_market_time
-                .and_then(|ts| DateTime::from_timestamp(ts, 0)),
-            market_open,
-            tradingview_symbol: crate::markets::tradingview_symbol(&meta.symbol),
-        },
+        meta: instrument_meta(meta, market_open),
         bars,
         corporate_actions,
         dropped_partial_bar,
@@ -381,13 +484,14 @@ pub fn parse_search(body: &str) -> Result<Vec<SearchHit>, ProviderError> {
     Ok(hits)
 }
 
-/// Symbols reach a URL path, so they are whitelisted: Yahoo tickers are short and use A-Z 0-9 ^ & . - _
+/// Symbols reach a URL path, so they are whitelisted: Yahoo tickers are short and use
+/// A-Z 0-9 ^ & . - _ and = (FX `INR=X`, futures `GC=F`).
 pub fn validate_symbol(symbol: &str) -> Result<String, ProviderError> {
     let symbol = symbol.trim().to_uppercase();
     let ok = (1..=32).contains(&symbol.len())
         && symbol
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "^&.-_".contains(c));
+            .all(|c| c.is_ascii_alphanumeric() || "^&.-_=".contains(c));
     if ok {
         Ok(symbol)
     } else {
@@ -413,6 +517,7 @@ pub fn validate_range(range: &str) -> Result<&'static str, ProviderError> {
 // ---- client --------------------------------------------------------------------------------
 
 type ChartCache = HashMap<(String, &'static str), (Instant, Arc<ChartData>)>;
+type IntradayCache = HashMap<(String, &'static str), (Instant, Arc<IntradayData>)>;
 
 #[derive(Clone)]
 pub struct YahooClient {
@@ -421,6 +526,7 @@ pub struct YahooClient {
     // ponytail: unbounded in-process cache, fine for one instance + a private beta.
     // Move to Postgres/Redis when there are multiple instances or the key space grows.
     cache: Arc<Mutex<ChartCache>>,
+    intraday_cache: Arc<Mutex<IntradayCache>>,
 }
 
 impl Default for YahooClient {
@@ -440,6 +546,7 @@ impl YahooClient {
             http,
             base_url: base_url.into(),
             cache: Arc::default(),
+            intraday_cache: Arc::default(),
         }
     }
 
@@ -472,6 +579,46 @@ impl YahooClient {
         let body = self.get_with_retry(url).await?;
         let data = Arc::new(parse_chart(&body, Utc::now())?);
         self.cache
+            .lock()
+            .expect("cache lock")
+            .insert(key, (Instant::now(), Arc::clone(&data)));
+        Ok(data)
+    }
+
+    /// Today's (or the last session's) 1-minute bars, or 5 days of 5-minute bars. Cached for
+    /// 30 s: the live stream fills the gap between refreshes.
+    pub async fn intraday(
+        &self,
+        symbol: &str,
+        range: &str,
+    ) -> Result<Arc<IntradayData>, ProviderError> {
+        let symbol = validate_symbol(symbol)?;
+        let (range, interval) = INTRADAY_RANGES
+            .iter()
+            .find(|(r, _)| *r == range)
+            .copied()
+            .ok_or_else(|| {
+                ProviderError::InvalidRequest(format!(
+                    "invalid intraday range {range:?}; expected 1d or 5d"
+                ))
+            })?;
+        let key = (symbol.clone(), range);
+        if let Some((at, data)) = self.intraday_cache.lock().expect("cache lock").get(&key)
+            && at.elapsed() < Duration::from_secs(30)
+        {
+            return Ok(Arc::clone(data));
+        }
+        let mut url = reqwest::Url::parse(&self.base_url)
+            .map_err(|e| ProviderError::InvalidRequest(e.to_string()))?;
+        url.path_segments_mut()
+            .map_err(|_| ProviderError::InvalidRequest("base url cannot be a base".to_string()))?
+            .extend(["v8", "finance", "chart", &symbol]);
+        url.query_pairs_mut()
+            .append_pair("range", range)
+            .append_pair("interval", interval);
+        let body = self.get_with_retry(url).await?;
+        let data = Arc::new(parse_intraday(&body, interval, Utc::now())?);
+        self.intraday_cache
             .lock()
             .expect("cache lock")
             .insert(key, (Instant::now(), Arc::clone(&data)));
@@ -578,6 +725,62 @@ mod tests {
         assert_eq!(open.bars.len(), 247);
     }
 
+    const RELIANCE_1M: &str = include_str!("../tests/fixtures/yahoo_chart_reliance_1d_1m.json");
+    const BTC_1M: &str = include_str!("../tests/fixtures/yahoo_chart_btc_1d_1m.json");
+
+    #[test]
+    fn parses_recorded_intraday_and_skips_null_minutes() {
+        let data = parse_intraday(RELIANCE_1M, "1m", after_close()).unwrap();
+        assert_eq!(data.meta.symbol, "RELIANCE.NS");
+        assert_eq!(data.interval, "1m");
+        // 375 minutes in the NSE session, 13 of them all-null in the recording.
+        assert_eq!(data.points.len(), 362);
+        assert_eq!(data.points[0].t, 1_795_664_700);
+        assert_eq!(data.session_start, Some(1_795_664_700));
+        assert_eq!(data.session_end, Some(1_795_687_200));
+        assert!((data.previous_close.unwrap() - 1373.9).abs() < 1e-9);
+        assert_eq!(data.meta.change, Some(22.3));
+        assert_eq!(data.meta.change_pct, Some(1.623));
+        assert!(data.meta.day_volume.unwrap() > 0);
+        assert!(data.points.windows(2).all(|w| w[0].t < w[1].t));
+        assert!(
+            data.points
+                .iter()
+                .all(|p| p.low <= p.close && p.close <= p.high)
+        );
+        assert!(!data.meta.market_open);
+        // Inside the recorded session the market reads as open.
+        let during = DateTime::from_timestamp(1_795_670_000, 0).unwrap();
+        assert!(
+            parse_intraday(RELIANCE_1M, "1m", during)
+                .unwrap()
+                .meta
+                .market_open
+        );
+    }
+
+    #[test]
+    fn parses_round_the_clock_intraday() {
+        let data = parse_intraday(BTC_1M, "1m", after_close()).unwrap();
+        assert_eq!(data.meta.symbol, "BTC-USD");
+        assert!(data.points.len() > 700);
+        assert!(data.points.iter().all(|p| p.close > 0.0));
+    }
+
+    #[test]
+    fn intraday_errors_carry_the_body() {
+        assert!(matches!(
+            parse_intraday(NOT_FOUND, "1m", after_close()),
+            Err(ProviderError::SymbolNotFound(_))
+        ));
+        let Err(ProviderError::Unavailable(message)) =
+            parse_intraday("<html>blocked</html>", "1m", after_close())
+        else {
+            panic!("a block page must be an error");
+        };
+        assert!(message.contains("blocked"), "{message}");
+    }
+
     #[test]
     fn not_found_maps_to_symbol_not_found() {
         assert!(matches!(
@@ -638,6 +841,7 @@ mod tests {
     fn rejects_unsafe_symbols_and_ranges() {
         assert_eq!(validate_symbol(" reliance.ns ").unwrap(), "RELIANCE.NS");
         assert!(validate_symbol("^NSEI").is_ok());
+        assert_eq!(validate_symbol("inr=x").unwrap(), "INR=X");
         for bad in ["", "A/B", "../x", "X?y=1", &"A".repeat(33)] {
             assert!(validate_symbol(bad).is_err(), "{bad}");
         }
@@ -652,5 +856,7 @@ mod tests {
         let data = client.chart("RELIANCE.NS", "1mo").await.unwrap();
         assert!(data.bars.len() > 10);
         assert!(!client.search("reliance").await.unwrap().is_empty());
+        let intraday = client.intraday("BTC-USD", "1d").await.unwrap();
+        assert!(intraday.points.len() > 100, "crypto trades round the clock");
     }
 }

@@ -3,12 +3,16 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
-import type { AnalyzeResponse, BarsResponse, InstrumentMeta, QuoteResponse, Tick } from './api'
+import type { AnalyzeResponse, BarsResponse, InstrumentMeta, IntradayData, QuoteResponse, Tick } from './api'
 import { Markets } from './Markets'
 import {
+  appendTick,
+  dayChange,
   displayPrice,
+  formatCompact,
   liveState,
   mergeTick,
+  priceCurrency,
   toCandles,
 } from './marketData'
 
@@ -18,7 +22,7 @@ const NOW = Date.parse('2026-11-25T06:00:00Z') // 11:30 IST, a Wednesday session
 
 function meta(overrides: Partial<InstrumentMeta> = {}): InstrumentMeta {
   return {
-    symbol: '^GSPC',
+    symbol: '^NSEI',
     name: 'NIFTY 50',
     currency: 'INR',
     exchange: 'NSE',
@@ -26,6 +30,9 @@ function meta(overrides: Partial<InstrumentMeta> = {}): InstrumentMeta {
     timezone: 'Asia/Kolkata',
     last_price: 25349.65,
     last_trade_at: '2026-11-23T09:59:00Z',
+    change: null,
+    change_pct: null,
+    day_volume: null,
     market_open: false,
     tradingview_symbol: 'SP:SPX',
     ...overrides,
@@ -34,7 +41,7 @@ function meta(overrides: Partial<InstrumentMeta> = {}): InstrumentMeta {
 
 function tick(overrides: Partial<Tick> = {}): Tick {
   return {
-    symbol: '^GSPC',
+    symbol: '^NSEI',
     price: 25410.5,
     change: 60.85,
     change_pct: 0.24,
@@ -50,7 +57,7 @@ function tick(overrides: Partial<Tick> = {}): Tick {
 }
 
 function bar(date: string, close: number) {
-  return { symbol: '^GSPC', date, open: close - 10, high: close + 20, low: close - 30, close, adj_close: close, volume: 0, source: 'yahoo-chart-v8' }
+  return { symbol: '^NSEI', date, open: close - 10, high: close + 20, low: close - 30, close, adj_close: close, volume: 0, source: 'yahoo-chart-v8' }
 }
 
 function barsResponse(overrides: Partial<BarsResponse['quality']> = {}): BarsResponse {
@@ -63,7 +70,7 @@ function barsResponse(overrides: Partial<BarsResponse['quality']> = {}): BarsRes
       source: 'yahoo-chart-v8',
       fetched_at: '2026-11-24T09:00:00Z',
     },
-    calendar_reference: '^GSPC',
+    calendar_reference: '^NSEI',
     quality: {
       passed: true,
       n_bars: 3,
@@ -103,7 +110,7 @@ function analysis(overrides: Partial<AnalyzeResponse['report']> = {}): AnalyzeRe
   }))
   return {
     report: {
-      symbol: '^GSPC',
+      symbol: '^NSEI',
       first_date: '2021-11-24',
       last_date: '2026-11-23',
       n_returns: 1253,
@@ -174,11 +181,35 @@ function analysis(overrides: Partial<AnalyzeResponse['report']> = {}): AnalyzeRe
       ...overrides,
     },
     data: {
-      symbol: '^GSPC', name: 'S&P 500', currency: 'USD', exchange: 'SNP', instrument_type: 'INDEX',
+      symbol: '^NSEI', name: 'S&P 500', currency: 'USD', exchange: 'SNP', instrument_type: 'INDEX',
       tradingview_symbol: 'SP:SPX', range: '5y', source: 'yahoo-chart-v8', fetched_at: '2026-11-24T09:00:00Z',
       quality: barsResponse().quality,
     },
     benchmark: null,
+  }
+}
+
+const SESSION_OPEN = Math.floor(Date.parse('2026-11-25T03:45:00Z') / 1000) // 09:15 IST
+
+function intradayResponse(): { chart: IntradayData } {
+  return {
+    chart: {
+      meta: meta(),
+      interval: '1m',
+      previous_close: 25349.65,
+      session_start: SESSION_OPEN,
+      session_end: SESSION_OPEN + 375 * 60,
+      points: [0, 1, 2].map((i) => ({
+        t: SESSION_OPEN + i * 60,
+        open: 25350 + i,
+        high: 25360 + i,
+        low: 25340 + i,
+        close: 25355 + i,
+        volume: 1000,
+      })),
+      source: 'yahoo-chart-v8',
+      fetched_at: '2026-11-25T03:48:00Z',
+    },
   }
 }
 
@@ -209,12 +240,13 @@ type Routes = Record<string, (url: URL) => Response>
 function mockApi(routes: Routes = {}) {
   const defaults: Routes = {
     '/api/v1/quote': (url) => {
-      const symbol = url.searchParams.get('symbol') ?? '^GSPC'
+      const symbol = url.searchParams.get('symbol') ?? '^NSEI'
       const tv = symbol === 'INFY.NS' ? 'NSE:INFY' : 'SP:SPX'
       return Response.json(quoteResponse({ symbol, tradingview_symbol: tv }))
     },
     '/api/v1/analyze': () => Response.json(analysis()),
     '/api/v1/bars': () => Response.json(barsResponse()),
+    '/api/v1/intraday': () => Response.json(intradayResponse()),
     '/api/v1/instruments/search': () =>
       Response.json({
         results: [
@@ -254,7 +286,7 @@ describe('liveState', () => {
   test('a fresh tick is LIVE with its lag', () => {
     const state = liveState(meta(), tick(), NOW)
     expect(state.kind).toBe('live')
-    expect(state.detail).toMatch(/lag 3s/)
+    expect(state.detail).toMatch(/updated 3 s ago/)
   })
 
   test('a 15-minute-old tick in market hours is an exchange-delayed feed (BSE), not LIVE', () => {
@@ -283,6 +315,44 @@ describe('displayPrice', () => {
     expect(displayPrice(meta({ last_trade_at: new Date(NOW).toISOString() }), tick())).toBe(25349.65)
     expect(displayPrice(meta(), null)).toBe(25349.65)
     expect(displayPrice(undefined, null)).toBeNull()
+  })
+})
+
+describe('appendTick', () => {
+  const points = intradayResponse().chart.points
+  const at = (seconds: number) => new Date((SESSION_OPEN + seconds) * 1000).toISOString()
+
+  test('a tick inside the last minute extends that bar', () => {
+    const merged = appendTick(points, tick({ tick_time: at(150), price: 25400 }), 60)
+    expect(merged).toHaveLength(3)
+    expect(merged.at(-1)).toMatchObject({ t: SESSION_OPEN + 120, close: 25400, high: 25400, low: 25342 })
+  })
+
+  test('a tick in a later minute opens a bar aligned to the minute', () => {
+    const merged = appendTick(points, tick({ tick_time: at(301), price: 25300 }), 60)
+    expect(merged).toHaveLength(4)
+    expect(merged.at(-1)).toEqual({ t: SESSION_OPEN + 300, open: 25300, high: 25300, low: 25300, close: 25300, volume: 0 })
+  })
+
+  test('older ticks and empty series change nothing', () => {
+    expect(appendTick(points, tick({ tick_time: at(-60) }), 60)).toBe(points)
+    expect(appendTick([], tick(), 60)).toEqual([])
+  })
+})
+
+describe('number helpers', () => {
+  test('compact numbers use lakh and crore', () => {
+    expect(formatCompact(5_400_000)).toMatch(/54\s?L/)
+    expect(formatCompact(12_000_000)).toMatch(/1\.2\s?Cr/)
+    expect(formatCompact(null)).toBe('—')
+  })
+
+  test('indices carry no currency sign; day change prefers the tick', () => {
+    expect(priceCurrency(meta())).toBeNull()
+    expect(priceCurrency(meta({ instrument_type: 'EQUITY' }))).toBe('INR')
+    expect(dayChange(meta({ change: 10, change_pct: 0.5 }), null)).toEqual({ change: 10, pct: 0.5 })
+    expect(dayChange(meta({ change: 10, change_pct: 0.5 }), tick())).toEqual({ change: 60.85, pct: 0.24 })
+    expect(dayChange(meta(), null)).toBeNull()
   })
 })
 
@@ -321,38 +391,70 @@ describe('Markets view', () => {
     const fetchMock = mockApi()
     renderMarkets()
 
-    await waitFor(() => expect(screen.getByTestId('quote-price')).toHaveTextContent('₹25,349.65'))
+    // An index is shown in points, without a currency sign.
+    await waitFor(() => expect(screen.getByTestId('quote-price')).toHaveTextContent(/^25,349\.65/))
     expect(screen.getByTestId('live-state')).toHaveTextContent('CLOSED')
-    expect(await screen.findByTestId('candle-count')).toHaveTextContent('3')
+    // Today's minute chart is the default view.
+    expect(await screen.findByTestId('intraday-count')).toHaveTextContent('3')
+    expect(screen.getByText(/dashed line: 25,349\.65, where today’s change is measured from/)).toBeInTheDocument()
     expect(screen.getByTestId('quality-badge')).toHaveTextContent('Usable')
     expect(screen.getByText(/3 zero-volume days/)).toBeInTheDocument()
     expect(screen.getByText(/Dividend ₹6.00/)).toBeInTheDocument()
     expect(screen.getByText(/TradingView live chart \(SP:SPX\)/)).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining('/api/v1/bars?symbol=%5EGSPC&range=1y'),
+      expect.stringContaining('/api/v1/bars?symbol=%5ENSEI&range=1y'),
       expect.anything(),
     )
-    expect(FakeEventSource.instances[0]?.url).toContain('/api/v1/stream?symbols=%5EGSPC')
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/intraday?symbol=%5ENSEI&range=1d'),
+      expect.anything(),
+    )
+    // One stream carries the selected symbol and the whole watchlist.
+    const url = decodeURIComponent(FakeEventSource.instances[0]?.url ?? '')
+    expect(url).toContain('/api/v1/stream?symbols=^NSEI,')
+    expect(url).toContain('RELIANCE.NS')
+    expect(url).toContain('INR=X')
+    expect(FakeEventSource.instances).toHaveLength(1)
   })
 
-  test('a live tick turns the pill LIVE and updates price and today’s candle', async () => {
+  test('the watchlist shows each pick with its day change, and ticks update it', async () => {
+    mockApi({
+      '/api/v1/quote': (url) =>
+        Response.json(quoteResponse({ symbol: url.searchParams.get('symbol') ?? '', change: -12.5, change_pct: -0.9, instrument_type: 'EQUITY' })),
+    })
+    renderMarkets()
+    const watchlist = screen.getByRole('region', { name: 'Watchlist' })
+    const reliance = within(watchlist).getByRole('button', { name: /^Reliance/ })
+    await waitFor(() => expect(reliance).toHaveTextContent('-0.90%'))
+    expect(reliance).toHaveClass('watch-down')
+    FakeEventSource.instances.at(-1)!.emit('tick', tick({ symbol: 'RELIANCE.NS', price: 1400, change_pct: 1.25 }))
+    expect(reliance).toHaveTextContent('₹1,400.00')
+    expect(reliance).toHaveTextContent('+1.25%')
+    expect(reliance).toHaveClass('watch-up')
+  })
+
+  test('a live tick turns the pill LIVE and moves the price and today’s chart', async () => {
     mockApi()
     renderMarkets()
-    await screen.findByTestId('candle-count')
+    await screen.findByTestId('intraday-count')
 
     FakeEventSource.instances.at(-1)!.emit('tick', tick({ tick_time: new Date().toISOString() }))
 
     expect(screen.getByTestId('live-state')).toHaveTextContent('LIVE')
-    expect(screen.getByTestId('quote-price')).toHaveTextContent('₹25,410.50')
+    expect(screen.getByTestId('quote-price')).toHaveTextContent('25,410.50')
     expect(screen.getByTestId('quote-price')).toHaveTextContent('+60.85 (+0.24%)')
-    expect(screen.getByText(/Day range ₹25,300.00 – ₹25,450.00/)).toBeInTheDocument()
-    expect(screen.getByTestId('candle-count')).toHaveTextContent('4')
+    expect(screen.getByText(/Today’s range 25,300.00 – 25,450.00/)).toBeInTheDocument()
+    expect(screen.getByTestId('intraday-count')).toHaveTextContent('4')
+
+    // The daily view folds the same tick into today's candle.
+    await userEvent.click(screen.getByRole('button', { name: '1Y' }))
+    expect(await screen.findByTestId('candle-count')).toHaveTextContent('4')
   })
 
   test('ticks for other symbols are ignored', async () => {
     mockApi()
     renderMarkets()
-    await screen.findByTestId('candle-count')
+    await screen.findByTestId('intraday-count')
     FakeEventSource.instances.at(-1)!.emit('tick', tick({ symbol: 'TCS.NS', tick_time: new Date().toISOString() }))
     expect(screen.getByTestId('live-state')).toHaveTextContent('CLOSED')
   })
@@ -360,7 +462,7 @@ describe('Markets view', () => {
   test('search picks an instrument and reloads quote, bars and stream for it', async () => {
     const fetchMock = mockApi()
     renderMarkets()
-    await waitFor(() => expect(screen.getByTestId('quote-price')).toHaveTextContent('₹'))
+    await waitFor(() => expect(screen.getByTestId('quote-price')).toHaveTextContent('25,349.65'))
 
     await userEvent.type(screen.getByLabelText(/search stocks/i), 'infy')
     const results = await screen.findByRole('list', { name: 'Search results' })
@@ -369,21 +471,23 @@ describe('Markets view', () => {
     expect(await screen.findByText('INFY.NS', { selector: '.eyebrow' })).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/quote?symbol=INFY.NS'), expect.anything())
     expect(FakeEventSource.instances[0]?.closed).toBe(true)
-    expect(FakeEventSource.instances.at(-1)?.url).toContain('symbols=INFY.NS')
+    expect(FakeEventSource.instances.at(-1)?.url).toMatch(/symbols=INFY\.NS%2C/)
     expect(screen.getByText(/TradingView live chart \(NSE:INFY\)/)).toBeInTheDocument()
   })
 
-  test('quick picks and range buttons are toggle buttons', async () => {
+  test('watchlist picks and range buttons are toggle buttons', async () => {
     const fetchMock = mockApi()
     renderMarkets()
-    await screen.findByTestId('candle-count')
+    await screen.findByTestId('intraday-count')
 
-    await userEvent.click(screen.getByRole('button', { name: '5y' }))
-    expect(screen.getByRole('button', { name: '5y' })).toHaveAttribute('aria-pressed', 'true')
-    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('range=5y'), expect.anything())
+    await userEvent.click(screen.getByRole('button', { name: '5D' }))
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/intraday?symbol=%5ENSEI&range=5d'), expect.anything())
+    await userEvent.click(screen.getByRole('button', { name: '5Y' }))
+    expect(screen.getByRole('button', { name: '5Y' })).toHaveAttribute('aria-pressed', 'true')
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/bars?symbol=%5ENSEI&range=5y'), expect.anything())
 
-    await userEvent.click(screen.getByRole('button', { name: 'Reliance' }))
-    expect(screen.getByRole('button', { name: 'Reliance' })).toHaveAttribute('aria-pressed', 'true')
+    await userEvent.click(screen.getByRole('button', { name: /^Reliance/ }))
+    expect(screen.getByRole('button', { name: /^Reliance/ })).toHaveAttribute('aria-pressed', 'true')
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('symbol=RELIANCE.NS'), expect.anything())
   })
 
@@ -391,7 +495,7 @@ describe('Markets view', () => {
     mockApi({ '/api/v1/quote': () => Response.json(quoteResponse({ market_open: true })) })
     renderMarkets()
     expect(await screen.findByText('DELAYED')).toBeInTheDocument()
-    expect(screen.getByText(/polling Yahoo every 15 s/)).toBeInTheDocument()
+    expect(screen.getByText(/checking every 15 s/)).toBeInTheDocument()
   })
 
   test('failed quality checks and outliers are shown, not hidden', async () => {
@@ -464,7 +568,7 @@ describe('analysis panels', () => {
     expect(within(screen.getByTestId('tests-table')).getByRole('row', { name: /Volatility clustering/ })).toHaveTextContent('Clusters')
     // An index is the market itself: no benchmark needed, and the UI says why.
     expect(screen.getByText(/Indices, currencies, futures and crypto are the market themselves/)).toBeInTheDocument()
-    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/analyze?symbol=%5EGSPC&range=5y'), expect.anything())
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/analyze?symbol=%5ENSEI&range=5y'), expect.anything())
   })
 
   test('shows benchmark exposure and the currency note for a foreign listing', async () => {

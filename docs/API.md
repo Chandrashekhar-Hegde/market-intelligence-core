@@ -42,13 +42,19 @@ endpoints). Responses are cached in-process for 60 s (`5d`/`1mo`) or 15 min.
 - `GET /api/v1/quote?symbol=` returns `{quote, source, fetched_at, delayed: true}`.
   `quote.market_open` is true only during the regular session; it uses Yahoo's trading
   period, so it is also false on exchange holidays.
+  It also carries Yahoo's `change`, `change_pct` and `day_volume` for the latest session.
+- `GET /api/v1/intraday?symbol=&range=1d|5d` returns `{chart: {meta, interval, previous_close,
+  session_start, session_end, points: [{t, open, high, low, close, volume}], source, fetched_at}}`
+  for the live chart: `1d` is 1-minute bars of the latest session, `5d` is 5-minute bars. `t` is
+  Unix seconds. `previous_close` is the price today's change is measured from (last price minus
+  Yahoo's day change). Cached for 30 s; display only, never used in the analysis.
 - `GET /api/v1/stream?symbols=A,B` is a Server-Sent Events stream of `tick` events
   `{symbol, price, change, change_pct, day_high, day_low, day_volume, currency, exchange,
   tick_time, source}` from Yahoo's live streamer. It takes 1–20 symbols. The last known
   tick per symbol is sent first, and keep-alive comments are sent while idle. NSE
   coverage is still being measured; see `docs/STATUS.md`.
 
-Symbols use Yahoo suffixes: `RELIANCE.NS`, `RELIANCE.BO`, `^NSEI`, `^BSESN`.
+Symbols use Yahoo suffixes: `RELIANCE.NS`, `RELIANCE.BO`, `^NSEI`, `^BSESN`, `INR=X` (FX), `GC=F` (futures).
 Invalid input returns `400`, an unknown symbol `404`, and an upstream failure `503`.
 
 ## Analysis Endpoint

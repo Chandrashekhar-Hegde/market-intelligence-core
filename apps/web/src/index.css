@@ -1515,3 +1515,76 @@ ol {
 .guide-list dd {
   margin: 2px 0 0;
 }
+
+/* ---- live watchlist strip ---- */
+.watchlist {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: 8px;
+  min-width: 0;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.watch-item {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 2px;
+  min-width: 118px;
+  padding: 8px 12px;
+  text-align: left;
+  background: #fff;
+  border: 1px solid #d7dcda;
+  border-left-width: 4px;
+  border-radius: 8px;
+}
+
+.watch-item[aria-pressed='true'] {
+  border-color: #202423;
+  box-shadow: 0 0 0 1px #202423;
+}
+
+.watch-label {
+  font-size: 0.8rem;
+  color: #4f5654;
+}
+
+.watch-price {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.watch-change {
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.watch-up {
+  border-left-color: #1f7a68;
+}
+
+.watch-up .watch-change {
+  color: #1f6b5c;
+}
+
+.watch-down {
+  border-left-color: #b4443a;
+}
+
+.watch-down .watch-change {
+  color: #a23b32;
+}
+
+.watch-flat {
+  border-left-color: #d7dcda;
+}
+
+.change-up {
+  color: #1f6b5c;
+}
+
+.change-down {
+  color: #a23b32;
+}

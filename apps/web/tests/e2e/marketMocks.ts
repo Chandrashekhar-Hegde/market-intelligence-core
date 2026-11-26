@@ -10,6 +10,9 @@ const meta = (symbol: string, name: string) => ({
   timezone: 'Asia/Kolkata',
   last_price: 1377.5,
   last_trade_at: '2026-11-20T09:58:10Z',
+  change: 12.4,
+  change_pct: 0.91,
+  day_volume: 5_400_000,
   market_open: false,
   tradingview_symbol: symbol === 'RELIANCE.NS' ? 'NSE:RELIANCE' : symbol === '^GSPC' ? 'SP:SPX' : null,
 })
@@ -101,6 +104,29 @@ export async function mockMarketData(page: Page, { liveTicks = false } = {}) {
           is_stale: false,
           outliers: [],
           warnings: [],
+        },
+      },
+    })
+  })
+  await page.route('**/api/v1/intraday**', (route) => {
+    const symbol = new URL(route.request().url()).searchParams.get('symbol') ?? '^NSEI'
+    // One NSE session of 1-minute bars, 09:15-15:30 IST on 2026-11-20.
+    const open = Date.parse('2026-11-20T03:45:00Z') / 1000
+    const points = Array.from({ length: 375 }, (_, i) => {
+      const close = 1365 + Math.sin(i / 20) * 8 + i * 0.03
+      return { t: open + i * 60, open: close - 0.5, high: close + 1, low: close - 1, close, volume: 10_000 }
+    })
+    return route.fulfill({
+      json: {
+        chart: {
+          meta: meta(symbol, 'Mock'),
+          interval: '1m',
+          previous_close: 1365.1,
+          session_start: open,
+          session_end: open + 375 * 60,
+          points,
+          source: 'yahoo-chart-v8',
+          fetched_at: '2026-11-24T09:00:00Z',
         },
       },
     })

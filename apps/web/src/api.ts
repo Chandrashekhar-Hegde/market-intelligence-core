@@ -335,6 +335,10 @@ export type InstrumentMeta = {
   timezone: string | null
   last_price: number | null
   last_trade_at: string | null
+  /** Change vs the previous session's close (Yahoo's figures). */
+  change: number | null
+  change_pct: number | null
+  day_volume: number | null
   market_open: boolean
   /** TradingView's name for the listing, when known (server-side table). */
   tradingview_symbol: string | null
@@ -416,6 +420,29 @@ export type Tick = {
 
 export const BAR_RANGES = ['1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'max'] as const
 export type BarRange = (typeof BAR_RANGES)[number]
+
+export type IntradayPoint = { t: number; open: number; high: number; low: number; close: number; volume: number }
+
+export type IntradayData = {
+  meta: InstrumentMeta
+  interval: '1m' | '5m'
+  previous_close: number | null
+  session_start: number | null
+  session_end: number | null
+  points: IntradayPoint[]
+  source: string
+  fetched_at: string
+}
+
+export type IntradayRange = '1d' | '5d'
+/** What the chart's range picker offers: today and this week intraday, then daily history. */
+export const CHART_RANGES = ['1d', '5d', '1mo', '6mo', '1y', '5y', 'max'] as const
+export type ChartRange = (typeof CHART_RANGES)[number]
+export const isIntraday = (range: ChartRange): range is IntradayRange => range === '1d' || range === '5d'
+
+export function fetchIntraday(symbol: string, range: IntradayRange): Promise<{ chart: IntradayData }> {
+  return request<{ chart: IntradayData }>(`/api/v1/intraday?symbol=${encodeURIComponent(symbol)}&range=${range}`)
+}
 
 export async function searchInstruments(query: string): Promise<SearchHit[]> {
   const body = await request<{ results: SearchHit[] }>(

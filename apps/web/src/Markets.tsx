@@ -1,40 +1,76 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQueries, useQuery } from '@tanstack/react-query'
 import { AlertTriangle, CheckCircle2, Search } from 'lucide-react'
-import { CandlestickSeries, createChart, type ISeriesApi } from 'lightweight-charts'
+import {
+  AreaSeries,
+  CandlestickSeries,
+  createChart,
+  LineStyle,
+  type IPriceLine,
+  type ISeriesApi,
+  type UTCTimestamp,
+} from 'lightweight-charts'
 
 import {
-  BAR_RANGES,
+  CHART_RANGES,
   type BarRange,
   type BarsResponse,
+  type ChartRange,
+  type IntradayData,
+  type IntradayRange,
   type QualityReport,
   type QuoteResponse,
   type SearchHit,
   type Tick,
   describeApiError,
   fetchBars,
+  fetchIntraday,
   fetchQuote,
+  isIntraday,
   searchInstruments,
   streamUrl,
 } from './api'
 import {
   QUICK_PICKS,
   type Candle,
+  appendTick,
+  dayChange,
   displayPrice,
   formatClock,
+  formatCompact,
+  formatIstTime,
   formatPrice,
+  formatSigned,
   liveState,
   mergeTick,
+  priceCurrency,
   toCandles,
 } from './marketData'
 import { AnalysisPanels } from './Analysis'
 
 const isDomTest = typeof navigator !== 'undefined' && navigator.userAgent.includes('jsdom')
 
+const RANGE_LABEL: Record<ChartRange, string> = {
+  '1d': '1D',
+  '5d': '5D',
+  '1mo': '1M',
+  '6mo': '6M',
+  '1y': '1Y',
+  '5y': '5Y',
+  max: 'All',
+}
+
 export function Markets() {
-  const [symbol, setSymbol] = useState<string>('^GSPC')
-  const [range, setRange] = useState<BarRange>('1y')
+  const [symbol, setSymbol] = useState<string>('^NSEI')
+  const [range, setRange] = useState<ChartRange>('1d')
   const now = useNow(5_000)
+  // One stream for the watchlist and the selected symbol (the server takes up to 20).
+  const streamed = useMemo(
+    () => [...new Set([symbol.toUpperCase(), ...QUICK_PICKS.map((pick) => pick.symbol)])],
+    [symbol],
+  )
+  const ticks = useLiveTicks(streamed)
+  const tick = ticks[symbol.toUpperCase()] ?? null
 
   const quote = useQuery<QuoteResponse>({
     queryKey: ['quote', symbol],
@@ -43,45 +79,38 @@ export function Markets() {
     refetchInterval: (query) => (query.state.data?.quote.market_open ? 15_000 : 300_000),
     retry: retryUnlessClientError,
   })
+  // Daily history also feeds the quality report and the forecast chart, so it loads even
+  // while the chart shows today.
+  const dailyRange: BarRange = isIntraday(range) ? '1y' : range
   const bars = useQuery<BarsResponse>({
-    queryKey: ['bars', symbol, range],
-    queryFn: () => fetchBars(symbol, range),
+    queryKey: ['bars', symbol, dailyRange],
+    queryFn: () => fetchBars(symbol, dailyRange),
     retry: retryUnlessClientError,
   })
-  const tick = useLiveTick(symbol)
 
   const meta = quote.data?.quote
   const state = liveState(meta, tick, now)
   const price = displayPrice(meta, tick)
+  const change = dayChange(meta, tick)
+  const currency = priceCurrency(meta)
   const name = meta?.name ?? bars.data?.chart.meta.name ?? symbol
 
   return (
     <>
       <header className="topbar">
         <div>
-          <p className="eyebrow">Markets · any exchange</p>
+          <p className="eyebrow">Markets · NSE, BSE and any exchange</p>
           <h2>Live prices, history and analysis</h2>
         </div>
       </header>
+
+      <Watchlist ticks={ticks} selected={symbol} onPick={setSymbol} />
 
       <section className="panel markets-search-panel" aria-labelledby="search-heading">
         <h3 id="search-heading" className="visually-hidden">
           Find an instrument
         </h3>
         <InstrumentSearch onPick={setSymbol} />
-        <div className="quick-picks" role="group" aria-label="Quick picks">
-          {QUICK_PICKS.map((pick) => (
-            <button
-              key={pick.symbol}
-              type="button"
-              className="ghost-button"
-              aria-pressed={pick.symbol === symbol}
-              onClick={() => setSymbol(pick.symbol)}
-            >
-              {pick.label}
-            </button>
-          ))}
-        </div>
       </section>
 
       <section className="panel quote-panel" aria-labelledby="quote-heading" aria-live="polite">
@@ -101,15 +130,17 @@ export function Markets() {
         ) : (
           <>
             <p className="quote-price" data-testid="quote-price">
-              {formatPrice(price, meta?.currency)}
-              {tick ? <ChangeBadge change={tick.change} pct={tick.change_pct} /> : null}
+              {formatPrice(price, currency)}
+              {change ? <ChangeBadge change={change.change} pct={change.pct} /> : null}
             </p>
             <p className="quiet-copy">{state.detail}</p>
             {tick && (tick.day_low !== null || tick.day_high !== null) ? (
               <p className="quiet-copy">
-                Day range {formatPrice(tick.day_low, meta?.currency)} – {formatPrice(tick.day_high, meta?.currency)}
-                {tick.day_volume ? ` · volume ${tick.day_volume.toLocaleString('en-IN')}` : ''}
+                Today’s range {formatPrice(tick.day_low, currency)} – {formatPrice(tick.day_high, currency)}
+                {tick.day_volume ? ` · traded ${formatCompact(tick.day_volume)}` : ''}
               </p>
+            ) : meta?.day_volume ? (
+              <p className="quiet-copy">Traded {formatCompact(meta.day_volume)} in the latest session</p>
             ) : null}
             {quote.data ? (
               <p className="quiet-copy mono">
@@ -124,11 +155,13 @@ export function Markets() {
       <section className="panel chart-panel" aria-labelledby="history-heading">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Daily candles · split-adjusted</p>
-            <h3 id="history-heading">Price history</h3>
+            <p className="eyebrow">
+              {isIntraday(range) ? 'Minute by minute · moves with live prices' : 'Daily candles · split-adjusted'}
+            </p>
+            <h3 id="history-heading">{range === '1d' ? 'Today' : 'Price history'}</h3>
           </div>
           <div className="range-picker" role="group" aria-label="Range">
-            {BAR_RANGES.map((option) => (
+            {CHART_RANGES.map((option) => (
               <button
                 key={option}
                 type="button"
@@ -136,12 +169,14 @@ export function Markets() {
                 aria-pressed={option === range}
                 onClick={() => setRange(option)}
               >
-                {option}
+                {RANGE_LABEL[option]}
               </button>
             ))}
           </div>
         </div>
-        {bars.error ? (
+        {isIntraday(range) ? (
+          <IntradayPanel symbol={symbol} range={range} tick={tick} name={name} />
+        ) : bars.error ? (
           <p className="error-state" role="alert">
             {describeApiError(bars.error)}
           </p>
@@ -168,6 +203,12 @@ export function Markets() {
           <QualityPanel report={bars.data.quality} calendar={bars.data.calendar_reference} />
           <CorporateActionsPanel bars={bars.data} />
         </>
+      ) : bars.error && isIntraday(range) ? (
+        <section className="panel" aria-label="Daily history">
+          <p className="error-state" role="alert">
+            Daily history: {describeApiError(bars.error)}
+          </p>
+        </section>
       ) : null}
 
       <AnalysisPanels symbol={symbol} history={bars.data?.chart.bars} />
@@ -178,6 +219,184 @@ export function Markets() {
         </h3>
         <TradingViewWidget tvSymbol={meta?.tradingview_symbol ?? null} />
       </section>
+    </>
+  )
+}
+
+/** Live strip of the markets most people check first; tap one to open it. */
+function Watchlist({
+  ticks,
+  selected,
+  onPick,
+}: {
+  ticks: Record<string, Tick>
+  selected: string
+  onPick: (symbol: string) => void
+}) {
+  const quotes = useQueries({
+    queries: QUICK_PICKS.map((pick) => ({
+      queryKey: ['quote', pick.symbol],
+      queryFn: () => fetchQuote(pick.symbol),
+      refetchInterval: 60_000,
+      retry: retryUnlessClientError,
+    })),
+  })
+  return (
+    <section className="watchlist" aria-label="Watchlist">
+      {QUICK_PICKS.map((pick, i) => {
+        const meta = quotes[i]?.data?.quote
+        const tick = ticks[pick.symbol] ?? null
+        const price = displayPrice(meta, tick)
+        const change = dayChange(meta, tick)
+        const tone = !change ? 'flat' : change.pct >= 0 ? 'up' : 'down'
+        return (
+          <button
+            key={pick.symbol}
+            type="button"
+            className={`watch-item watch-${tone}`}
+            aria-pressed={pick.symbol === selected}
+            onClick={() => onPick(pick.symbol)}
+          >
+            <span className="watch-label">{pick.label}</span>
+            <span className="watch-price">{formatPrice(price, priceCurrency(meta))}</span>
+            <span className="watch-change">{change ? `${formatSigned(change.pct)}%` : '—'}</span>
+          </button>
+        )
+      })}
+    </section>
+  )
+}
+
+const INTERVAL_SECONDS = { '1m': 60, '5m': 300 } as const
+
+function IntradayPanel({
+  symbol,
+  range,
+  tick,
+  name,
+}: {
+  symbol: string
+  range: IntradayRange
+  tick: Tick | null
+  name: string
+}) {
+  const intraday = useQuery<{ chart: IntradayData }>({
+    queryKey: ['intraday', symbol, range],
+    queryFn: () => fetchIntraday(symbol, range),
+    // Refill from the server each minute while trading; ticks fill in between.
+    refetchInterval: (query) => (query.state.data?.chart.meta.market_open ? 60_000 : 300_000),
+    retry: retryUnlessClientError,
+  })
+  if (intraday.error) {
+    return (
+      <p className="error-state" role="alert">
+        {describeApiError(intraday.error)}
+      </p>
+    )
+  }
+  if (!intraday.data) return <p className="empty-state">Loading today’s prices…</p>
+  const chart = intraday.data.chart
+  if (chart.points.length === 0) {
+    return <p className="empty-state">No trades in this period yet.</p>
+  }
+  return (
+    <>
+      <IntradayChart data={chart} tick={tick} label={`${name}, ${range === '1d' ? 'today' : 'last 5 days'}`} />
+      <p className="quiet-copy mono">
+        {chart.interval === '1m' ? '1-minute' : '5-minute'} bars · times in IST
+        {chart.previous_close !== null
+          ? ` · dashed line: ${formatPrice(chart.previous_close, null)}, where today’s change is measured from`
+          : ''}{' '}
+        · {chart.source} · fetched {formatClock(chart.fetched_at)}
+      </p>
+    </>
+  )
+}
+
+const UP = '#1f7a68'
+const DOWN = '#b4443a'
+
+function IntradayChart({ data, tick, label }: { data: IntradayData; tick: Tick | null; label: string }) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const seriesRef = useRef<ISeriesApi<'Area'> | null>(null)
+  const baseLineRef = useRef<IPriceLine | null>(null)
+  const points = useMemo(
+    () => appendTick(data.points, tick, INTERVAL_SECONDS[data.interval]),
+    [data, tick],
+  )
+  const last = points.at(-1)
+  const reference = data.previous_close ?? data.points[0]?.open ?? null
+  const up = last && reference !== null ? last.close >= reference : true
+
+  useEffect(() => {
+    if (!containerRef.current || isDomTest) return undefined
+    const chart = createChart(containerRef.current, {
+      autoSize: true,
+      height: 340,
+      layout: { background: { color: '#ffffff' }, textColor: '#3d4242' },
+      grid: { vertLines: { color: '#eef0ef' }, horzLines: { color: '#eef0ef' } },
+      rightPriceScale: { borderColor: '#d7dcda' },
+      timeScale: {
+        borderColor: '#d7dcda',
+        timeVisible: true,
+        tickMarkFormatter: (time: UTCTimestamp) => formatIstTime(time),
+      },
+      localization: { timeFormatter: (time: UTCTimestamp) => formatIstTime(time, true) },
+    })
+    seriesRef.current = chart.addSeries(AreaSeries, { lineWidth: 2, priceLineVisible: true })
+    return () => {
+      seriesRef.current = null
+      baseLineRef.current = null
+      chart.remove()
+    }
+  }, [])
+
+  useEffect(() => {
+    const series = seriesRef.current
+    if (!series) return
+    series.applyOptions({
+      lineColor: up ? UP : DOWN,
+      topColor: up ? 'rgba(31, 122, 104, 0.28)' : 'rgba(180, 68, 58, 0.28)',
+      bottomColor: 'rgba(255, 255, 255, 0)',
+    })
+  }, [up])
+
+  useEffect(() => {
+    const series = seriesRef.current
+    if (!series) return
+    series.setData(data.points.map((p) => ({ time: p.t as UTCTimestamp, value: p.close })))
+    if (baseLineRef.current) series.removePriceLine(baseLineRef.current)
+    baseLineRef.current =
+      data.previous_close === null
+        ? null
+        : series.createPriceLine({
+            price: data.previous_close,
+            color: '#6b7370',
+            lineStyle: LineStyle.Dashed,
+            lineWidth: 1,
+            axisLabelVisible: true,
+            title: 'day start',
+          })
+  }, [data])
+
+  useEffect(() => {
+    if (tick && last) seriesRef.current?.update({ time: last.t as UTCTimestamp, value: last.close })
+  }, [last, tick])
+
+  return (
+    <>
+      <div className="chart-accessible-summary" role="img" aria-label={label}>
+        {last
+          ? `Latest ${formatIstTime(last.t, true)} IST: ${formatPrice(last.close, null)}${reference !== null ? `, ${up ? 'up' : 'down'} from ${formatPrice(reference, null)}` : ''}.`
+          : 'No points.'}
+      </div>
+      {isDomTest ? (
+        <div className="chart-fallback" data-testid="intraday-count">
+          {points.length}
+        </div>
+      ) : (
+        <div className="impact-chart candle-chart" ref={containerRef} data-testid="intraday-chart" />
+      )}
     </>
   )
 }
@@ -194,7 +413,7 @@ function toneFor(kind: string): string {
 function ChangeBadge({ change, pct }: { change: number; pct: number }) {
   const sign = change > 0 ? '+' : ''
   return (
-    <span className={change >= 0 ? 'utility-positive' : 'utility-negative'}>
+    <span className={change >= 0 ? 'change-up' : 'change-down'}>
       {' '}
       {sign}
       {change.toFixed(2)} ({sign}
@@ -457,23 +676,21 @@ function TradingViewWidget({ tvSymbol }: { tvSymbol: string | null }) {
   )
 }
 
-/** Latest tick for `symbol` from the server's SSE stream; null until one arrives. */
-function useLiveTick(symbol: string): Tick | null {
-  const [latest, setLatest] = useState<Tick | null>(null)
+/** Latest tick per symbol from the server's SSE stream (one connection for all of them). */
+function useLiveTicks(symbols: string[]): Record<string, Tick> {
+  const [latest, setLatest] = useState<Record<string, Tick>>({})
+  const key = symbols.join(',')
   useEffect(() => {
     if (typeof EventSource === 'undefined') return undefined
-    const wanted = symbol.toUpperCase()
-    const source = new EventSource(streamUrl([symbol]))
+    const wanted = new Set(key.split(','))
+    const source = new EventSource(streamUrl([...wanted]))
     const onTick = (event: MessageEvent<string>) => {
       const tick = JSON.parse(event.data) as Tick
-      if (tick.symbol === wanted) setLatest(tick)
+      if (wanted.has(tick.symbol)) setLatest((current) => ({ ...current, [tick.symbol]: tick }))
     }
     source.addEventListener('tick', onTick)
-    return () => {
-      source.close()
-      setLatest(null)
-    }
-  }, [symbol])
+    return () => source.close()
+  }, [key])
   return latest
 }
 
