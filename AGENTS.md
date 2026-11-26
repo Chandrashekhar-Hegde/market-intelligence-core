@@ -229,7 +229,6 @@ The design behind the queue is in [docs/plans/](docs/plans/README.md). Commit a 
 *before* starting significant new work.
 
 Snapshot (2026-11-27):
-- **Shipped:** 0.1–0.6 (0.6: live intraday data, validated advice, news).
-- **In progress:** Phase 0.7 (#110–#114, #108): search filters, plain advice, real Monte Carlo, news.
-- **Ready after that:** #45, #71, #64, #91, #9, #94, #67.
-- **Waiting on owner decisions:** #80 (Postgres cost), #83, #85, #89, #109 (news source from Railway).
+- **Shipped:** 0.1–0.7 (0.7: market filters, plain advice, own-history forecasts, multi-source news that votes).
+- **Ready now:** #45, #71, #64, #91, #9, #94, #67.
+- **Waiting on owner decisions:** #80 (Postgres cost), #83, #85, #89, #109 (GDELT from Railway), #121 (Claude news reader: key).

@@ -100,7 +100,8 @@ Invalid input returns `400`, an unknown symbol `404`, and an upstream failure `5
     labelled "no track record yet") or `news_conflict` (a proven rule contradicted by strong news →
     Hold).
   - `advice.news_headlines` lists the stories behind such a call.
-  - `news_vote` is today's news score, or null when no news source answered.
+  - `news_vote` is today's news score. It is null when no news source answered, and for anything
+    that isn't a single company stock (news votes only for `EQUITY`).
 - **`benchmark=auto`** picks the home-market index from the listing suffix: the S&P 500 for US
   listings, MSCI ACWI for unknown exchanges, and none for indices, FX, futures and crypto.
   `none` skips the exposure section; any other value is used as a symbol.
