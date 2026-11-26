@@ -1,16 +1,20 @@
 // Pure helpers for the Markets view. Kept out of Markets.tsx so they are unit-testable and the
 // component file only exports components.
-import type { InstrumentMeta, PriceBar, Tick } from './api'
+import type { InstrumentMeta, IntradayPoint, PriceBar, Tick } from './api'
 
+/** The live watchlist: India first, then the global markets an Indian investor watches. */
 export const QUICK_PICKS = [
-  { symbol: '^GSPC', label: 'S&P 500' },
   { symbol: '^NSEI', label: 'NIFTY 50' },
-  { symbol: 'AAPL', label: 'Apple' },
-  { symbol: 'MSFT', label: 'Microsoft' },
+  { symbol: '^BSESN', label: 'Sensex' },
+  { symbol: '^NSEBANK', label: 'Bank Nifty' },
   { symbol: 'RELIANCE.NS', label: 'Reliance' },
-  { symbol: '7203.T', label: 'Toyota' },
-  { symbol: 'SAP.DE', label: 'SAP' },
+  { symbol: 'HDFCBANK.NS', label: 'HDFC Bank' },
+  { symbol: 'TCS.NS', label: 'TCS' },
+  { symbol: 'INFY.NS', label: 'Infosys' },
+  { symbol: 'GOLDBEES.NS', label: 'Gold ETF' },
+  { symbol: 'INR=X', label: 'USD/INR' },
   { symbol: 'BTC-USD', label: 'Bitcoin' },
+  { symbol: '^GSPC', label: 'S&P 500' },
 ] as const
 
 /** A tick older than this is not "live" (exchange time vs this browser's clock). */
@@ -38,7 +42,7 @@ export function liveState(
       return {
         kind: 'live',
         label: 'LIVE',
-        detail: `Tick ${formatClock(tick.tick_time)} · lag ${Math.max(0, Math.round(age / 1000))}s · Yahoo stream`,
+        detail: `Live · updated ${Math.max(0, Math.round(age / 1000))} s ago (${formatClock(tick.tick_time)})`,
       }
     }
   }
@@ -50,7 +54,7 @@ export function liveState(
       return {
         kind: 'delayed',
         label: `DELAYED ${minutes} MIN`,
-        detail: `Streaming, but this exchange's feed is delayed ~${minutes} min on Yahoo (BSE is 15 min; NSE is live) · tick ${formatClock(tick.tick_time)}`,
+        detail: `Prices from this exchange arrive about ${minutes} min late (BSE is 15 min; NSE is live) · last update ${formatClock(tick.tick_time)}`,
       }
     }
   }
@@ -59,13 +63,13 @@ export function liveState(
     return {
       kind: 'delayed',
       label: 'DELAYED',
-      detail: `No live ticks right now; polling Yahoo every 15 s (may lag up to 15 min) · last trade ${lastTrade}`,
+      detail: `Market open, but no live prices are coming in; checking every 15 s (can be up to 15 min old) · last trade ${lastTrade}`,
     }
   }
   return {
     kind: 'closed',
     label: 'CLOSED',
-    detail: `Market closed (weekend, holiday or after hours) · last trade ${lastTrade}`,
+    detail: `Market closed (weekend, holiday or after hours) · last price from ${lastTrade}`,
   }
 }
 
@@ -177,3 +181,55 @@ export function correlationColor(value: number): string {
 
 /** Distinct, colour-blind-friendlier series colours (Okabe–Ito based). */
 export const SERIES_COLORS = ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#E69F00', '#56B4E9', '#202423', '#8C510A', '#7B3294', '#1B7837']
+
+/**
+ * Fold a live tick into intraday bars of `intervalSec`: extend the current bar, or open the next
+ * one. Ticks older than the last bar change nothing.
+ */
+export function appendTick(points: IntradayPoint[], tick: Tick | null, intervalSec: number): IntradayPoint[] {
+  const last = points.at(-1)
+  if (!tick || !last) return points
+  const t = Math.floor(Date.parse(tick.tick_time) / 1000)
+  if (t < last.t) return points
+  if (t < last.t + intervalSec) {
+    return [
+      ...points.slice(0, -1),
+      { ...last, high: Math.max(last.high, tick.price), low: Math.min(last.low, tick.price), close: tick.price },
+    ]
+  }
+  const start = t - (t % intervalSec)
+  return [...points, { t: start, open: tick.price, high: tick.price, low: tick.price, close: tick.price, volume: 0 }]
+}
+
+/** Indian-style short numbers: 54 L, 1.2 Cr. */
+export function formatCompact(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—'
+  return new Intl.NumberFormat('en-IN', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
+}
+
+/** Indices are points, not money: no currency sign. */
+export function priceCurrency(meta: InstrumentMeta | undefined): string | null {
+  return meta?.instrument_type === 'INDEX' ? null : (meta?.currency ?? null)
+}
+
+/** Day change: the live tick if there is one, else what the polled quote says. */
+export function dayChange(meta: InstrumentMeta | undefined, tick: Tick | null): { change: number; pct: number } | null {
+  if (tick) return { change: tick.change, pct: tick.change_pct }
+  if (meta?.change === null || meta?.change === undefined || meta.change_pct === null) return null
+  return { change: meta.change, pct: meta.change_pct }
+}
+
+export function formatSigned(value: number, digits = 2): string {
+  return `${value > 0 ? '+' : ''}${value.toFixed(digits)}`
+}
+
+/** Clock time in IST for chart axes (lightweight-charts works in UTC seconds). */
+export function formatIstTime(unixSeconds: number, withDate = false): string {
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    ...(withDate ? { day: 'numeric', month: 'short' } : {}),
+  }).format(new Date(unixSeconds * 1000))
+}

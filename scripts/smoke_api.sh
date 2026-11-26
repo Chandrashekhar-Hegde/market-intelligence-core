@@ -235,6 +235,19 @@ assert payload["quote"]["currency"] == "INR", payload
 assert isinstance(payload["quote"]["market_open"], bool), payload
 PY
 
+  # Intraday for the live chart: crypto trades round the clock, so 1-minute bars always exist.
+  intraday="$(curl -fsS "$BASE_URL/api/v1/intraday?symbol=BTC-USD&range=1d")"
+  python3 - "$intraday" <<'PY'
+import json
+import sys
+
+chart = json.loads(sys.argv[1])["chart"]
+assert chart["interval"] == "1m", chart["interval"]
+assert len(chart["points"]) > 100, len(chart["points"])
+assert [p["t"] for p in chart["points"]] == sorted(p["t"] for p in chart["points"]), "points out of order"
+assert chart["previous_close"] > 0, chart["previous_close"]
+PY
+
   # The engine on three markets: US stock (auto S&P 500), Japanese stock (auto Nikkei), crypto (none).
   for spec in "AAPL:^GSPC" "7203.T:^N225" "BTC-USD:"; do
     symbol="${spec%%:*}"; bench="${spec#*:}"
