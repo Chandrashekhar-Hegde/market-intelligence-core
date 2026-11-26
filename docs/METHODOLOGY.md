@@ -297,6 +297,51 @@ This is the market-model abnormal return (MacKinlay 1997), applied intraday.
 
 **How news enters the advice:** see "News reading" (Phase 0.7, #114).
 
+## News reading and the news vote (`analysis/news_reader.rs`)
+
+**Reading a headline.**
+- **Built-in reader** (default, free, instant): hand-written event patterns in priority order:
+  - legal and regulatory, with relief wording such as "dismisses", "quashes" or "probe dropped"
+    flipping it to good news;
+  - court matters, debt and insolvency, credit ratings;
+  - results (beat/miss or up/down wording), guidance, broker ratings, order wins, management exits;
+  - stake sales and purchases, payouts, fund-raising, deals, approvals.
+  - Anything else falls back to a small finance word list. The list is our own, not Loughran–McDonald:
+    that list's licence for redistribution is unclear.
+- **Each reading** has a kind, a direction (good, bad or unclear for the company), a materiality
+  (major, notable or minor) and a one-line reason.
+- **Optional model:** any OpenAI-compatible chat endpoint (`GM_LLM_BASE_URL`, `GM_LLM_MODEL`,
+  `GM_LLM_API_KEY`), e.g. a free Groq, Gemini or OpenRouter tier or a local Ollama.
+  - It returns the same fields.
+  - Each headline is read once and cached.
+  - Any failure falls back to the built-in reader.
+
+**What doesn't vote.** Two kinds are shown to the user but never count:
+- **price reports** ("surges 3% to day's high", "52-week high", "top gainers"), which describe a
+  move that already happened;
+- **general wording** without a clear event.
+
+**The vote.** Score = Σ direction × weight × 0.5^(hours since the story / 48). Within each event
+kind, the stories together count for no more than the strongest single one, because one event is
+covered by many outlets.
+- **Measured on 27 Nov 2026** (10 large NSE stocks): one news-driven call, a Sell on HDFC Bank. The
+  driver was a court order about prosecution sanction in a fraud case, where the bank is probably
+  not the accused. Keyword reading can't tell, which is why a model can be plugged in.
+- **Weights:** major 1.0, notable 0.5, minor 0.25.
+- **Strong news** means |score| ≥ 0.9 with at least one notable or major story pointing that way. One
+  fresh major story qualifies; minor chatter alone never does.
+- **These constants are judgement, not estimates.** They are uncalibrated (owner decision, 27 Nov
+  2026, to let news vote before it can be tested) and are to be calibrated by #107 once news
+  history is stored (#80).
+
+**Combining with the trading rules** (`signals::advise_with_news`):
+| Situation | Call |
+|---|---|
+| A proven rule is active and agrees with strong news | The rule's call, noting the news agrees |
+| A proven rule is active, strong news points the other way | Hold (`news_conflict`) |
+| No proven rule is active, strong news | Buy or Sell (`news_driven`) with a 5-session review, labelled "no track record yet", headlines shown |
+| Weak or no news | The rules' advice unchanged |
+
 ## References
 
 Bollerslev (1986) J. Econometrics 31; Bollerslev (1987) REStat 69; Dickey & Fuller (1979) JASA 74;

@@ -312,6 +312,22 @@ function timeAgo(iso: string, now: number): string {
   return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`
 }
 
+const KIND_LABEL: Record<string, string> = {
+  results: 'Results',
+  order_win: 'Order win',
+  guidance: 'Outlook',
+  rating: 'Broker view',
+  legal: 'Legal / regulator',
+  credit: 'Debt',
+  management: 'Management',
+  stake: 'Big holders',
+  payout: 'Dividend / buyback',
+  fundraise: 'Fund-raising',
+  merger: 'Deal',
+  approval: 'Approval',
+  general: 'General',
+}
+
 /** Headlines that mention the instrument, and how the price moved after each beyond the market. */
 function NewsPanel({ symbol }: { symbol: string }) {
   const now = useNow(60_000)
@@ -347,7 +363,7 @@ function NewsPanel({ symbol }: { symbol: string }) {
             <p className="quiet-copy">No stories naming it in the last 3 days.</p>
           ) : (
             <ul className="news-list">
-              {news.data.articles.slice(0, 12).map(({ article, impact }) => (
+              {news.data.articles.slice(0, 12).map(({ article, reading, impact }) => (
                 <li key={article.url}>
                   <a href={article.url} target="_blank" rel="noopener noreferrer">
                     {article.title}
@@ -357,6 +373,15 @@ function NewsPanel({ symbol }: { symbol: string }) {
                     {article.publisher}
                     {article.source !== article.publisher ? ` via ${article.source}` : ''} · {timeAgo(article.seen_at, now)}
                   </span>
+                  <p className="news-reading">
+                    <span className={`status-chip tone-${reading.direction > 0 ? 'green' : reading.direction < 0 ? 'red' : 'neutral'}`}>
+                      {reading.direction > 0 ? 'Good' : reading.direction < 0 ? 'Bad' : 'Unclear'} for the company
+                    </span>{' '}
+                    <span className="quiet-copy">
+                      {KIND_LABEL[reading.kind] ?? reading.kind} · {['', 'minor', 'notable', 'major'][reading.materiality]}
+                    </span>{' '}
+                    {reading.reason}
+                  </p>
                   {impact ? (
                     <p className="news-impact">
                       Since then: {formatSigned((Math.exp(impact.instrument_move) - 1) * 100, 1)}%
@@ -374,9 +399,9 @@ function NewsPanel({ symbol }: { symbol: string }) {
             </ul>
           )}
           <p className="quiet-copy">
-            Stories are found by searching for “{news.data.query}”, so some may be off-topic. News does not
-            change the call above yet: news can’t be tested like the trading rules until enough of its history is
-            stored.
+            Stories are found by searching for “{news.data.query}”, so some may be off-topic. Each headline is read by{' '}
+            {news.data.reader === 'built-in' ? 'the app’s built-in news reader' : news.data.reader}. Strong news can change
+            the call above; when it does, the call says it has no track record yet.
           </p>
         </>
       )}

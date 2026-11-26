@@ -67,6 +67,9 @@ endpoints). Responses are cached in-process for 60 s (`5d`/`1mo`) or 15 min.
   - **`impact`:** the price move since the story from 5-minute bars, the part beyond β × the home
     index, and how often a move that size happens by chance. It is null outside the intraday
     window.
+  - **`reading`** (per story): `{kind, direction, materiality, reason, reader}`.
+  - **`vote`** is the news score. **`reader`** is `built-in` or the configured model
+    (`GM_LLM_BASE_URL`, `GM_LLM_MODEL`, `GM_LLM_API_KEY`; any OpenAI-compatible endpoint).
 - `GET /api/v1/stream?symbols=A,B` is a Server-Sent Events stream of `tick` events
   `{symbol, price, change, change_pct, day_high, day_low, day_volume, currency, exchange,
   tick_time, source}` from Yahoo's live streamer. It takes 1–20 symbols. The last known
@@ -93,6 +96,11 @@ Invalid input returns `400`, an unknown symbol `404`, and an upstream failure `5
   `hold`), `basis` (`proven`, `conflict`, `proven_but_quiet`, `no_evidence`), `headline`,
   `horizon_days`, `review_date`, `confidence`, `flip_level` and one `reasons` line per rule. Both
   are null when the history is too short, and `signals_note` then says why. See METHODOLOGY.md.
+  - **News in the advice:** `basis` can also be `news_driven` (no proven rule active, strong news,
+    labelled "no track record yet") or `news_conflict` (a proven rule contradicted by strong news →
+    Hold).
+  - `advice.news_headlines` lists the stories behind such a call.
+  - `news_vote` is today's news score, or null when no news source answered.
 - **`benchmark=auto`** picks the home-market index from the listing suffix: the S&P 500 for US
   listings, MSCI ACWI for unknown exchanges, and none for indices, FX, futures and crypto.
   `none` skips the exposure section; any other value is used as a symbol.

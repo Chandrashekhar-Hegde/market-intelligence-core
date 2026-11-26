@@ -65,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
             .filter(|o| !o.is_empty() && *o != "none")
             .map(String::from)
             .collect(),
+        llm: gm_integrations::llm::LlmConfig::from_env(),
         ..ApiConfig::default()
     })
     .await?;

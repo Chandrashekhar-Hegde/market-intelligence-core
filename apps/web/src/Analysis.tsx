@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createChart, LineSeries, LineStyle, type LineData } from 'lightweight-charts'
 
-import { type AnalysisRange, type AnalyzeResponse, type PriceBar, type Projection, type Signal, describeApiError, useAnalysis } from './api'
+import { type Advice, type AnalysisRange, type AnalyzeResponse, type PriceBar, type Projection, type Signal, describeApiError, useAnalysis } from './api'
 import { fanLines, formatP, formatPct, formatPrice, futureSessions } from './marketData'
 import {
   formatMoney,
@@ -106,6 +106,14 @@ export function AnalysisPanels({
 
 const STANCE_LABEL = { buy: 'Buy', sell: 'Sell / stay out', hold: 'Hold' } as const
 const STANCE_TONE = { buy: 'green', sell: 'red', hold: 'neutral' } as const
+const BASIS_CHIP: Record<Advice['basis'], string> = {
+  proven: 'Backed by a proven rule',
+  conflict: 'Rules disagree',
+  proven_but_quiet: 'No proven signal today',
+  no_evidence: 'No proven edge',
+  news_driven: 'Based on today’s news · no track record',
+  news_conflict: 'Rule vs today’s news',
+}
 
 function lean(position: number): { label: string; tone: string } {
   if (position > 0) return { label: 'Leans buy', tone: 'green' }
@@ -154,10 +162,26 @@ function AdviceCard({ analysis, livePrice }: { analysis: AnalyzeResponse; livePr
           </h3>
         </div>
         <span className={`status-chip tone-${STANCE_TONE[advice.stance]}`}>
-          {advice.basis === 'proven' ? 'Backed by a proven rule' : advice.basis === 'conflict' ? 'Rules disagree' : 'No proven edge'}
+          {BASIS_CHIP[advice.basis]}
         </span>
       </div>
       <p className="advice-headline">{advice.headline}</p>
+      {advice.news_headlines.length > 0 ? (
+        <div className="news-behind" data-testid="news-behind">
+          <p>
+            <strong>The news behind this:</strong>
+          </p>
+          <ul className="plain-list">
+            {advice.news_headlines.slice(0, 3).map((h) => (
+              <li key={h}>“{h}”</li>
+            ))}
+          </ul>
+          <p className="quiet-copy">
+            News is read headline by headline and weighed by how much that kind of news usually matters and how recent it
+            is. These weights are judgement, not yet tested on past data.
+          </p>
+        </div>
+      ) : null}
       <dl className="guidance" data-testid="guidance">
         <div>
           <dt>If you already own it</dt>

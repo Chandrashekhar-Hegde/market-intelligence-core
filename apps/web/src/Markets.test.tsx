@@ -192,6 +192,7 @@ function analysis(overrides: Partial<AnalyzeResponse['report']> = {}): AnalyzeRe
     signals: signalsFixture(),
     advice: HOLD_NO_EVIDENCE,
     signals_note: null,
+    news_vote: { score: 0.2, stance: 0, n_stories: 3, drivers: [] },
   }
 }
 
@@ -226,7 +227,7 @@ function signalsFixture(): Signals {
 const HOLD_NO_EVIDENCE: Advice = {
   stance: 'hold', basis: 'no_evidence',
   headline: 'Hold. No rule has a proven edge on this instrument: its past moves have not predicted its next ones well enough to beat trading costs.',
-  drivers: [], horizon_days: null, review_date: null, confidence: null, flip_level: null, reasons: [],
+  drivers: [], horizon_days: null, review_date: null, confidence: null, flip_level: null, reasons: [], news_headlines: [],
 }
 
 /** Trend proven over a month and long today: a Buy. */
@@ -244,7 +245,7 @@ function buyAnalysis(): AnalyzeResponse {
       stance: 'buy', basis: 'proven',
       headline: 'Buy for about a month. Long-term trend has worked on this instrument: right 64% of the time over 110 past calls.',
       drivers: ['trend_200d'], horizon_days: 21, review_date: '2026-12-22',
-      confidence: { hit_rate: 0.64, low: 0.55, high: 0.72, n: 110 }, flip_level: 24800, reasons: [],
+      confidence: { hit_rate: 0.64, low: 0.55, high: 0.72, n: 110 }, flip_level: 24800, reasons: [], news_headlines: [],
     },
   }
 }
@@ -284,13 +285,15 @@ function newsResponse(): NewsResponse {
     articles: [
       {
         article: { ...story('Indian stocks hit fresh highs', 'Economic Times', 'Economic Times', 2), url: 'https://example.test/a' },
+        reading: { kind: 'general', direction: 1, materiality: 1, reason: 'Upbeat wording, but no clear market-moving event.', reader: 'built-in' },
         impact: { instrument_move: 0.0099, market_move: null, abnormal_move: 0.0099, sessions_elapsed: 0.3, z: 1.1, one_in: 3.7 },
       },
       {
         article: story('Budget surprise', 'Livemint', 'Google News', 26),
+        reading: { kind: 'legal', direction: -1, materiality: 3, reason: 'Legal or regulatory trouble usually hits the share price.', reader: 'built-in' },
         impact: { instrument_move: -0.0305, market_move: null, abnormal_move: -0.0305, sessions_elapsed: 1, z: -2.6, one_in: 107 },
       },
-      { article: story('Old story', 'reuters.com', 'GDELT', 70), impact: null },
+      { article: story('Old story', 'reuters.com', 'GDELT', 70), reading: { kind: 'general', direction: 0, materiality: 1, reason: 'No clear event.', reader: 'built-in' }, impact: null },
     ],
     sources: [
       { name: 'Google News', ok: true, count: 1, error: null },
@@ -300,6 +303,8 @@ function newsResponse(): NewsResponse {
     ],
     benchmark: null,
     beta: null,
+    vote: { score: -0.4, stance: 0, n_stories: 3, drivers: [] },
+    reader: 'built-in',
     fetched_at: new Date().toISOString(),
   }
 }
@@ -813,7 +818,7 @@ describe('plain language', () => {
 })
 
 describe('owner and non-owner guidance', () => {
-  const base = { headline: '', drivers: [], horizon_days: null, review_date: null, confidence: null, flip_level: null, reasons: [] }
+  const base = { headline: '', drivers: [], horizon_days: null, review_date: null, confidence: null, flip_level: null, reasons: [], news_headlines: [] }
   test('the same call means different actions for holders and buyers', () => {
     const buy = stanceGuidance({ ...base, stance: 'buy', basis: 'proven' }, 19_685, 'INR')
     expect(buy.owner).toBe('You can add more, keeping the total under ₹19,685 so a bad day stays within your limit.')
@@ -886,6 +891,32 @@ describe('advice card', () => {
     expect(await screen.findByText(/would switch to “leans sell” if the day closed here/)).toBeInTheDocument()
   })
 
+  test('strong news with no proven rule: a labelled news-driven call with its headlines', async () => {
+    mockApi({
+      '/api/v1/analyze': () =>
+        Response.json({
+          ...analysis(),
+          news_vote: { score: -1.4, stance: -1, n_stories: 9, drivers: [2] },
+          advice: {
+            ...HOLD_NO_EVIDENCE,
+            stance: 'sell',
+            basis: 'news_driven',
+            headline: 'Sell or stay out, based on today’s news. No track record yet.',
+            horizon_days: 5,
+            review_date: '2026-12-04',
+            news_headlines: ['SEBI orders forensic audit of the company'],
+          },
+        }),
+    })
+    renderMarkets()
+    const card = await screen.findByTestId('advice')
+    expect(within(card).getByTestId('stance')).toHaveTextContent('Sell / stay out')
+    expect(card).toHaveTextContent('Based on today’s news · no track record')
+    expect(within(card).getByTestId('news-behind')).toHaveTextContent('“SEBI orders forensic audit of the company”')
+    expect(within(card).getByTestId('guidance')).toHaveTextContent('If you already own itConsider reducing it: today’s news is clearly bad')
+    expect(within(card).getByTestId('guidance')).toHaveTextContent('Don’t buy until the news settles.')
+  })
+
   test('too little history: no call, and the reason', async () => {
     mockApi({
       '/api/v1/analyze': () =>
@@ -919,6 +950,8 @@ describe('news panel', () => {
     expect(news).toHaveTextContent('Since then: +1.0%. An ordinary move for this instrument')
     expect(news).toHaveTextContent('Since then: -3.0%. Unusual: a move this size happens about 1 in 107 times without news.')
     expect(news).toHaveTextContent('searching for “NIFTY 50”')
+    expect(news).toHaveTextContent('Bad for the company Legal / regulator · major Legal or regulatory trouble usually hits the share price.')
+    expect(news).toHaveTextContent('read by the app’s built-in news reader')
   })
 
   test('every source down is said plainly and does not break the page', async () => {

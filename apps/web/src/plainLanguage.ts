@@ -210,6 +210,17 @@ export type Guidance = { owner: string; buyer: string }
  */
 export function stanceGuidance(advice: Advice, cap: number | null, currency: string | null): Guidance {
   const upTo = cap !== null ? `, keeping the total under ${formatMoney(cap, currency)} so a bad day stays within your limit` : ''
+  if (advice.basis === 'news_driven') {
+    return advice.stance === 'buy'
+      ? {
+          owner: `You could add a little${upTo}. This call rests on today’s news alone and has no track record, so judge whether the news changes your own view.`,
+          buyer: `If the news convinces you, buy a small amount${upTo}. This call has no track record yet.`,
+        }
+      : {
+          owner: 'Consider reducing it: today’s news is clearly bad for the company. This call has no track record, so judge how serious the news is for you.',
+          buyer: 'Don’t buy until the news settles.',
+        }
+  }
   if (advice.stance === 'buy') {
     return {
       owner: `You can add more${upTo}.`,
@@ -220,6 +231,12 @@ export function stanceGuidance(advice: Advice, cap: number | null, currency: str
     return {
       owner: 'Consider selling or reducing it: the evidence points down from here.',
       buyer: 'Don’t buy it now.',
+    }
+  }
+  if (advice.basis === 'news_conflict') {
+    return {
+      owner: 'Keep it for now, and watch how the news develops.',
+      buyer: 'Wait. The tested rule and today’s news disagree.',
     }
   }
   if (advice.basis === 'conflict') {

@@ -237,7 +237,9 @@ report = payload["report"]
 assert report["symbol"] == symbol, report["symbol"]
 assert report["n_returns"] > 1000, report["n_returns"]
 assert report["volatility"]["garch"] is not None, "GARCH not fitted"
-assert len(report["projections"]) == 2 and len(report["projections"][1]["fan"]) == 63
+models = [p["model"] for p in report["projections"]]
+assert models == ["gbm", "garch_t", "bootstrap"], models
+assert all(len(p["fan"]) == 63 and len(p["sample_paths"]) == 30 for p in report["projections"])
 assert report["findings"], "no findings"
 v = report["validation"]
 assert v and v["n_forecasts"] > 500 and len(v["models"]) == 3, v and v["n_forecasts"]

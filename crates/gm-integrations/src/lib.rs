@@ -10,6 +10,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub mod gdelt;
+pub mod llm;
 pub mod markets;
 pub mod news;
 pub mod yahoo;
