@@ -961,3 +961,18 @@ describe('news panel', () => {
     expect(screen.getByTestId('advice')).toBeInTheDocument()
   })
 })
+
+describe('comparison words', () => {
+  test('correlation in words (Evans 1996) and the equal-mix swing', async () => {
+    const { correlationWords, equalMix } = await import('./plainLanguage')
+    expect(correlationWords(0.85)).toBe('move very closely together')
+    expect(correlationWords(0.45)).toBe('move somewhat together')
+    expect(correlationWords(-0.3)).toBe('move loosely in opposite directions')
+    expect(correlationWords(0.05)).toBe('move independently of each other')
+    // Two instruments, each ±20% a year, uncorrelated: an equal mix swings 20%/√2.
+    const mix = equalMix([[0.04, 0], [0, 0.04]])!
+    expect(mix.equalMixVol).toBeCloseTo(0.2 / Math.SQRT2, 12)
+    expect(mix.averageAloneVol).toBeCloseTo(0.2, 12)
+    expect(mix.cut).toBeCloseTo(1 - 1 / Math.SQRT2, 12)
+  })
+})

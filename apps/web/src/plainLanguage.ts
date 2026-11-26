@@ -258,3 +258,32 @@ export function stanceGuidance(advice: Advice, cap: number | null, currency: str
     } and be ready to sit through falls like its worst one.`,
   }
 }
+
+// ---- comparing instruments --------------------------------------------------------------
+
+/** Evans (1996) verbal scale for the strength of a correlation, used for |ρ|. */
+export function correlationWords(rho: number): string {
+  const r = Math.abs(rho)
+  const strength = r >= 0.8 ? 'very closely' : r >= 0.6 ? 'closely' : r >= 0.4 ? 'somewhat' : r >= 0.2 ? 'loosely' : null
+  if (strength === null) return 'move independently of each other'
+  return rho > 0 ? `move ${strength} together` : `move ${strength} in opposite directions`
+}
+
+export type MixSummary = { equalMixVol: number; averageAloneVol: number; cut: number }
+
+/**
+ * Yearly swing (volatility) of an equal-weight mix, σ = √(wᵀΣw) with the API's annualised
+ * covariance, against the average of each instrument's own swing.
+ */
+export function equalMix(covarianceAnnual: number[][]): MixSummary | null {
+  const n = covarianceAnnual.length
+  if (n < 2) return null
+  const w = 1 / n
+  let variance = 0
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) variance += w * w * (covarianceAnnual[i]?.[j] ?? 0)
+  const alone = covarianceAnnual.map((row, i) => Math.sqrt(row[i] ?? 0))
+  const averageAloneVol = alone.reduce((a, b) => a + b, 0) / n
+  const equalMixVol = Math.sqrt(Math.max(variance, 0))
+  if (!(averageAloneVol > 0)) return null
+  return { equalMixVol, averageAloneVol, cut: 1 - equalMixVol / averageAloneVol }
+}

@@ -176,7 +176,10 @@ export function Guide() {
       <section className="panel chart-panel guide" aria-labelledby="guide-compare">
         <h3 id="guide-compare">Comparing instruments</h3>
         <p>
-          The Compare tab lines up 2 to 10 instruments on the days they all traded. Correlation shows whether they move together
+          The Compare tab lines up 2 to 10 instruments on the days they all traded and starts with a side-by-side: how much
+          each grew a year, how bumpy it is, its worst fall and today’s advice, then whether they move together (in words)
+          and how much holding them all in equal amounts would cut the swing. The rest is under “Show all the maths”.
+          Correlation shows whether they move together
           (holding things that move together diversifies little). The shared factor shows how much of everything is one common
           “market” move. Cointegration finds pairs whose prices stay tied in the long run. Markets in different time zones close
           hours apart, which makes daily correlation look too low, so the weekly figure is shown first for them. And with many

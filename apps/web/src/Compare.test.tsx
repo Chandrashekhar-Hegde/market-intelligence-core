@@ -105,24 +105,37 @@ describe('Compare view', () => {
   test('compares the default set: findings, performance, heatmap, pairs and PCA', async () => {
     const fetchMock = mockApi()
     renderCompare()
-    expect(await screen.findByTestId('compare-findings')).toHaveTextContent('Most correlated: AAPL and MSFT')
-    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/compare?symbols=AAPL%2CMSFT%2C%5EGSPC&range=5y'), expect.anything())
+    expect(await screen.findByTestId('compare-findings')).toHaveTextContent('Most correlated: RELIANCE.NS and TCS.NS')
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/compare?symbols=RELIANCE.NS%2CTCS.NS%2C%5ENSEI&range=5y'), expect.anything())
 
     const perf = screen.getByTestId('performance-table')
-    expect(within(perf).getByRole('row', { name: /^AAPL/ })).toHaveTextContent('50.0%')
+    expect(within(perf).getByRole('row', { name: /^RELIANCE\.NS/ })).toHaveTextContent('50.0%')
     // Same time zone → daily correlation by default.
     expect(screen.getByRole('button', { name: 'Daily' })).toHaveAttribute('aria-pressed', 'true')
     const heatmap = screen.getByTestId('heatmap')
-    expect(within(heatmap).getByRole('row', { name: /^AAPL/ })).toHaveTextContent('1.000.310.32')
+    expect(within(heatmap).getByRole('row', { name: /^RELIANCE\.NS/ })).toHaveTextContent('1.000.310.32')
     await userEvent.click(screen.getByRole('button', { name: 'Weekly' }))
-    expect(within(heatmap).getByRole('row', { name: /^AAPL/ })).toHaveTextContent('1.000.410.42')
+    expect(within(heatmap).getByRole('row', { name: /^RELIANCE\.NS/ })).toHaveTextContent('1.000.410.42')
 
     const pairs = screen.getByTestId('pairs-table')
-    const tied = within(pairs).getByRole('row', { name: /AAPL \/ MSFT/ })
+    const tied = within(pairs).getByRole('row', { name: /RELIANCE\.NS \/ TCS\.NS/ })
     expect(tied).toHaveTextContent('cointegrated')
     expect(tied).toHaveTextContent('18 days')
-    expect(within(pairs).getByRole('row', { name: /MSFT \/ \^GSPC/ })).toHaveTextContent('not tied')
+    expect(within(pairs).getByRole('row', { name: /TCS\.NS \/ \^NSEI/ })).toHaveTextContent('not tied')
     expect(screen.getByTestId('pca')).toHaveTextContent('Factor 1: 62.0%')
+  })
+
+  test('leads with a plain side-by-side and what owning them together means', async () => {
+    mockApi()
+    renderCompare()
+    const plain = await screen.findByTestId('plain-compare')
+    const table = within(plain).getByTestId('head-to-head')
+    expect(within(table).getByRole('row', { name: /^RELIANCE\.NS/ })).toHaveTextContent('RELIANCE.NS10.0%±25%−30%')
+    const findings = within(plain).getByTestId('plain-compare-findings')
+    // Weekly-free fixture: daily correlation 0.5 is "somewhat" on the Evans (1996) scale.
+    expect(findings).toHaveTextContent('RELIANCE.NS and TCS.NS move somewhat together (correlation 0.50).')
+    expect(findings).toHaveTextContent(/Holding all 3 in equal amounts swings about ±\d+% a year/)
+    expect(findings).toHaveTextContent('The deepest fall was')
   })
 
   test('different time zones: the caveat is shown and weekly correlation is the default', async () => {
@@ -143,10 +156,10 @@ describe('Compare view', () => {
     await userEvent.click(await screen.findByRole('button', { name: /7203\.T/ }))
     expect(screen.getByRole('list', { name: 'Selected instruments' })).toHaveTextContent('7203.T')
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('symbols=AAPL%2CMSFT%2C%5EGSPC%2C7203.T'), expect.anything()),
+      expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('symbols=RELIANCE.NS%2CTCS.NS%2C%5ENSEI%2C7203.T'), expect.anything()),
     )
 
-    for (const s of ['AAPL', 'MSFT', '^GSPC']) {
+    for (const s of ['RELIANCE.NS', 'TCS.NS', '^NSEI']) {
       await userEvent.click(screen.getByRole('button', { name: `Remove ${s}` }))
     }
     expect(screen.getByText('Pick at least two instruments to compare.')).toBeInTheDocument()
