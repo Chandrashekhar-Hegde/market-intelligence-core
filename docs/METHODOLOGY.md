@@ -369,7 +369,7 @@ This is the market-model abnormal return (MacKinlay 1997), applied intraday.
   one item from 2017.
 - **Reading.** Each headline is matched to themes. A theme's direction comes from the first
   direction word in the 4 words after its subject, else the 3 words before it, stopping at a clause
-  break ("as", "amid", "against", ...). Rates use hike/cut words and flows use buy/sell words.
+  break ("as", "amid", "against", ...). Rates use hike/cut words, and only when the headline names a rate ("rate", "repo", "bps", "policy"): "RBI raises MSME loan limit" is not a hike. Flows use buy/sell words.
   The usual effects:
 
   | News | Effect |

@@ -1,4 +1,4 @@
-# Phase 0.8 (planned 2026-11-27): today's actions, every asset, news desk, live probabilities, modular UI
+# Phase 0.8 (planned 2026-11-27, done the same day: #130–#137): today's actions, every asset, news desk, live probabilities, modular UI
 
 ## Context
 Owner feedback after 0.7 (27 Nov 2026):
@@ -121,7 +121,7 @@ Owner feedback after 0.7 (27 Nov 2026):
   - shown as "a mix to consider", never an order.
 
 ### 7. `0.8-modular-ui` (#129): panels you arrange and resize
-- `react-grid-layout`: each panel is a card the user can drag, resize, collapse or hide, with the layout saved per browser (localStorage, in try/catch).
+- Shipped without `react-grid-layout`: buttons, CSS grid and the native resize handle cover hide, move, size and resize. Originally planned: each panel is a card the user can drag, resize, collapse or hide, with the layout saved per browser (localStorage, in try/catch).
 - Phone width falls back to a single stack with collapse only.
 - "Reset layout" is available. axe and the no-horizontal-overflow Playwright checks are kept.
 
