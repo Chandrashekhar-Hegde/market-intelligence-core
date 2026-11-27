@@ -235,5 +235,6 @@ The design behind the queue is in [docs/plans/](docs/plans/README.md). Commit a 
 
 Snapshot (2026-11-27):
 - **Shipped:** 0.1–0.8 (0.8: Today page, news desk, live chances, calibration run, modular screen).
-- **Ready now:** #45, #71, #64, #91, #9, #94, #67.
+- **In progress:** Phase 0.9 (#138–#143, [plan](docs/plans/phase-0.9.md)).
+- **Ready after 0.9:** #45, #71, #64, #91, #9, #94, #67.
 - **Waiting on owner decisions:** #80 (Postgres cost), #83, #85, #89, #109 (GDELT from Railway), #121 (Claude news reader: key).
