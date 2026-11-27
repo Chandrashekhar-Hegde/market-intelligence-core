@@ -478,3 +478,39 @@ fn bootstrap_block_length_matches_arch() {
         );
     }
 }
+
+/// The live fan starts at the live price, and a big move today widens the GARCH fan at once;
+/// the history-only models just move with the price.
+#[test]
+fn live_projection_reanchors_and_reacts_to_todays_move() {
+    let prices = load(AAPL);
+    let returns: Vec<f64> = prices.windows(2).map(|w| (w[1].1 / w[0].1).ln()).collect();
+    let garch = volatility::fit_garch(&returns, 252.0).unwrap();
+    let last = prices.last().unwrap().1;
+    let run = |live: f64| {
+        live_projections(&LiveInput {
+            symbol: "AAPL",
+            returns: &returns,
+            garch: Some(&garch),
+            last_close: last,
+            live_price: live,
+            horizons: &[5],
+            n_paths: 2000,
+            seed: 42,
+        })
+    };
+    let calm = run(last);
+    let jump = run(last * 1.08);
+    let width = |ps: &[Projection], m: &str| {
+        let h = &ps.iter().find(|p| p.model == m).unwrap().horizons[0];
+        h.return_quantiles[4] - h.return_quantiles[0]
+    };
+    assert!(width(&jump, "garch_t") > 1.3 * width(&calm, "garch_t"));
+    // Own-history and GBM fans keep their shape in % terms and only move with the price.
+    for m in ["bootstrap", "gbm"] {
+        assert!((width(&jump, m) - width(&calm, m)).abs() < 1e-12, "{m}");
+        let a = &calm.iter().find(|p| p.model == m).unwrap().fan[0].price[2];
+        let b = &jump.iter().find(|p| p.model == m).unwrap().fan[0].price[2];
+        assert!((b / a - 1.08).abs() < 1e-9, "{m}: {a} → {b}");
+    }
+}

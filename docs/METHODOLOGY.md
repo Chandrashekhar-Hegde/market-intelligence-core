@@ -94,6 +94,15 @@ honest finding (Fama 1970).
   - Price quantiles (5, 25, 50, 75, 95%) for every session up to 63.
   - At 5, 21 and 63 sessions: return quantiles, P(gain), P(loss ≥ 10%), and P(drawdown ≥ 10%
     at any point along the path).
+- **Live fan (`/api/v1/projection`).** During a session the web recomputes every projection from
+  the live price, at most every 5 s. The 10-year daily fit (returns, GARCH) is cached until the
+  next daily close. The paths start at the live price. GARCH variance takes today's move so far
+  as the shock of the session in progress, σ² = ω + α·e² + β·σ²<sub>next</sub> with
+  e = ln(live / last close) − μ, so a sharp morning move widens the GARCH fan at once. The
+  bootstrap and GBM fans keep their shape in % terms and move with the price. Approximation:
+  the partial-day move counts as a full day's shock, and the session in progress counts as the
+  first forecast day. Measured: about 0.8 s for the first fit, then about 17 ms per update
+  (local, real data).
 - **Caveat.** The drift μ is the historical average, and its standard error is printed next to
   it. The width of the fan is the reliable part; where the centre sits is not.
 

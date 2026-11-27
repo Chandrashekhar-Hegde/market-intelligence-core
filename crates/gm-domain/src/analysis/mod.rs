@@ -156,6 +156,48 @@ pub fn analyze(input: &AnalysisInput) -> Result<AnalysisReport, AnalysisError> {
     Ok(report)
 }
 
+/// A forecast from a live price in the middle of a session, using the fit from daily closes.
+pub struct LiveInput<'a> {
+    pub symbol: &'a str,
+    /// Daily log returns up to the last completed close, oldest first.
+    pub returns: &'a [f64],
+    /// GARCH fitted on `returns`; its `next_variance` is for the session now trading.
+    pub garch: Option<&'a volatility::Garch>,
+    pub last_close: f64,
+    pub live_price: f64,
+    pub horizons: &'a [usize],
+    pub n_paths: usize,
+    pub seed: u64,
+}
+
+/// Every projection re-anchored at the live price. GARCH variance takes today's move so far
+/// as the shock of the session in progress (σ² = ω + α·e² + β·σ²): a big move this morning
+/// widens the fan at once, as it would after the close.
+/// ponytail: treats the partial-day move as a full day's shock and counts the session in
+/// progress as the first forecast day; an intraday variance model would refine both.
+pub fn live_projections(input: &LiveInput) -> Vec<Projection> {
+    let mu = numeric::mean(input.returns);
+    let sigma = numeric::variance(input.returns).sqrt();
+    let updated = input.garch.map(|g| {
+        let e = (input.live_price / input.last_close).ln() - mu;
+        volatility::Garch {
+            next_variance: g.omega + g.alpha * e * e + g.beta * g.next_variance,
+            ..g.clone()
+        }
+    });
+    montecarlo::project(&montecarlo::Inputs {
+        symbol: input.symbol,
+        returns: input.returns,
+        last_price: input.live_price,
+        mu,
+        sigma,
+        garch: updated.as_ref(),
+        horizons: input.horizons,
+        n_paths: input.n_paths.clamp(100, MAX_PATHS),
+        seed: input.seed,
+    })
+}
+
 /// Lead with the model the walk-forward rates best: GARCH-t when it earns its place (beats
 /// historical simulation and its VaR holds), otherwise the bootstrap of the stock's own days,
 /// which is what historical simulation does. GBM is never validated, so it only leads when

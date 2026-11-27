@@ -1925,3 +1925,11 @@ ol {
 .typical-key {
   color: #8f4a07;
 }
+
+.live-forecast {
+  margin: 0.5rem 0;
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid #1f7a68;
+  background: #eef6f3;
+  font-size: 0.92rem;
+}

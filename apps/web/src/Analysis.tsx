@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createChart, LineSeries, LineStyle, type LineData } from 'lightweight-charts'
 
-import { type Advice, type AnalysisRange, type AnalyzeResponse, type PriceBar, type Projection, type Signal, describeApiError, useAnalysis } from './api'
+import { type Advice, type AnalysisRange, type AnalyzeResponse, type PriceBar, type Projection, type Signal, describeApiError, useAnalysis, useLiveProjection } from './api'
 import { fanLines, formatP, formatPct, formatPrice, futureSessions } from './marketData'
 import {
   formatMoney,
@@ -72,7 +72,13 @@ export function AnalysisPanels({
   return (
     <>
       <AdviceCard analysis={analysis.data} livePrice={livePrice ?? null} />
-      <MeaningPanel analysis={analysis.data} history={history} range={range} onRange={setRange} />
+      <MeaningPanel
+        analysis={analysis.data}
+        history={history}
+        range={range}
+        onRange={setRange}
+        livePrice={livePrice ?? null}
+      />
       <details className="panel chart-panel maths-all">
         <summary>
           <span className="maths-title">Show all the maths</span>
@@ -298,16 +304,31 @@ function MeaningPanel({
   history,
   range,
   onRange,
+  livePrice,
 }: {
   analysis: AnalyzeResponse
   history: PriceBar[] | undefined
   range: AnalysisRange
   onRange: (range: AnalysisRange) => void
+  livePrice: number | null
 }) {
   const [amount, setAmount] = useState(10_000)
   const amountId = useId()
-  const cards = meaningCards(analysis, amount)
-  const projection = preferredProjection(analysis)
+  const live = useLiveProjection(analysis.data.symbol, livePrice).data
+  // With a live price the fan, chances and typical path are recomputed from it and start today.
+  const shown: AnalyzeResponse = live
+    ? {
+        ...analysis,
+        report: {
+          ...analysis.report,
+          projections: live.projections,
+          last_price: live.price,
+          last_date: live.computed_at.slice(0, 10),
+        },
+      }
+    : analysis
+  const cards = meaningCards(shown, amount)
+  const projection = preferredProjection(shown)
   return (
     <section className="panel chart-panel" aria-labelledby="meaning-heading">
       <div className="section-heading">
@@ -353,6 +374,14 @@ function MeaningPanel({
       {projection ? (
         <>
           <h4 className="advice-subhead">Range of outcomes over the next three months</h4>
+          {live ? (
+            <p className="live-forecast" data-testid="live-forecast">
+              Live: recalculated from {formatPrice(live.price, analysis.data.currency)} at{' '}
+              {new Date(live.computed_at).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST (last close{' '}
+              {formatPrice(live.last_close, analysis.data.currency)}). It updates with the price, at most every 5
+              seconds.
+            </p>
+          ) : null}
           <p className="quiet-copy">
             {analysis.report.lead_reason} {projectionSource(projection)}
           </p>
@@ -362,7 +391,7 @@ function MeaningPanel({
             chance it ends between the dotted lines, 9 in 10 between the dashed ones. The scale is % up or down from
             today.
           </p>
-          <FanChart projection={projection} report={analysis.report} history={history} />
+          <FanChart projection={projection} report={shown.report} history={history} />
         </>
       ) : null}
     </section>

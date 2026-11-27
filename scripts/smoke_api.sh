@@ -230,6 +230,21 @@ PY
   echo "  warm analyze RELIANCE.NS: ${took}s"
   python3 -c "import sys; t=float(sys.argv[1]); assert t < 3, f'warm analyze took {t}s'" "$took"
 
+  # Live fan: recomputed from a price near the last close; fast once the daily fit is cached.
+  close="$(curl -fsS "$BASE_URL/api/v1/bars?symbol=RELIANCE.NS&range=10y" | python3 -c 'import json,sys; print(json.load(sys.stdin)["chart"]["bars"][-1]["adj_close"])')"
+  live="$(python3 -c "print(round($close * 1.01, 2))")"
+  curl -fsS -o /dev/null "$BASE_URL/api/v1/projection?symbol=RELIANCE.NS&price=$live"
+  took="$(curl -fsS -o /tmp/gm_projection.json -w '%{time_total}' "$BASE_URL/api/v1/projection?symbol=RELIANCE.NS&price=$live")"
+  echo "  live projection RELIANCE.NS: ${took}s"
+  python3 - /tmp/gm_projection.json "$live" "$took" <<'PY'
+import json, sys
+body, live, took = json.load(open(sys.argv[1])), float(sys.argv[2]), float(sys.argv[3])
+assert took < 1.0, f"live projection took {took}s"
+assert [p["model"] for p in body["projections"]] == ["gbm", "garch_t", "bootstrap"]
+median = body["projections"][2]["fan"][0]["price"][2]
+assert abs(median / live - 1) < 0.02, (median, live)
+PY
+
   # The engine on three markets: US stock (auto S&P 500), Japanese stock (auto Nikkei), crypto (none).
   for spec in "AAPL:^GSPC" "7203.T:^N225" "BTC-USD:"; do
     symbol="${spec%%:*}"; bench="${spec#*:}"
