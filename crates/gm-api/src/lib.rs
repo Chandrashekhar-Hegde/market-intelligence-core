@@ -853,6 +853,7 @@ async fn analyze_instrument(
             .collect::<Vec<_>>()
     });
     // The maths runs while the rules are tested and the news is fetched.
+    let single = is_single_stock(meta.instrument_type.as_deref(), meta.name.as_deref());
     let symbol = meta.symbol.clone();
     let bench_symbol = benchmark.as_ref().map(|(s, _)| s.clone());
     let report_task = tokio::task::spawn_blocking(move || {
@@ -863,6 +864,9 @@ async fn analyze_instrument(
             horizons: &DEFAULT_HORIZONS,
             n_paths: paths,
             seed,
+            long_run_drift_from: single
+                .then(|| bench_symbol.as_deref().zip(bench_prices.as_deref()))
+                .flatten(),
         })
     });
     // Rules are tested on up to 10 years: the 3-month horizon needs 30+ separate calls.
@@ -880,16 +884,17 @@ async fn analyze_instrument(
                 // commentary, which the reader isn't built for.
                 // Best-effort: a news outage leaves the rules' advice as it is.
                 let name = meta.name.clone().unwrap_or_else(|| meta.symbol.clone());
-                let news = match news_votes_for(meta.instrument_type.as_deref()) {
-                    false => None,
-                    true => match gather_news(&state, &name).await {
-                        Ok((_, stories, _)) => {
-                            let readings = read_stories(&state, &stories).await;
-                            Some(vote_on(&stories, &readings))
-                        }
-                        Err(_) => None,
-                    },
-                };
+                let news =
+                    match is_single_stock(meta.instrument_type.as_deref(), meta.name.as_deref()) {
+                        false => None,
+                        true => match gather_news(&state, &name).await {
+                            Ok((_, stories, _)) => {
+                                let readings = read_stories(&state, &stories).await;
+                                Some(vote_on(&stories, &readings))
+                            }
+                            Err(_) => None,
+                        },
+                    };
                 let input = news.as_ref().map(|(vote, headlines)| {
                     gm_domain::analysis::signals::NewsInput { vote, headlines }
                 });
@@ -1260,10 +1265,17 @@ async fn read_stories(
     stories.iter().map(|s| read_headline(&s.title)).collect()
 }
 
-/// News votes in the advice only for single companies; indices, ETFs, funds, FX and crypto
-/// get market commentary, not company news.
-fn news_votes_for(instrument_type: Option<&str>) -> bool {
-    instrument_type == Some("EQUITY")
+/// A single company's shares. Company news votes only for these, and their long-run growth is
+/// taken from their market. Yahoo labels Indian ETFs (GOLDBEES, MON100) "EQUITY", so names that
+/// say ETF, BeES, fund or index are not single companies.
+fn is_single_stock(instrument_type: Option<&str>, name: Option<&str>) -> bool {
+    let fund = name.is_some_and(|n| {
+        let n = n.to_lowercase();
+        ["etf", "bees", " fund", "index", "nifty", "sensex"]
+            .iter()
+            .any(|w| n.contains(w))
+    });
+    instrument_type == Some("EQUITY") && !fund
 }
 
 /// Today's news vote from the readings, and the headlines behind it.
@@ -3418,8 +3430,18 @@ mod tests {
     }
 
     #[test]
-    fn news_votes_only_for_companies() {
-        assert!(news_votes_for(Some("EQUITY")));
+    fn single_stocks_exclude_funds_yahoo_calls_equity() {
+        assert!(is_single_stock(
+            Some("EQUITY"),
+            Some("Reliance Industries Limited")
+        ));
+        for etf in [
+            "Nippon India ETF Gold BeES",
+            "Motilal Oswal NASDAQ 100 ETF",
+            "Mirae Asset NYSE FANG+ETF",
+        ] {
+            assert!(!is_single_stock(Some("EQUITY"), Some(etf)), "{etf}");
+        }
         for other in [
             "INDEX",
             "ETF",
@@ -3428,9 +3450,9 @@ mod tests {
             "CURRENCY",
             "FUTURE",
         ] {
-            assert!(!news_votes_for(Some(other)), "{other}");
+            assert!(!is_single_stock(Some(other), None), "{other}");
         }
-        assert!(!news_votes_for(None));
+        assert!(!is_single_stock(None, None));
     }
 
     #[tokio::test]

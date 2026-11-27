@@ -180,6 +180,22 @@ function analysis(overrides: Partial<AnalyzeResponse['report']> = {}): AnalyzeRe
           horizon_days: h, n: 30, mean_forecast: 0.6, realised: 0.57, brier: 0.24, skill_vs_coin: 0.04, vs_coin: result(-0.8, 0.42),
         })),
       },
+      long_run: [
+        { years: 1, lo: -0.3, hi: 0.5 },
+        { years: 3, lo: -0.2, hi: 1.0 },
+        { years: 5, lo: -0.1, hi: 1.5 },
+      ].map(({ years, lo, hi }) => ({
+        years,
+        resampled: Array.from({ length: 101 }, (_, p) => lo + ((hi - lo) * p) / 100),
+        historical: Array.from({ length: 101 }, (_, p) => (0.8 * years * p) / 300),
+        n_windows: 1000,
+        n_independent: Math.floor(10 / years),
+        worst: lo,
+        block_length: 12,
+        drift_annual: 0.12,
+        drift_se_annual: 0.05,
+        drift_from: 'own history',
+      })),
       lead_model: 'garch_t',
       lead_reason: 'On this instrument’s past days, the volatility model (GARCH-t) forecast better than simply replaying history, and its risk limits held up, so it leads.',
       findings: [
@@ -873,12 +889,32 @@ describe('owner and non-owner guidance', () => {
 })
 
 describe('advice card', () => {
-  test('explains Hold for owners and buyers, and what the labels mean', async () => {
+  test('three plain answers: long term vs an FD, owners sized for today, short-term trading', async () => {
+    window.localStorage.removeItem('fd-rate')
     mockApi()
     renderMarkets()
-    const guidance = await screen.findByTestId('guidance')
-    expect(guidance).toHaveTextContent('If you already own itKeep it if it still fits your plan')
-    expect(guidance).toHaveTextContent('If you don’t own it yetNo tested reason to buy now')
+    await screen.findByTestId('guidance')
+    // 3-year resampled log returns spread −0.2…1.0: 67 of 101 beat ln(1.07)·3.
+    expect(screen.getByTestId('answer-long')).toHaveTextContent(
+      'For 3+ years it has usually beaten an FD, but not reliably: invest gradually (a SIP) and only money you won’t need. Over 3 years it beat a 7% FD in 66 in 100 of the futures built from its own past swings (over 5 years: 72 in 100). In the actual past, 74 in 100 rolling 3-year stretches beat it, but that is only 3 separate periods. Growth assumed: its own past average, 12% a year (could be anywhere from 2% to 22%).',
+    )
+    // GARCH now 21% vs 17% long run: 1.2× normal, so the safe size shrinks by that much.
+    expect(screen.getByTestId('answer-owner')).toHaveTextContent('Keep it if it still fits your plan')
+    expect(screen.getByTestId('answer-owner')).toHaveTextContent('moving 1.2× more than usual right now, so hold at most ₹15,936 for a bad day of ₹500 (₹19,685 in normal times)')
+    expect(screen.getByTestId('answer-trader')).toHaveTextContent('No timing edge')
+    // A higher deposit rate lowers the chance, and is remembered.
+    const fd = screen.getByLabelText('Compared with a fixed deposit at')
+    await userEvent.clear(fd)
+    await userEvent.type(fd, '12')
+    expect(screen.getByTestId('answer-long')).toHaveTextContent('An FD has done about as well. There is no clear long-term case for this one on its own. Over 3 years it beat a 12% FD in 55 in 100')
+    expect(window.localStorage.getItem('fd-rate')).toBe('0.12')
+    window.localStorage.removeItem('fd-rate')
+  })
+
+  test('explains what the labels mean', async () => {
+    mockApi()
+    renderMarkets()
+    await screen.findByTestId('guidance')
     const legend = screen.getByRole('list', { name: 'What the labels mean' })
     expect(legend).toHaveTextContent('the rule’s reading today points up / down')
     expect(legend).toHaveTextContent('does not change the call')

@@ -2045,3 +2045,7 @@ ol {
   margin: 0;
   text-align: right;
 }
+
+.fd-input input {
+  width: 5.5rem;
+}

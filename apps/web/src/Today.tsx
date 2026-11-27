@@ -2,9 +2,9 @@
 // risk-balanced mix to consider. Research signals for a private beta, not registered advice.
 import { useState } from 'react'
 
-import { type TodayItem, describeApiError, useDesk, useNow, useToday } from './api'
+import { type TodayItem, describeApiError, useDesk, useFdRate, useNow, useToday } from './api'
 import { QUICK_PICKS, formatPct, timeAgo } from './marketData'
-import { chanceWords, formatMoney, riskBalancedMix } from './plainLanguage'
+import { bestMoves, chanceWords, formatMoney, riskBalancedMix } from './plainLanguage'
 
 const GROUP_ORDER = ['India index', 'NIFTY 50', 'Gold, silver, rupee', 'US from India', 'AI', 'Your watchlist']
 const PRIVATE_AI = /\b(groq|openai|xai|anthropic)\b/i
@@ -27,6 +27,69 @@ function honesty(item: TodayItem): string {
   if (c.vs_coin.reject_5pct && c.vs_coin.statistic < 0) return 'held up in the past'
   if (c.vs_coin.reject_5pct) return 'worse than a coin flip in the past'
   return `history said ${Math.round(c.mean_forecast * 100)}, rose ${Math.round(c.realised * 100)}`
+}
+
+const MOVE_LABEL = { call: 'Call', 'long-term': 'Long term', size: 'If you hold it', avoid: 'Long term: no case' } as const
+const MOVE_TONE = { call: 'green', 'long-term': 'green', size: 'neutral', avoid: 'red' } as const
+
+function BestMoves({ items }: { items: TodayItem[] }) {
+  const [fdRate, setFdRate] = useFdRate()
+  const [maxLoss, setMaxLoss] = useState(500)
+  const moves = bestMoves(items, fdRate, maxLoss)
+  return (
+    <section className="panel chart-panel" aria-labelledby="today-moves" data-testid="today-moves">
+      <h3 id="today-moves">Your best moves today</h3>
+      <p className="quiet-copy">
+        Short-term timing has no proven edge on these instruments, so the moves that the evidence supports are about
+        where long-term money belongs, and how much to hold given how jumpy things are today.
+      </p>
+      <p className="fd-input">
+        <label>
+          Fixed deposit at{' '}
+          <input
+            type="number"
+            min={0}
+            max={20}
+            step={0.25}
+            inputMode="decimal"
+            value={Math.round(fdRate * 10000) / 100}
+            onChange={(e) => {
+              const pct = Number(e.target.value)
+              if (pct >= 0 && pct < 50) setFdRate(pct / 100)
+            }}
+          />
+          % a year
+        </label>{' '}
+        ·{' '}
+        <label>
+          most I’d lose on a bad day ₹
+          <input
+            type="number"
+            min={0}
+            step={100}
+            inputMode="numeric"
+            value={maxLoss}
+            onChange={(e) => setMaxLoss(Math.max(0, Number(e.target.value) || 0))}
+          />
+        </label>
+      </p>
+      {moves.length === 0 ? (
+        <p>Nothing stands out today: no instrument clearly beats the deposit, and none is unusually jumpy.</p>
+      ) : (
+        <ol className="today-calls" data-testid="moves-list">
+          {moves.map((m) => (
+            <li key={`${m.kind}-${m.symbol}`}>
+              <span className={`status-chip tone-${MOVE_TONE[m.kind]}`}>{MOVE_LABEL[m.kind]}</span> {m.text}
+            </li>
+          ))}
+        </ol>
+      )}
+      <p className="quiet-copy">
+        “Futures built from its past” replay its own last 10 years of daily moves thousands of times. The past is a
+        guide, not a promise: companies can stop doing well, and these figures don’t know about valuations.
+      </p>
+    </section>
+  )
 }
 
 function CallsSection({ items }: { items: TodayItem[] }) {
@@ -327,6 +390,7 @@ export function Today() {
           {notice}
         </p>
       </section>
+      <BestMoves items={items} />
       <CallsSection items={items} />
       <ScanTable items={items} />
       <UsFromIndia items={items} />

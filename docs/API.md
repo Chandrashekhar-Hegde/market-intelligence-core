@@ -110,7 +110,10 @@ price more than about 50% away from the last close is a 400.
 - `report` holds `distribution`, `predictability`, `volatility` (EWMA and GARCH-t),
   `projections` (Monte Carlo fans for `gbm`, `garch_t` and `bootstrap`, each with 30
   `sample_paths` and a highlighted `typical_path`), `lead_model` and `lead_reason` (the
-  projection validation rates best, shown first), `risk` (VaR/ES, drawdown, Sharpe),
+  projection validation rates best, shown first), `long_run` (1, 3 and 5-year total log return
+  percentiles 0–100, resampled with uncertain growth and from actual windows, with
+  `n_independent`, `drift_annual`, `drift_se_annual` and `drift_from`: a single stock uses its
+  home index's growth), `risk` (VaR/ES, drawdown, Sharpe),
   `benchmark` (beta/alpha), `validation` (walk-forward scores, plus `chance_of_gain`: whether the
   history-based chance of a gain beat a coin flip at 5, 21 and 63 sessions) and `findings`
   (plain-language conclusions).

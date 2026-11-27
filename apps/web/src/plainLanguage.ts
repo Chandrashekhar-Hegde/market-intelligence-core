@@ -1,7 +1,7 @@
 // Plain-language reading of an analysis: what the numbers mean for someone putting money in.
 // Pure and unit-tested. Every number is one the API computed, or an exact identity of them
 // (documented in docs/METHODOLOGY.md, "Plain-language cards"); nothing is estimated here.
-import type { Advice, AnalyzeResponse, Projection } from './api'
+import type { Advice, AnalyzeResponse, LongRun, Projection, TodayItem } from './api'
 
 export type Card = { id: string; title: string; headline: string; why: string }
 
@@ -347,4 +347,174 @@ export function riskBalancedMix(
     const weight = 1 / h.vol_annual / total
     return { symbol: h.symbol, weight, amount: weight * budget }
   })
+}
+
+/** Share of outcomes over `lr.years` that beat a deposit at `rate` a year (compounded). */
+export function beatChance(lr: LongRun, rate: number, source: 'resampled' | 'historical' = 'resampled'): number | null {
+  const points = lr[source]
+  if (!points.length) return null
+  const hurdle = lr.years * Math.log(1 + rate)
+  return points.filter((x) => x > hurdle).length / points.length
+}
+
+function rateText(rate: number) {
+  return `${Number((rate * 100).toFixed(2))}%`
+}
+
+/**
+ * Investing for 3+ years versus a fixed deposit, from the 3- and 5-year distributions. The
+ * resampled chance leads; what actually happened is shown with how many separate periods it is.
+ * Tiers at 80 and 60 in 100: 80 is the owner's bar for a firm statement (27 Nov 2026).
+ */
+export function longTermAnswer(analysis: AnalyzeResponse, rate: number): string | null {
+  const runs = analysis.report.long_run
+  const three = runs?.find((r) => r.years === 3)
+  const five = runs?.find((r) => r.years === 5)
+  if (!three) return null
+  const p3 = beatChance(three, rate)
+  const p5 = five ? beatChance(five, rate) : null
+  const h3 = beatChance(three, rate, 'historical')
+  if (p3 === null) return null
+  const verdict =
+    p3 >= 0.8
+      ? 'Investing for the long term has clearly beaten an FD here.'
+      : p3 >= 0.6
+        ? 'For 3+ years it has usually beaten an FD, but not reliably: invest gradually (a SIP) and only money you won’t need.'
+        : p3 < 0.45
+          ? 'An FD has done better. There is no long-term case for this one on its own.'
+          : 'An FD has done about as well. There is no clear long-term case for this one on its own.'
+  const fiveText = p5 !== null ? ` (over 5 years: ${chanceWords(p5)})` : ''
+  const actual =
+    h3 !== null && three.n_windows > 0
+      ? ` In the actual past, ${chanceWords(h3)} rolling 3-year stretches beat it, but that is only ${three.n_independent} separate period${three.n_independent === 1 ? '' : 's'}.`
+      : ''
+  const growth =
+    three.drift_from === 'own history'
+      ? ` Growth assumed: its own past average, ${(three.drift_annual * 100).toFixed(0)}% a year (could be anywhere from ${((three.drift_annual - 2 * three.drift_se_annual) * 100).toFixed(0)}% to ${((three.drift_annual + 2 * three.drift_se_annual) * 100).toFixed(0)}%).`
+      : ` Growth assumed: its market’s (${three.drift_from}), because one company’s past average says little about its future.`
+  return `${verdict} Over 3 years it beat a ${rateText(rate)} FD in ${chanceWords(p3)} of the futures built from its own past swings${fiveText}.${actual}${growth}`
+}
+
+/** Today's volatility against its normal level (GARCH), and the size that keeps a bad day within `maxLoss`. */
+export function sizeToday(analysis: AnalyzeResponse, maxLoss: number): { ratio: number | null; today: number | null; normal: number | null } {
+  const normal = maxPosition(analysis, maxLoss)
+  const g = analysis.report.volatility.garch
+  const ratio = g && g.long_run_vol_annual > 0 ? g.current_vol_annual / g.long_run_vol_annual : null
+  return { ratio, normal, today: normal !== null && ratio !== null ? normal / ratio : normal }
+}
+
+export function ownerAnswer(analysis: AnalyzeResponse, maxLoss: number): string {
+  const currency = analysis.data.currency
+  const { ratio, today, normal } = sizeToday(analysis, maxLoss)
+  const advice = analysis.advice
+  const stance = advice ? stanceGuidance(advice, null, currency).owner : 'Keep it if it still fits your plan.'
+  if (ratio === null || today === null || normal === null) return stance
+  const mood =
+    ratio >= 1.05
+      ? `It is moving ${ratio.toFixed(1)}× more than usual right now, so hold at most ${formatMoney(today, currency)} for a bad day of ${formatMoney(maxLoss, currency)} (${formatMoney(normal, currency)} in normal times).`
+      : ratio <= 0.95
+        ? `It is calmer than usual (${ratio.toFixed(1)}× its normal swings): up to ${formatMoney(today, currency)} keeps a bad day within ${formatMoney(maxLoss, currency)}.`
+        : `It is moving about as usual: up to ${formatMoney(today, currency)} keeps a bad day within ${formatMoney(maxLoss, currency)}.`
+  return `${stance} ${mood}`
+}
+
+export function traderAnswer(analysis: AnalyzeResponse): string {
+  const advice = analysis.advice
+  if (!advice) return 'Too little history to test any trading rule.'
+  if (advice.stance !== 'hold') return stanceGuidance(advice, null, analysis.data.currency).buyer
+  if (advice.basis === 'proven_but_quiet') return 'A rule that has worked here has no signal today: wait for it rather than trade.'
+  if (advice.basis === 'news_conflict') return 'Wait: the tested rule and today’s news disagree.'
+  return 'No timing edge: none of the rules beat trading costs on its own past, so the next days or weeks are close to a coin flip after costs. Don’t trade it short term.'
+}
+
+export type Move = { kind: 'call' | 'long-term' | 'size' | 'avoid'; symbol: string; text: string; chance: number | null }
+
+/**
+ * Today's moves across the scanned list, strongest evidence first:
+ * - timing calls (only where a rule passed);
+ * - long-term: instruments whose 3-year chance of beating the deposit is at least 60 in 100,
+ *   best first, with single stocks set against NIFTY (an index fund doing about as well with
+ *   less single-company risk is the better move);
+ * - holders: the instruments moving most above their normal swings, with today's safe size;
+ * - avoid for the long term: chance under 55 in 100 (about a coin flip against the deposit).
+ */
+export function bestMoves(items: TodayItem[], fdRate: number, maxLoss: number): Move[] {
+  const name = (i: TodayItem) => i.name ?? i.symbol
+  const ok = items.filter((i) => !i.error)
+  const chance3 = (i: TodayItem) => {
+    const lr = i.long_run?.find((l) => l.years === 3)
+    return lr ? beatChance(lr, fdRate) : null
+  }
+  const chance5 = (i: TodayItem) => {
+    const lr = i.long_run?.find((l) => l.years === 5)
+    return lr ? beatChance(lr, fdRate) : null
+  }
+  const nifty = ok.find((i) => i.symbol === '^NSEI')
+  const niftyChance = nifty ? chance3(nifty) : null
+  const rate = `${Number((fdRate * 100).toFixed(2))}%`
+  const moves: Move[] = []
+  for (const i of ok) {
+    if (i.advice && i.advice.stance !== 'hold') {
+      moves.push({ kind: 'call', symbol: i.symbol, chance: i.advice.confidence?.hit_rate ?? null, text: `${i.advice.stance === 'buy' ? 'Buy' : 'Sell'} ${name(i)}: ${i.advice.headline}` })
+    }
+  }
+  // Currencies are prices, not places for long-term money.
+  const ranked = ok
+    .filter((i) => i.instrument_type !== 'CURRENCY')
+    .map((i) => ({ i, c: chance3(i) }))
+    .filter((x): x is { i: TodayItem; c: number } => x.c !== null)
+    .sort((a, b) => b.c - a.c)
+  // Best six, and NIFTY always: it is the reference most Indian investors compare with.
+  const top = ranked.filter((x) => x.c >= 0.6).slice(0, 6)
+  const niftyRow = ranked.find((x) => x.i.symbol === '^NSEI')
+  if (niftyRow && niftyRow.c >= 0.6 && !top.includes(niftyRow)) top.push(niftyRow)
+  for (const { i, c } of top) {
+    const five = chance5(i)
+    const vsIndex =
+      i.single_stock && niftyChance !== null
+        ? c <= niftyChance + 0.05
+          ? ` A NIFTY index fund did about as well (${chanceWords(niftyChance)}) without the single-company risk.`
+          : ` Ahead of NIFTY (${chanceWords(niftyChance)}), but one company can fall much further.`
+        : ''
+    moves.push({
+      kind: 'long-term',
+      symbol: i.symbol,
+      chance: c,
+      text: `For 3+ years, ${name(i)} beat a ${rate} FD in ${chanceWords(c)} of the futures built from its past swings${five !== null ? ` (5 years: ${chanceWords(five)})` : ''}.${vsIndex} Invest gradually and only money you won’t need.`,
+    })
+  }
+  // Stock-picking: with the market's growth, a single stock only adds its own extra swings.
+  const singles = ranked.filter((x) => x.i.single_stock && x.i.group === 'NIFTY 50')
+  if (niftyChance !== null && singles.length > 0) {
+    const behind = singles.filter((x) => x.c < niftyChance).length
+    moves.push({
+      kind: 'long-term',
+      symbol: 'index-vs-stocks',
+      chance: niftyChance,
+      text: `Picking single NIFTY 50 stocks: ${behind} of ${singles.length} had a lower long-term chance than a NIFTY index fund (${chanceWords(niftyChance)}). Their past growth can’t be told apart from luck, so they mostly add risk: an index fund is the evidence-based default.`,
+    })
+  }
+  const jumpy = ok
+    .filter((i) => (i.vol_ratio ?? 0) >= 1.05 && (i.es95 ?? 0) > 0)
+    .sort((a, b) => (b.vol_ratio ?? 0) - (a.vol_ratio ?? 0))
+    .slice(0, 3)
+  // Amounts in ₹: a bad-day loss is a share of what's held, whatever currency it trades in.
+  for (const i of jumpy) {
+    const normal = maxLoss / (i.es95 ?? 1)
+    const today = normal / (i.vol_ratio ?? 1)
+    moves.push({
+      kind: 'size',
+      symbol: i.symbol,
+      chance: null,
+      text: `If you hold ${name(i)}: it is moving ${(i.vol_ratio ?? 1).toFixed(1)}× more than usual, so keep it under ${formatMoney(today, 'INR')} for a bad day of ${formatMoney(maxLoss, 'INR')} (${formatMoney(normal, 'INR')} in normal times).`,
+    })
+  }
+  for (const { i, c } of ranked.filter((x) => x.c < 0.55).slice(-3).reverse()) {
+    const text =
+      c < 0.45
+        ? `For the long term, an FD at ${rate} has done better than ${name(i)} (it beat the FD in ${chanceWords(c)} over 3 years).`
+        : `For the long term, ${name(i)} has been about a coin flip against a ${rate} FD (${chanceWords(c)} over 3 years).`
+    moves.push({ kind: 'avoid', symbol: i.symbol, chance: c, text: `${text} No clear case to buy it for the long run.` })
+  }
+  return moves
 }

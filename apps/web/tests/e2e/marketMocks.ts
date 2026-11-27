@@ -384,20 +384,34 @@ export function todayResponse() {
     stance: 'hold', basis, headline: 'Hold. No rule has a proven edge on this instrument.', drivers: [], horizon_days: null,
     review_date: null, confidence: null, flip_level: null, reasons: [], news_headlines: [],
   })
+  // Long-run percentiles spread evenly from lo to hi (total log return over the period).
+  const runs = (lo3: number, hi3: number) =>
+    [3, 5].map((years) => ({
+      years,
+      resampled: Array.from({ length: 101 }, (_, p) => ((lo3 + ((hi3 - lo3) * p) / 100) * years) / 3),
+      historical: Array.from({ length: 101 }, (_, p) => ((lo3 + ((hi3 - lo3) * p) / 100) * years) / 3),
+      n_windows: 1000,
+      n_independent: Math.floor(10 / years),
+      worst: lo3,
+      block_length: 10,
+      drift_annual: 0.12,
+      drift_se_annual: 0.05,
+      drift_from: 'own history',
+    }))
   const item = (symbol: string, name: string, group: string, extra: Record<string, unknown> = {}) => ({
     symbol, name, group, currency: 'INR', instrument_type: 'EQUITY', last_price: 100, change_pct: 0.5,
     last_date: '2026-11-26', return_1y: 0.1, vol_annual: 0.2, lead_model: 'bootstrap', prob_gain_1m: 0.55,
     prob_gain_3m: 0.6, prob_loss_10pct_3m: 0.1, range_3m: [-0.15, 0.2], chance_check_3m: check(0.6, 0.6),
-    advice: hold('no_evidence'), news_vote: null, ...extra,
+    advice: hold('no_evidence'), news_vote: null, long_run: runs(-0.3, 0.5), vol_ratio: 1, es95: 0.025, ...extra,
   })
   return {
     as_of: '2026-11-27T09:00:00Z',
     notice: 'Research signals from past data, for a private beta. Not SEBI-registered investment advice: the app advises, you decide.',
     items: [
-      item('^NSEI', 'NIFTY 50', 'India index', { instrument_type: 'INDEX', vol_annual: 0.15 }),
-      item('RELIANCE.NS', 'Reliance Industries', 'NIFTY 50', { prob_gain_3m: 0.61, chance_check_3m: check(0.69, 0.55) }),
-      item('POWERGRID.NS', 'Power Grid', 'NIFTY 50', { advice: hold('proven_but_quiet') }),
-      item('GOLDBEES.NS', 'Gold ETF', 'Gold, silver, rupee', { instrument_type: 'ETF', vol_annual: 0.13, prob_loss_10pct_3m: 0.03 }),
+      item('^NSEI', 'NIFTY 50', 'India index', { instrument_type: 'INDEX', vol_annual: 0.15, long_run: runs(-0.2, 1.0) }),
+      item('RELIANCE.NS', 'Reliance Industries', 'NIFTY 50', { prob_gain_3m: 0.61, chance_check_3m: check(0.69, 0.55), long_run: runs(-0.1, 1.0), single_stock: true }),
+      item('POWERGRID.NS', 'Power Grid', 'NIFTY 50', { advice: hold('proven_but_quiet'), single_stock: true }),
+      item('GOLDBEES.NS', 'Gold ETF', 'Gold, silver, rupee', { instrument_type: 'ETF', vol_annual: 0.13, prob_loss_10pct_3m: 0.03, long_run: runs(0, 1.2), vol_ratio: 1.6, es95: 0.02 }),
       item('INR=X', 'USD/INR', 'Gold, silver, rupee', { instrument_type: 'CURRENCY', return_1y: 0.04, vol_annual: 0.05 }),
       item('MON100.NS', 'Nasdaq 100 ETF', 'US from India', { instrument_type: 'ETF', vol_annual: 0.2 }),
       item('NVDA', 'NVIDIA', 'AI', { currency: 'USD', return_1y: 0.3, vol_annual: 0.5, prob_gain_3m: 0.62 }),

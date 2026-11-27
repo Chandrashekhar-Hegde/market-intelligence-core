@@ -3,6 +3,7 @@
 //! crypto, FX, any exchange). A benchmark is optional and only adds the exposure section.
 
 pub mod distribution;
+pub mod long_run;
 pub mod macro_news;
 pub mod montecarlo;
 pub mod multi;
@@ -65,6 +66,8 @@ pub struct AnalysisInput<'a> {
     pub horizons: &'a [usize],
     pub n_paths: usize,
     pub seed: u64,
+    /// For a single stock: its home index's prices, whose growth the long-run futures use.
+    pub long_run_drift_from: Option<(&'a str, &'a [(NaiveDate, f64)])>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -84,6 +87,9 @@ pub struct AnalysisReport {
     pub benchmark: Option<BenchmarkExposure>,
     /// Out-of-sample scores of the 1-day forecasts; None below 600 returns.
     pub validation: Option<Validation>,
+    /// 1, 3 and 5-year outcome distributions (resampled and as they happened), to compare with a
+    /// fixed deposit. None below a year of history.
+    pub long_run: Option<Vec<long_run::LongRun>>,
     /// The projection to show first, chosen by validation (see `lead_projection`).
     pub lead_model: String,
     pub lead_reason: String,
@@ -133,6 +139,19 @@ pub fn analyze(input: &AnalysisInput) -> Result<AnalysisReport, AnalysisError> {
         .and_then(|(symbol, bars)| risk::exposure(symbol, prices, bars, periods_per_year));
 
     let validation = validation::validate(&returns);
+    // A single stock grows like its market (see long_run.rs); everything else, like itself.
+    let index_drift = input.long_run_drift_from.and_then(|(symbol, bars)| {
+        let r: Vec<f64> = bars.windows(2).map(|w| (w[1].1 / w[0].1).ln()).collect();
+        (r.len() >= 250).then(|| (long_run::Drift::of(&r), symbol))
+    });
+    let (drift, drift_from) = index_drift.unwrap_or((long_run::Drift::of(&returns), "own history"));
+    let long_run = long_run::long_run(
+        &returns,
+        periods_per_year,
+        drift,
+        drift_from,
+        input.seed ^ 0x0001_0962_u64,
+    );
     let (lead_model, lead_reason) = lead_projection(&projections, validation.as_ref());
 
     let mut report = AnalysisReport {
@@ -149,6 +168,7 @@ pub fn analyze(input: &AnalysisInput) -> Result<AnalysisReport, AnalysisError> {
         risk,
         benchmark,
         validation,
+        long_run,
         lead_model: lead_model.into(),
         lead_reason: lead_reason.into(),
         findings: Vec::new(),

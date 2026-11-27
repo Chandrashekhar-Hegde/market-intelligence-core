@@ -25,7 +25,7 @@ use gm_integrations::universe::{NIFTY50, OTHER_ASSETS, companies_named};
 use serde::Deserialize;
 
 use super::{
-    ApiError, AppState, desk_stories, news_votes_for, trading_signals, validate_symbol, vote_on,
+    ApiError, AppState, desk_stories, is_single_stock, trading_signals, validate_symbol, vote_on,
 };
 
 pub const TTL: Duration = Duration::from_secs(30 * 60);
@@ -93,6 +93,27 @@ async fn entry(
         .map(|b| (b.date, b.adjusted_close()))
         .collect();
     let sym = meta.symbol.clone();
+    // A single stock's long-run growth is its home index's (see long_run.rs).
+    let index = match is_single_stock(meta.instrument_type.as_deref(), meta.name.as_deref())
+        .then(|| {
+            gm_integrations::markets::default_benchmark(
+                &meta.symbol,
+                meta.instrument_type.as_deref(),
+                meta.currency.as_deref(),
+            )
+        })
+        .flatten()
+    {
+        Some((bench, _)) => state.yahoo.chart(bench, "10y").await.ok().map(|c| {
+            let closes: Vec<_> = c
+                .bars
+                .iter()
+                .map(|b| (b.date, b.adjusted_close()))
+                .collect();
+            (bench.to_string(), closes)
+        }),
+        None => None,
+    };
     let report = tokio::task::spawn_blocking(move || {
         analyze(&AnalysisInput {
             symbol: &sym,
@@ -101,6 +122,7 @@ async fn entry(
             horizons: &DEFAULT_HORIZONS,
             n_paths: PATHS,
             seed: 42,
+            long_run_drift_from: index.as_ref().map(|(s, p)| (s.as_str(), p.as_slice())),
         })
     })
     .await
@@ -111,9 +133,8 @@ async fn entry(
         .await
         .ok()
         .flatten();
-    let vote = news_votes_for(meta.instrument_type.as_deref())
-        .then(|| news.get(&meta.symbol))
-        .flatten();
+    let single = is_single_stock(meta.instrument_type.as_deref(), meta.name.as_deref());
+    let vote = single.then(|| news.get(&meta.symbol)).flatten();
     let advice = signals.as_ref().map(|(signals, every_day)| {
         let input = vote.map(|(vote, headlines)| NewsInput { vote, headlines });
         advise_with_news(signals, *every_day, input.as_ref())
@@ -135,6 +156,44 @@ async fn entry(
         Some(last / then - 1.0)
     };
     let year = (report.periods_per_year.round() as usize).max(1);
+    // 3 and 5 years only, rounded: enough for the page to compare with any deposit rate.
+    let round = |v: &[f64]| {
+        v.iter()
+            .map(|x| (x * 1e4).round() / 1e4)
+            .collect::<Vec<_>>()
+    };
+    let long_run: Vec<_> = report
+        .long_run
+        .iter()
+        .flatten()
+        .filter(|l| l.years >= 3)
+        .map(|l| {
+            serde_json::json!({
+                "years": l.years,
+                "resampled": round(&l.resampled),
+                "historical": round(&l.historical),
+                "n_windows": l.n_windows,
+                "n_independent": l.n_independent,
+                "worst": l.worst,
+                "block_length": l.block_length,
+                "drift_annual": l.drift_annual,
+                "drift_se_annual": l.drift_se_annual,
+                "drift_from": l.drift_from,
+            })
+        })
+        .collect();
+    let vol_ratio = report
+        .volatility
+        .garch
+        .as_ref()
+        .filter(|g| g.long_run_vol_annual > 0.0)
+        .map(|g| g.current_vol_annual / g.long_run_vol_annual);
+    let es95 = report
+        .risk
+        .var_es
+        .iter()
+        .find(|v| v.method == "historical" && (v.confidence - 0.95).abs() < 1e-9)
+        .map(|v| v.es);
     Ok(serde_json::json!({
         "symbol": meta.symbol,
         "name": meta.name,
@@ -152,6 +211,10 @@ async fn entry(
         "prob_loss_10pct_3m": horizon(63).map(|h| h.prob_loss_over_10pct),
         "range_3m": horizon(63).map(|h| [h.return_quantiles[0], h.return_quantiles[4]]),
         "chance_check_3m": check,
+        "long_run": long_run,
+        "single_stock": single,
+        "vol_ratio": vol_ratio,
+        "es95": es95,
         "advice": advice,
         "news_vote": vote.map(|(v, _)| v),
     }))

@@ -348,6 +348,41 @@ This is the market-model abnormal return (MacKinlay 1997), applied intraday.
 
 **How news enters the advice:** see "News reading" (Phase 0.7, #114).
 
+## Long run against a fixed deposit (`report.long_run`, `analysis/long_run.rs`)
+
+The decision most people face is "should this money be here or in an FD?", not "can I time it?".
+A panel test on the NIFTY 50 (10 years, 105 monthly rebalances) found no timing edge: momentum,
+low volatility, reversals, 52-week highs and the pooled 200-day trend are all insignificant.
+- **Distribution.** At 1, 3 and 5 years the total log return is computed two ways.
+  - *Resampled:* a stationary bootstrap of the de-meaned daily returns (block length from
+    Politis & White 2004 on the returns), 2,000 paths. Each path adds a growth rate drawn from
+    N(drift, se²), because ten years pin an average down only to about ±σ/√10.
+  - *As it happened:* every overlapping past window, with how many separate periods there are.
+    NIFTY's "88 in 100" 3-year windows rest on only 3 separate periods; resampled, it's
+    about 65–70 in 100.
+- **Growth for single stocks is their market's.** Fitted on the NIFTY 50, 2016–2026: the
+  spread of the stocks' 10-year average returns (8% a year) is smaller than sampling noise alone
+  (10% a year), so the data can't tell their true growth apart (method-of-moments τ̂ = 0). The
+  group average (16%) is inflated by survivorship (today's members are past winners), so the
+  home index's growth and its uncertainty are used: NIFTY for India, the S&P 500 for the US. The
+  stock's own swings are kept. Indices, funds, ETFs, gold, FX and crypto use their own growth.
+  Yahoo labels Indian ETFs "EQUITY", so names with ETF, BeES, fund or index aren't single stocks.
+- **Chance to beat a deposit at rate r** = the share of percentiles above years × ln(1 + r).
+  The FD rate is editable on the page; the default is 7%, a typical big-bank 1–3 year rate.
+- **Wording tiers.** At 80 in 100 or more (the owner's bar, 27 Nov 2026), "clearly beaten".
+  From 60, "usually, but not reliably: invest gradually". Under 45, "an FD has done better".
+  In between, "about a coin flip".
+- **Holder size today.** The most to hold so the average bad day (worst 1 in 20, historical
+  ES) costs the chosen limit, divided by today's GARCH volatility over its long-run level.
+- **Best moves today** (Today page):
+  - timing calls, where any pass;
+  - up to six instruments, plus NIFTY, with a 3-year chance of at least 60 in 100;
+  - how many single NIFTY 50 stocks fall below the index fund's chance;
+  - the three most unusually jumpy instruments, with today's size;
+  - the weakest long-term cases.
+
+  Currencies are excluded from the long-term list.
+
 ## Today's list (`/api/v1/today`, web "Today")
 
 - **Universe.** The NIFTY 50 (`gm-integrations/src/universe.rs`, membership as of late 2025,
@@ -493,4 +528,4 @@ JBES 13; Gneiting & Raftery (2007) JASA 102; Kupiec (1995) J. Derivatives 3; Fab
 Granville (1963) New Key to Stock Market Profits; Hansen & Hodrick (1980) JPE 88; Holm (1979) Scand.
 J. Statistics 6; Jegadeesh (1990) J. Finance 45; Jegadeesh & Titman (1993) J. Finance 48; Lehmann
 (1990) QJE 105; Moskowitz, Ooi & Pedersen (2012) JFE 104; Newey & West (1987) Econometrica 55;
-Wilder (1978) New Concepts in Technical Trading Systems; Wilson (1927) JASA 22. MacKinlay (1997) J. Economic Literature 35. Evans (1996) Straightforward Statistics for the Behavioral Sciences. Brier (1950) Monthly Weather Review 78; Maillard, Roncalli & Teïletche (2010) J. Portfolio Management 36(4); Gigerenzer & Hoffrage (1995) Psychological Review 102.
+Wilder (1978) New Concepts in Technical Trading Systems; Wilson (1927) JASA 22. MacKinlay (1997) J. Economic Literature 35. Evans (1996) Straightforward Statistics for the Behavioral Sciences. Brier (1950) Monthly Weather Review 78; Politis & Romano (1994) JASA 89; Maillard, Roncalli & Teïletche (2010) J. Portfolio Management 36(4); Gigerenzer & Hoffrage (1995) Psychological Review 102.
