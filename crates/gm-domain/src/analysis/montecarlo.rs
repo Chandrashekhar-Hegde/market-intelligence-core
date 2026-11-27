@@ -29,6 +29,10 @@ pub struct Projection {
     pub horizons: Vec<HorizonSummary>,
     /// The first `SAMPLE_PATHS` simulated price paths, one price per day.
     pub sample_paths: Vec<Vec<f64>>,
+    /// The simulated path that stays closest to the median day by day (least total distance
+    /// in log price): a typical path to highlight. A random walk has no single "most likely"
+    /// path; this is the most ordinary one of those simulated.
+    pub typical_path: Vec<f64>,
     /// Mean block length of the stationary bootstrap (bootstrap model only).
     pub block_length: Option<f64>,
 }
@@ -189,16 +193,32 @@ fn simulate(
             worst_dd[d][p] = dd;
         }
     }
+    let mut medians = Vec::with_capacity(days);
     let fan = paths
         .iter()
         .enumerate()
         .map(|(d, day)| {
             let s = numeric::sorted(day);
+            medians.push(numeric::quantile_sorted(&s, 0.5));
             FanPoint {
                 day: d + 1,
                 price: QUANTILES.map(|q| inputs.last_price * numeric::quantile_sorted(&s, q).exp()),
             }
         })
+        .collect();
+    let distance = |p: usize| -> f64 {
+        paths
+            .iter()
+            .zip(&medians)
+            .map(|(day, m)| (day[p] - m).abs())
+            .sum()
+    };
+    let typical = (0..n)
+        .min_by(|a, b| distance(*a).total_cmp(&distance(*b)))
+        .unwrap_or(0);
+    let typical_path = paths
+        .iter()
+        .map(|day| inputs.last_price * day.get(typical).copied().unwrap_or(0.0).exp())
         .collect();
     let horizons = inputs
         .horizons
@@ -235,6 +255,7 @@ fn simulate(
         fan,
         horizons,
         sample_paths,
+        typical_path,
         block_length: None,
     }
 }
@@ -301,6 +322,23 @@ mod tests {
         // than GBM's with the same overall σ.
         let gbm = &out[0].horizons[1].return_quantiles[0];
         assert!(boot.horizons[1].return_quantiles[0] < 0.0 && gbm < &0.0);
+    }
+
+    #[test]
+    fn typical_path_hugs_the_median() {
+        let h = history();
+        for p in project(&inputs("X", &h)) {
+            assert_eq!(p.typical_path.len(), 21);
+            // Every day it sits inside the central 50% band.
+            for (price, fan) in p.typical_path.iter().zip(&p.fan) {
+                assert!(
+                    *price >= fan.price[1] && *price <= fan.price[3],
+                    "{}: {price} outside {:?}",
+                    p.model,
+                    fan.price
+                );
+            }
+        }
     }
 
     #[test]

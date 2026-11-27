@@ -155,6 +155,26 @@ fn check_series(csv: &str, key: &str) {
         "max drawdown",
     );
     close(r.risk.sharpe, &x["sharpe"], 1e-9, "Sharpe");
+
+    // The lead forecast follows validation: GARCH-t only when it earns its place.
+    let v = r.validation.as_ref().expect("5 years validates");
+    let garch_earns = v
+        .models
+        .iter()
+        .any(|m| m.model == "garch_t" && m.verdict.starts_with("Earns its place"));
+    assert_eq!(
+        r.lead_model,
+        if garch_earns { "garch_t" } else { "bootstrap" },
+        "{key}"
+    );
+    assert_eq!(
+        v.chance_of_gain.len(),
+        3,
+        "{key}: 5 years scores all horizons"
+    );
+    for c in &v.chance_of_gain {
+        assert!((0.0..=1.0).contains(&c.brier) && c.n >= 10, "{key}: {c:?}");
+    }
 }
 
 #[test]

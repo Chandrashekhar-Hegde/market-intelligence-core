@@ -8,6 +8,7 @@ import {
   horizonWords,
   maxPosition,
   meaningCards,
+  chanceWords,
   preferredProjection,
   projectionSource,
   stanceGuidance,
@@ -196,8 +197,8 @@ function AdviceCard({ analysis, livePrice }: { analysis: AnalyzeResponse; livePr
       {confidence ? (
         <div className="confidence" aria-label="How often this rule was right">
           <p>
-            Right <strong>{formatPct(confidence.hit_rate, 0)}</strong> of the time over {confidence.n} past calls (likely
-            between {formatPct(confidence.low, 0)} and {formatPct(confidence.high, 0)}).
+            Right <strong>{Math.round(confidence.hit_rate * 100)} times in 100</strong> over {confidence.n} past calls
+            (likely between {Math.round(confidence.low * 100)} and {Math.round(confidence.high * 100)} in 100).
           </p>
           <div className="confidence-bar" aria-hidden="true">
             <span className="confidence-range" style={{ left: `${confidence.low * 100}%`, width: `${(confidence.high - confidence.low) * 100}%` }} />
@@ -353,8 +354,12 @@ function MeaningPanel({
         <>
           <h4 className="advice-subhead">Range of outcomes over the next three months</h4>
           <p className="quiet-copy">
-            {projectionSource(projection)} Each faint grey line is one of those futures; the middle line is the typical
-            one, half stay between the dotted lines and 9 in 10 between the dashed ones. The scale is % up or down from
+            {analysis.report.lead_reason} {projectionSource(projection)}
+          </p>
+          <p className="quiet-copy">
+            Each faint grey line is one possible future. The <strong className="typical-key">orange line</strong> is
+            the most ordinary of them (a typical path, not a promise: no single path is “the likely one”). 1 in 2
+            chance it ends between the dotted lines, 9 in 10 between the dashed ones. The scale is % up or down from
             today.
           </p>
           <FanChart projection={projection} report={analysis.report} history={history} />
@@ -437,12 +442,13 @@ function ForecastPanel({ analysis }: { analysis: AnalyzeResponse }) {
               onClick={() => setModel(p.model)}
             >
               {MODEL_SHORT[p.model]}
+              {p.model === report.lead_model ? ' · leads' : ''}
             </button>
           ))}
         </div>
       </div>
       <p className="quiet-copy">
-        {MODEL_LABEL[projection.model]}. Bands hold 50% and 90% of simulated paths. The drift is the
+        {MODEL_LABEL[projection.model]}. {projection.model === report.lead_model ? report.lead_reason : ''} Bands hold 50% and 90% of simulated paths. The drift is the
         historical average return, which is known only to ± {formatPct(report.distribution.mean_annual_se)} a year.
       </p>
       <table className="event-table data-table">
@@ -452,9 +458,9 @@ function ForecastPanel({ analysis }: { analysis: AnalyzeResponse }) {
             <th scope="col">Horizon</th>
             <th scope="col">Median</th>
             <th scope="col">90% range</th>
-            <th scope="col">P(gain)</th>
-            <th scope="col">P(loss &gt; 10%)</th>
-            <th scope="col">P(drawdown &gt; 10%)</th>
+            <th scope="col">Chance higher</th>
+            <th scope="col">Chance down &gt; 10%</th>
+            <th scope="col">Chance of a 10% fall on the way</th>
           </tr>
         </thead>
         <tbody>
@@ -465,9 +471,9 @@ function ForecastPanel({ analysis }: { analysis: AnalyzeResponse }) {
               <td>
                 {formatPct(h.return_quantiles[0])} to {formatPct(h.return_quantiles[4])}
               </td>
-              <td>{formatPct(h.prob_gain, 0)}</td>
-              <td>{formatPct(h.prob_loss_over_10pct, 0)}</td>
-              <td>{formatPct(h.prob_drawdown_over_10pct, 0)}</td>
+              <td>{chanceWords(h.prob_gain)}</td>
+              <td>{chanceWords(h.prob_loss_over_10pct)}</td>
+              <td>{chanceWords(h.prob_drawdown_over_10pct)}</td>
             </tr>
           ))}
         </tbody>
@@ -538,6 +544,20 @@ function FanChart({
       { color: '#1f7a68', lineStyle: LineStyle.Dotted },
       { color: '#b4443a', lineStyle: LineStyle.Dashed },
     ]
+    if (projection.typical_path.length) {
+      chart
+        .addSeries(LineSeries, {
+          color: '#c46a12',
+          lineWidth: 3,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          priceFormat: percentFormat,
+        })
+        .setData([
+          { time: report.last_date, value: 0 },
+          ...projection.typical_path.map((price, i) => ({ time: dates[i] ?? report.last_date, value: pct(price) })),
+        ] as LineData<string>[])
+    }
     lines.forEach((points, q) => {
       chart
         .addSeries(LineSeries, {

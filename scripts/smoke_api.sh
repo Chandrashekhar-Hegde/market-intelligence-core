@@ -249,6 +249,12 @@ assert all(len(p["fan"]) == 63 and len(p["sample_paths"]) == 30 for p in report[
 assert report["findings"], "no findings"
 v = report["validation"]
 assert v and v["n_forecasts"] > 500 and len(v["models"]) == 3, v and v["n_forecasts"]
+assert all(len(p["typical_path"]) == 63 for p in report["projections"])
+garch_earns = any(m["model"] == "garch_t" and m["verdict"].startswith("Earns") for m in v["models"])
+assert report["lead_model"] == ("garch_t" if garch_earns else "bootstrap"), report["lead_model"]
+assert [c["horizon_days"] for c in v["chance_of_gain"]] == [5, 21, 63], v["chance_of_gain"]
+c = v["chance_of_gain"][-1]
+print(f"  {symbol}: leads {report['lead_model']}; 3-month gain said {c['mean_forecast']:.0%}, rose {c['realised']:.0%} over {c['n']} checks, skill vs coin {c['skill_vs_coin']:+.2f} (p={c['vs_coin']['p_value']:.2f})")
 if bench:
     assert payload["benchmark"]["symbol"] == bench and payload["benchmark"]["used"], payload["benchmark"]
     assert 0.0 < report["benchmark"]["beta"] < 3.0, report["benchmark"]
