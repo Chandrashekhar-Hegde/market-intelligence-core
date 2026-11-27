@@ -563,6 +563,30 @@ describe('Markets view', () => {
     expect(await screen.findByTestId('candle-count')).toHaveTextContent('4')
   })
 
+  test('a live tick recalculates the forecast fan from the live price', async () => {
+    const fetchMock = mockApi({
+      '/api/v1/projection': (url) => {
+        const a = analysis()
+        return Response.json({
+          symbol: url.searchParams.get('symbol'),
+          price: Number(url.searchParams.get('price')),
+          last_close: 25349.65,
+          last_date: '2026-11-24',
+          computed_at: '2026-11-25T05:30:00Z',
+          projections: a.report.projections,
+        })
+      },
+    })
+    renderMarkets()
+    await screen.findByTestId('meaning-cards')
+    expect(screen.queryByTestId('live-forecast')).not.toBeInTheDocument()
+    FakeEventSource.instances.at(-1)!.emit('tick', tick({ tick_time: new Date().toISOString() }))
+    expect(await screen.findByTestId('live-forecast')).toHaveTextContent(
+      'Live: recalculated from ₹25,410.50 at 11:00:00 am IST (last close ₹25,349.65)',
+    )
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/projection?symbol=%5ENSEI&price=25410.5'), expect.anything())
+  })
+
   test('ticks for other symbols are ignored', async () => {
     mockApi()
     renderMarkets()

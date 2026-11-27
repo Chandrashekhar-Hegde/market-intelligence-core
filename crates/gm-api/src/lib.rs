@@ -93,7 +93,18 @@ struct AppState {
     gdelt: gm_integrations::gdelt::GdeltClient,
     news: gm_integrations::news::NewsClient,
     llm: Option<gm_integrations::llm::LlmReader>,
+    live_fits: Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<LiveFit>>>>,
     access_token: Option<Arc<str>>,
+}
+
+/// What a live forecast needs from the daily history, fitted once per new daily close.
+/// ponytail: one entry per symbol ever viewed, never evicted; fine for a private beta, add an
+/// LRU if memory matters.
+struct LiveFit {
+    last_date: chrono::NaiveDate,
+    last_close: f64,
+    returns: Vec<f64>,
+    garch: Option<gm_domain::analysis::volatility::Garch>,
 }
 
 #[derive(Debug, Serialize)]
@@ -317,6 +328,7 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
     };
 
     let state = AppState {
+        live_fits: Arc::default(),
         registry: Arc::new(RuleRegistry::builtin()),
         store,
         payment_provider: Arc::new(MockPaymentProvider::test_mode(
@@ -377,6 +389,7 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
         .route("/api/v1/news", get(news))
         .route("/api/v1/stream", get(stream))
         .route("/api/v1/analyze", get(analyze_instrument))
+        .route("/api/v1/projection", get(live_projection))
         .route("/api/v1/compare", get(compare_instruments))
         .route("/access", post(grant_access));
     let router = match config.web_assets {
@@ -900,6 +913,100 @@ async fn analyze_instrument(
             "currency": bench_currency,
             "note": currency_note,
         })),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectionQuery {
+    symbol: String,
+    price: f64,
+    seed: Option<u64>,
+}
+
+/// The forecast fan from a live price: the daily fit (10 years, refitted once per new close)
+/// re-anchored at `price`, with today's move so far fed into GARCH. Milliseconds once fitted.
+async fn live_projection(
+    State(state): State<AppState>,
+    Query(query): Query<ProjectionQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use gm_domain::analysis::{DEFAULT_HORIZONS, DEFAULT_PATHS, LiveInput, live_projections};
+    let chart = state
+        .yahoo
+        .chart(&query.symbol, "10y")
+        .await
+        .map_err(ApiError::provider)?;
+    let symbol = chart.meta.symbol.clone();
+    let Some(last) = chart.bars.last() else {
+        return Err(ApiError::bad_request(format!("{symbol}: no daily history")));
+    };
+    let (last_date, last_close) = (last.date, last.adjusted_close());
+    // A live price more than 50% from the last close is a bad input, not a market move.
+    if !(query.price.is_finite()
+        && query.price > 0.0
+        && (query.price / last_close).ln().abs() < 0.7)
+    {
+        return Err(ApiError::bad_request(format!(
+            "price must be a positive live price near the last close ({last_close:.2})"
+        )));
+    }
+    let cached = state
+        .live_fits
+        .lock()
+        .expect("live fits lock")
+        .get(&symbol)
+        .filter(|f| f.last_date == last_date)
+        .cloned();
+    let fit = match cached {
+        Some(fit) => fit,
+        None => {
+            let closes: Vec<f64> = chart.bars.iter().map(|b| b.adjusted_close()).collect();
+            let fit = tokio::task::spawn_blocking(move || {
+                let returns: Vec<f64> = closes.windows(2).map(|w| (w[1] / w[0]).ln()).collect();
+                let garch = gm_domain::analysis::volatility::fit_garch(&returns, 252.0);
+                Arc::new(LiveFit {
+                    last_date,
+                    last_close,
+                    returns,
+                    garch,
+                })
+            })
+            .await
+            .map_err(|e| ApiError::bad_request(format!("fit failed: {e}")))?;
+            state
+                .live_fits
+                .lock()
+                .expect("live fits lock")
+                .insert(symbol.clone(), Arc::clone(&fit));
+            fit
+        }
+    };
+    if fit.returns.len() < 60 {
+        return Err(ApiError::bad_request(format!(
+            "{symbol}: too little history"
+        )));
+    }
+    let (price, seed, sym) = (query.price, query.seed.unwrap_or(42), symbol.clone());
+    let projections = tokio::task::spawn_blocking(move || {
+        live_projections(&LiveInput {
+            symbol: &sym,
+            returns: &fit.returns,
+            garch: fit.garch.as_ref(),
+            last_close: fit.last_close,
+            live_price: price,
+            horizons: &DEFAULT_HORIZONS,
+            n_paths: DEFAULT_PATHS,
+            seed,
+        })
+    })
+    .await
+    .map_err(|e| ApiError::bad_request(format!("projection failed: {e}")))?;
+    Ok(Json(serde_json::json!({
+        "symbol": symbol,
+        "price": query.price,
+        "last_close": last_close,
+        "last_date": last_date,
+        "computed_at": chrono::Utc::now(),
+        "projections": projections,
     })))
 }
 
@@ -3349,6 +3456,47 @@ mod tests {
         // No news source answered: no vote, and the rules' advice stands on its own.
         assert!(body["news_vote"].is_null());
         assert!(advice["news_headlines"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn live_projection_starts_at_the_live_price_and_rejects_nonsense() {
+        let app = market_app(false, None).await;
+        let (_, base) = get_json(app.clone(), "/api/v1/bars?symbol=RELIANCE.NS&range=10y").await;
+        let bars = base["chart"]["bars"].as_array().unwrap();
+        let last = bars.last().unwrap()["adj_close"].as_f64().unwrap();
+        let live = last * 1.03;
+        let (status, body) = get_json(
+            app.clone(),
+            &format!("/api/v1/projection?symbol=RELIANCE.NS&price={live}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["last_close"].as_f64().unwrap(), last);
+        let projections = body["projections"].as_array().unwrap();
+        let models: Vec<_> = projections
+            .iter()
+            .map(|p| p["model"].as_str().unwrap())
+            .collect();
+        assert_eq!(models, ["gbm", "garch_t", "bootstrap"]);
+        // Day-1 median sits near the live price, not yesterday's close.
+        let median = projections[2]["fan"][0]["price"][2].as_f64().unwrap();
+        assert!((median / live - 1.0).abs() < 0.01, "{median} vs {live}");
+        assert_eq!(projections[2]["typical_path"].as_array().unwrap().len(), 63);
+        // Same price twice: identical (cached fit, seeded draws).
+        let (_, again) = get_json(
+            app.clone(),
+            &format!("/api/v1/projection?symbol=RELIANCE.NS&price={live}"),
+        )
+        .await;
+        assert_eq!(body["projections"], again["projections"]);
+        for bad in ["0", "-5", "NaN", &format!("{}", last * 3.0)] {
+            let (status, _) = get_json(
+                app.clone(),
+                &format!("/api/v1/projection?symbol=RELIANCE.NS&price={bad}"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "price={bad}");
+        }
     }
 
     #[tokio::test]

@@ -81,6 +81,11 @@ Invalid input returns `400`, an unknown symbol `404`, and an upstream failure `5
 
 ## Analysis Endpoint
 
+`GET /api/v1/projection?symbol=&price=&seed=42` returns the forecast fans recomputed from a live
+`price`: `{symbol, price, last_close, last_date, computed_at, projections}`, with `projections`
+shaped as in `/analyze`. The 10-year daily fit is cached per symbol until the next close. A
+price more than about 50% away from the last close is a 400.
+
 `GET /api/v1/analyze?symbol=&range=10y&benchmark=auto&seed=42&paths=2000` analyses any symbol (default `10y` since 27 Nov 2026; the app offers 5 or 10 years):
 
 - `report` holds `distribution`, `predictability`, `volatility` (EWMA and GARCH-t),

@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
 
 export type HealthResponse = {
   status: string
@@ -434,6 +435,51 @@ export function useAnalysis(symbol: string, range: AnalysisRange = '10y') {
     queryFn: () => fetchAnalysis(symbol, range),
     staleTime: 15 * 60_000,
     retry: (count, error) => count < 1 && !/^4\d\d/.test(error.message),
+  })
+}
+
+export type LiveProjection = {
+  symbol: string
+  price: number
+  last_close: number
+  last_date: string
+  computed_at: string
+  projections: Projection[]
+}
+
+/** `value`, changing at most once every `ms` (the latest value wins at the end of each wait). */
+export function useThrottled<T>(value: T, ms: number): T {
+  const [shown, setShown] = useState(value)
+  const last = useRef(0)
+  useEffect(() => {
+    // Nothing yet (or gone): pass it straight through, so the first real value isn't held up.
+    if (value === null || value === undefined) {
+      setShown(value)
+      return undefined
+    }
+    const wait = Math.max(0, last.current + ms - Date.now())
+    const timer = setTimeout(() => {
+      last.current = Date.now()
+      setShown(value)
+    }, wait)
+    return () => clearTimeout(timer)
+  }, [value, ms])
+  return shown
+}
+
+/**
+ * The forecast recomputed from the live price (at most every 5 s). The previous fan stays on
+ * screen while the next one is computed.
+ */
+export function useLiveProjection(symbol: string, livePrice: number | null) {
+  const price = useThrottled(livePrice, 5_000)
+  return useQuery<LiveProjection>({
+    queryKey: ['projection', symbol, price],
+    queryFn: () => request<LiveProjection>(`/api/v1/projection?symbol=${encodeURIComponent(symbol)}&price=${price}`),
+    enabled: price !== null && price > 0,
+    placeholderData: keepPreviousData,
+    staleTime: Infinity,
+    retry: false,
   })
 }
 
