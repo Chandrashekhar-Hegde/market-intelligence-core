@@ -241,3 +241,9 @@ export function timeAgo(iso: string, now: number): string {
   const hours = Math.round(minutes / 60)
   return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`
 }
+
+/** Saved order first (ids that still exist), then any new modules in their default place. */
+export function orderedIds(defaults: string[], saved: string[]): string[] {
+  const kept = saved.filter((id) => defaults.includes(id))
+  return [...kept, ...defaults.filter((id) => !kept.includes(id))]
+}
