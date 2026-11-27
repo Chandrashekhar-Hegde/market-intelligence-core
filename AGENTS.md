@@ -169,10 +169,13 @@ Production-like (one origin, gated): build the web app with `VITE_API_BASE_URL=`
 - **Railway:**
   - Project `market-intelligence-core`, service `gm-api`, environment `production`.
   - It is connected to GitHub `main` and builds from the `Dockerfile`.
-  - No database is attached; nothing needs one yet.
+  - No database is attached. A small volume holds the news recorder's file (`/data/news.jsonl`).
 - **Environment variables:** `GM_ACCESS_TOKEN` (the beta gate) and `RUST_LOG`. Optional:
   `GM_LLM_BASE_URL`, `GM_LLM_MODEL`, `GM_LLM_API_KEY` turn on a model that reads news headlines
-  (any OpenAI-compatible endpoint); without them the built-in reader is used. The Dockerfile sets
+  (any OpenAI-compatible endpoint); without them the built-in reader is used. `GM_DATA_DIR`
+  turns on the news recorder (Phase 0.8). In production it points at a Railway volume mounted at
+  `/data`, with `RAILWAY_RUN_UID=0` so `docker-entrypoint.sh` can give the volume to the `gm`
+  user before dropping root. The server itself never runs as root. The Dockerfile sets
   `GM_CORS_ORIGINS=none`. Railway injects `PORT`, which the server reads before `GM_PORT`.
 - **The access token lives only in Railway.** Read it with `railway variable list --service gm-api`.
   Never commit it, print it in logs, or paste it into issues or PRs.

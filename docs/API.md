@@ -88,6 +88,12 @@ Invalid input returns `400`, an unknown symbol `404`, and an upstream failure `5
 
 The leans are uncalibrated and never feed the advice.
 
+`GET /api/v1/calibration?reader=built-in|llm` reports the calibration run: `{recording, reader,
+n_records, first_seen, last_recorded, company_events, market_events, min_events,
+after_1_session, after_5_sessions, note}`. Each `after_*` holds `company` and `market` lists of
+`{group, direction, n, mean, se, hit_rate, enough}`. `recording` is false when `GM_DATA_DIR` is
+unset. `reader=llm` needs `GM_LLM_*` and answers 400 without them.
+
 `GET /api/v1/projection?symbol=&price=&seed=42` returns the forecast fans recomputed from a live
 `price`: `{symbol, price, last_close, last_date, computed_at, projections}`, with `projections`
 shaped as in `/analyze`. The 10-year daily fit is cached per symbol until the next close. A

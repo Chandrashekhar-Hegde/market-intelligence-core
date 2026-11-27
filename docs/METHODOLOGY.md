@@ -371,6 +371,30 @@ This is the market-model abnormal return (MacKinlay 1997), applied intraday.
   rate hikes" still reads as a hike. An optional model reader (`GM_LLM_*`) or Claude (#121) can
   replace it.
 
+## Calibration run (`/api/v1/calibration`, `gm-api/src/recorder.rs`)
+
+The news weights are judgement until outcomes test them (owner decision, 27 Nov 2026: record
+now, calibrate later, compare with a model reader once one is configured).
+- **Recording.** Every 30 minutes the recorder reads the desk sources and appends each new
+  headline once (by normalised title) to `news.jsonl` in `GM_DATA_DIR`, a Railway volume. Each
+  line holds the time, source, the NIFTY 50 companies named (whole-word match on the names
+  headlines use, `gm-integrations/src/universe.rs`), the company reading and the market reading.
+  Prices are not stored; outcomes are computed from price history when asked.
+- **Events.** One per (company, kind, day) and per (asset, theme, day), so many outlets covering
+  one event count once. Only voting kinds with a direction count. The event day is the story's
+  date if it appeared before the 15:30 IST close, else the next day.
+- **Outcome.** The log return from the close before the event day to the close 1 and 5 sessions
+  later. For companies it is taken beyond NIFTY 50 over the same days (the market-adjusted model,
+  MacKinlay 1997). Market news uses the asset's raw return. US assets use the IST event day,
+  an approximation.
+- **Study.** For each (kind or asset, direction): n, mean and standard error, and the share that
+  moved the way the reading said. A group needs **30 events** before its average move can
+  replace a judgement weight. On about 60 stocks that is expected to take 2–3 months.
+- **Comparing readers.** `?reader=llm` re-reads the recorded company headlines with the
+  configured model (`GM_LLM_*`, 20 per call) and runs the same study. Whichever reader's
+  readings are followed by moves in the stated direction more often, with enough events, should
+  read the news.
+
 ## News reading and the news vote (`analysis/news_reader.rs`)
 
 **Reading a headline.**

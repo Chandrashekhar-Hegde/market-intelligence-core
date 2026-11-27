@@ -71,9 +71,102 @@ pub fn impact(input: &ImpactInput, story_at: i64) -> Option<Impact> {
     })
 }
 
+/// One recorded headline and what the price did after it, for calibrating the news weights.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventOutcome {
+    /// Event kind (company news) or asset (market news).
+    pub group: String,
+    pub direction: i8,
+    pub materiality: u8,
+    /// Log return after the story, beyond the market's (company news) or raw (market news).
+    pub abnormal: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventGroup {
+    pub group: String,
+    pub direction: i8,
+    pub n: usize,
+    /// Mean abnormal log return and its standard error.
+    pub mean: f64,
+    pub se: f64,
+    /// Share of events where the price went the way the reading said.
+    pub hit_rate: f64,
+    /// At least `MIN_EVENTS` events: enough to start replacing a judgement weight.
+    pub enough: bool,
+}
+
+/// Events needed before a group's average move is used instead of a judgement weight.
+pub const MIN_EVENTS: usize = 30;
+
+/// The average move after each (group, direction), the event-study mean (MacKinlay 1997) with
+/// its standard error. Events must already be one per (company, kind, day): many outlets
+/// covering one event would otherwise count as many.
+pub fn event_study(events: &[EventOutcome]) -> Vec<EventGroup> {
+    let mut groups: std::collections::BTreeMap<(String, i8), Vec<f64>> = Default::default();
+    for e in events
+        .iter()
+        .filter(|e| e.direction != 0 && e.abnormal.is_finite())
+    {
+        groups
+            .entry((e.group.clone(), e.direction))
+            .or_default()
+            .push(e.abnormal);
+    }
+    groups
+        .into_iter()
+        .map(|((group, direction), x)| {
+            let n = x.len();
+            let mean = x.iter().sum::<f64>() / n as f64;
+            let se = if n > 1 {
+                (x.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1) as f64 / n as f64)
+                    .sqrt()
+            } else {
+                f64::NAN
+            };
+            let hits = x.iter().filter(|v| v.signum() as i8 == direction).count();
+            EventGroup {
+                group,
+                direction,
+                n,
+                mean,
+                se,
+                hit_rate: hits as f64 / n as f64,
+                enough: n >= MIN_EVENTS,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn event_study_groups_by_kind_and_direction() {
+        let ev = |group: &str, direction: i8, abnormal: f64| EventOutcome {
+            group: group.into(),
+            direction,
+            materiality: 3,
+            abnormal,
+        };
+        let out = event_study(&[
+            ev("results", 1, 0.02),
+            ev("results", 1, 0.04),
+            ev("results", 1, -0.01),
+            ev("results", -1, -0.03),
+            ev("legal", -1, f64::NAN),
+            ev("general", 0, 0.05),
+        ]);
+        assert_eq!(out.len(), 2, "{out:?}");
+        let up = &out[1];
+        assert_eq!((up.group.as_str(), up.direction, up.n), ("results", 1, 3));
+        assert!((up.mean - 0.016_666_666).abs() < 1e-6);
+        // sd of (0.02, 0.04, -0.01) = 0.025166; se = sd/√3.
+        assert!((up.se - 0.025_166_114 / 3f64.sqrt()).abs() < 1e-6);
+        assert!((up.hit_rate - 2.0 / 3.0).abs() < 1e-12);
+        assert!(!up.enough && out[0].se.is_nan());
+    }
 
     /// One 375-minute NSE session of 5-minute bars starting at t = 0.
     fn session(prices: impl Fn(usize) -> f64) -> Vec<(i64, f64)> {
