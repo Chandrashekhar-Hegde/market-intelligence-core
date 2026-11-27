@@ -224,6 +224,12 @@ for s in sources.values():
 assert body["query"] == "Reliance Industries", body["query"]
 PY
 
+  # Speed: a warm 10-year analysis of a company (rules, news and maths) answers within 3 s.
+  curl -fsS -o /dev/null "$BASE_URL/api/v1/analyze?symbol=RELIANCE.NS"
+  took="$(curl -fsS -o /dev/null -w '%{time_total}' "$BASE_URL/api/v1/analyze?symbol=RELIANCE.NS")"
+  echo "  warm analyze RELIANCE.NS: ${took}s"
+  python3 -c "import sys; t=float(sys.argv[1]); assert t < 3, f'warm analyze took {t}s'" "$took"
+
   # The engine on three markets: US stock (auto S&P 500), Japanese stock (auto Nikkei), crypto (none).
   for spec in "AAPL:^GSPC" "7203.T:^N225" "BTC-USD:"; do
     symbol="${spec%%:*}"; bench="${spec#*:}"
