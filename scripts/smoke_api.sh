@@ -230,6 +230,18 @@ PY
   echo "  warm analyze RELIANCE.NS: ${took}s"
   python3 -c "import sys; t=float(sys.argv[1]); assert t < 3, f'warm analyze took {t}s'" "$took"
 
+  # Calibration run: reports whether it is recording, and if so what it holds.
+  curl -fsS "$BASE_URL/api/v1/calibration" -o /tmp/gm_calibration.json
+  python3 - /tmp/gm_calibration.json <<'PY'
+import json, sys
+body = json.load(open(sys.argv[1]))
+if body["recording"]:
+    assert body["n_records"] >= 0 and "after_5_sessions" in body, body
+    print(f"  calibration: {body['n_records']} headlines, {body['company_events']} company and {body['market_events']} market events")
+else:
+    print("  calibration: recorder off (no GM_DATA_DIR)")
+PY
+
   # News desk: at least one source answers and some stories are read.
   curl -fsS "$BASE_URL/api/v1/desk" -o /tmp/gm_desk.json
   python3 - /tmp/gm_desk.json <<'PY'

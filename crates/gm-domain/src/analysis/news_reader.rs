@@ -634,7 +634,7 @@ pub struct NewsVote {
 
 /// `readings`: one per story, with how many hours ago it appeared.
 /// Kinds that are context, not events: shown to the user but never voting.
-const NON_VOTING: [&str; 2] = ["general", "price_move"];
+pub const NON_VOTING: [&str; 2] = ["general", "price_move"];
 
 pub fn news_vote(readings: &[(Reading, f64)]) -> NewsVote {
     let contribution = |(r, hours): &(Reading, f64)| {

@@ -60,6 +60,8 @@ pub struct ApiConfig {
     pub news_base_url: Option<String>,
     /// Optional OpenAI-compatible model that reads headlines (GM_LLM_* env vars).
     pub llm: Option<gm_integrations::llm::LlmConfig>,
+    /// Where the news recorder keeps `news.jsonl` (GM_DATA_DIR, a Railway volume). None = off.
+    pub data_dir: Option<PathBuf>,
 }
 
 impl Default for ApiConfig {
@@ -79,9 +81,12 @@ impl Default for ApiConfig {
             gdelt_base_url: None,
             news_base_url: None,
             llm: None,
+            data_dir: None,
         }
     }
 }
+
+pub mod recorder;
 
 #[derive(Clone)]
 struct AppState {
@@ -94,6 +99,7 @@ struct AppState {
     news: gm_integrations::news::NewsClient,
     llm: Option<gm_integrations::llm::LlmReader>,
     live_fits: Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<LiveFit>>>>,
+    recorder: Option<Arc<recorder::Recorder>>,
     access_token: Option<Arc<str>>,
 }
 
@@ -354,11 +360,36 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
             .map(gm_integrations::news::NewsClient::stub)
             .unwrap_or_default(),
         llm: config.llm.map(gm_integrations::llm::LlmReader::new),
+        // A recorder that cannot open its file is logged and switched off; it never stops the
+        // server from starting.
+        recorder: config.data_dir.as_deref().and_then(|dir| {
+            recorder::Recorder::open(dir)
+                .inspect_err(
+                    |error| tracing::warn!(%error, ?dir, "news recorder off: cannot open its file"),
+                )
+                .ok()
+                .map(Arc::new)
+        }),
         access_token: config
             .access_token
             .filter(|token| !token.trim().is_empty())
             .map(Arc::from),
     };
+    if let Some(rec) = state.recorder.clone() {
+        let state = state.clone();
+        tokio::spawn(async move {
+            loop {
+                let (_, stories) = desk_stories(&state).await;
+                let rec = Arc::clone(&rec);
+                match tokio::task::spawn_blocking(move || rec.record(&stories)).await {
+                    Ok(Ok(new)) => tracing::info!(new, "news recorder"),
+                    Ok(Err(error)) => tracing::warn!(%error, "news recorder could not write"),
+                    Err(error) => tracing::warn!(%error, "news recorder task failed"),
+                }
+                tokio::time::sleep(RECORD_EVERY).await;
+            }
+        });
+    }
     let cors_origins = config
         .cors_origins
         .iter()
@@ -388,6 +419,7 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
         .route("/api/v1/intraday", get(intraday))
         .route("/api/v1/news", get(news))
         .route("/api/v1/desk", get(desk))
+        .route("/api/v1/calibration", get(calibration))
         .route("/api/v1/stream", get(stream))
         .route("/api/v1/analyze", get(analyze_instrument))
         .route("/api/v1/projection", get(live_projection))
@@ -1259,8 +1291,13 @@ const DESK_MAX: usize = 150;
 /// The market news desk: every publisher feed and a few topic searches, newest first, each
 /// headline read for what it means for gold, the rupee, banks, IT, oil marketers and US shares,
 /// and the resulting lean per asset (uncalibrated; shown as a lean, never as a call).
-async fn desk(State(state): State<AppState>) -> Json<serde_json::Value> {
-    use gm_domain::analysis::macro_news::{asset_leans, read_macro};
+/// How often the news recorder reads the desk sources.
+const RECORD_EVERY: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// Every desk source at once (each with its outcome), stories newest first, one per title.
+async fn desk_stories(
+    state: &AppState,
+) -> (Vec<serde_json::Value>, Vec<gm_integrations::news::Story>) {
     use gm_integrations::news::{Story, dedupe_key};
     let topics = DESK_QUERIES.map(|(name, query)| {
         let news = state.news.clone();
@@ -1289,6 +1326,176 @@ async fn desk(State(state): State<AppState>) -> Json<serde_json::Value> {
             ),
         }
     }
+    stories.sort_by_key(|s| std::cmp::Reverse(s.seen_at));
+    let mut seen = std::collections::HashSet::new();
+    stories.retain(|s| seen.insert(dedupe_key(&s.title)));
+    (sources, stories)
+}
+
+/// The calibration run so far: what was recorded, and what prices did 1 and 5 sessions after
+/// each kind of news (company news beyond NIFTY, market news raw), with how many events each
+/// group has. A group with `enough` events can start replacing a judgement weight.
+#[derive(Debug, Deserialize)]
+struct CalibrationQuery {
+    /// "built-in" (default) or "llm": re-read the recorded company headlines with the configured
+    /// model (GM_LLM_*) and run the same study, to compare the readers on the same events.
+    reader: Option<String>,
+}
+
+async fn calibration(
+    State(state): State<AppState>,
+    Query(query): Query<CalibrationQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use futures_util::StreamExt;
+    use gm_domain::analysis::{
+        macro_news::ASSETS,
+        news::{EventOutcome, MIN_EVENTS, event_study},
+        news_reader::NON_VOTING,
+    };
+    use recorder::{event_date, window_return};
+    let Some(rec) = state.recorder.clone() else {
+        return Ok(Json(serde_json::json!({
+            "recording": false,
+            "note": "The news recorder is off: set GM_DATA_DIR to a persistent directory.",
+        })));
+    };
+    let records = tokio::task::spawn_blocking(move || rec.read_all())
+        .await
+        .map_err(|e| ApiError::bad_request(format!("calibration task failed: {e}")))?
+        .map_err(|e| ApiError::bad_request(format!("cannot read the recording: {e}")))?;
+    let mut records = records;
+    let reader = match query.reader.as_deref().unwrap_or("built-in") {
+        "built-in" => "built-in".to_string(),
+        "llm" => {
+            let Some(llm) = &state.llm else {
+                return Err(ApiError::bad_request(
+                    "no model configured: set GM_LLM_BASE_URL, GM_LLM_MODEL and GM_LLM_API_KEY",
+                ));
+            };
+            // Only headlines naming a company feed company events; read those, 20 at a time.
+            let titles: Vec<String> = records
+                .iter()
+                .filter(|r| !r.symbols.is_empty())
+                .map(|r| r.title.clone())
+                .collect();
+            let mut readings = std::collections::HashMap::new();
+            for chunk in titles.chunks(20) {
+                let read = llm.read(chunk).await.map_err(ApiError::provider)?;
+                readings.extend(chunk.iter().cloned().zip(read));
+            }
+            for r in records.iter_mut() {
+                if let Some(reading) = readings.remove(&r.title) {
+                    r.reading = reading;
+                }
+            }
+            llm.model().to_string()
+        }
+        other => {
+            return Err(ApiError::bad_request(format!(
+                "reader must be built-in or llm, not {other:?}"
+            )));
+        }
+    };
+
+    // One event per (instrument, kind or theme, day): many outlets, one event.
+    let mut seen = std::collections::HashSet::new();
+    let mut company = Vec::new(); // (symbol, kind, direction, materiality, day)
+    let mut market = Vec::new(); // (symbol, asset, direction, day)
+    for r in &records {
+        let day = event_date(r.seen_at);
+        if r.reading.direction != 0 && !NON_VOTING.contains(&r.reading.kind.as_str()) {
+            for symbol in &r.symbols {
+                if seen.insert((symbol.clone(), r.reading.kind.clone(), day)) {
+                    company.push((
+                        symbol.clone(),
+                        r.reading.kind.clone(),
+                        r.reading.direction,
+                        r.reading.materiality,
+                        day,
+                    ));
+                }
+            }
+        }
+        for (asset, direction) in &r.impacts {
+            if let Some((_, _, symbol)) = ASSETS.iter().find(|(key, _, _)| key == asset)
+                && seen.insert((symbol.to_string(), format!("theme:{}", r.theme), day))
+            {
+                market.push((symbol.to_string(), asset.clone(), *direction, day));
+            }
+        }
+    }
+    let mut symbols: std::collections::BTreeSet<String> =
+        company.iter().map(|e| e.0.clone()).collect();
+    symbols.extend(market.iter().map(|e| e.0.clone()));
+    symbols.insert("^NSEI".to_string());
+    let bars: std::collections::HashMap<String, Vec<(chrono::NaiveDate, f64)>> =
+        futures_util::stream::iter(symbols)
+            .map(|symbol| {
+                let yahoo = state.yahoo.clone();
+                async move {
+                    let chart = yahoo.chart(&symbol, "1y").await.ok()?;
+                    let closes = chart
+                        .bars
+                        .iter()
+                        .map(|b| (b.date, b.adjusted_close()))
+                        .collect();
+                    Some((symbol, closes))
+                }
+            })
+            .buffer_unordered(4)
+            .filter_map(|x| async move { x })
+            .collect()
+            .await;
+    let study = |h: usize| {
+        let nifty = bars.get("^NSEI");
+        let company_events: Vec<EventOutcome> = company
+            .iter()
+            .filter_map(|(symbol, kind, direction, materiality, day)| {
+                let own = window_return(bars.get(symbol)?, *day, h)?;
+                let index = window_return(nifty?, *day, h)?;
+                Some(EventOutcome {
+                    group: kind.clone(),
+                    direction: *direction,
+                    materiality: *materiality,
+                    abnormal: own - index,
+                })
+            })
+            .collect();
+        let market_events: Vec<EventOutcome> = market
+            .iter()
+            .filter_map(|(symbol, asset, direction, day)| {
+                Some(EventOutcome {
+                    group: asset.clone(),
+                    direction: *direction,
+                    materiality: 2,
+                    abnormal: window_return(bars.get(symbol)?, *day, h)?,
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "company": event_study(&company_events),
+            "market": event_study(&market_events),
+        })
+    };
+    Ok(Json(serde_json::json!({
+        "recording": true,
+        "reader": reader,
+        "n_records": records.len(),
+        "first_seen": records.iter().map(|r| r.seen_at).min(),
+        "last_recorded": records.iter().map(|r| r.recorded_at).max(),
+        "company_events": company.len(),
+        "market_events": market.len(),
+        "min_events": MIN_EVENTS,
+        "after_1_session": study(1),
+        "after_5_sessions": study(5),
+        "note": "Moves are log returns: company news beyond NIFTY 50 over the same days, market news raw. A group needs enough events before its average move replaces a judgement weight.",
+    })))
+}
+
+async fn desk(State(state): State<AppState>) -> Json<serde_json::Value> {
+    use gm_domain::analysis::macro_news::{asset_leans, read_macro};
+    use gm_integrations::news::Story;
+    let (sources, mut stories) = desk_stories(&state).await;
     // Ages run from the newest story (never later than now): in a session that is minutes ago;
     // over a weekend the desk reads "as of" Friday's news instead of decaying it to nothing.
     let now = stories
@@ -1299,9 +1506,6 @@ async fn desk(State(state): State<AppState>) -> Json<serde_json::Value> {
         .min(chrono::Utc::now());
     let hours = |s: &Story| (now - s.seen_at).num_seconds() as f64 / 3600.0;
     stories.retain(|s| hours(s) <= DESK_HOURS);
-    stories.sort_by_key(|s| std::cmp::Reverse(s.seen_at));
-    let mut seen = std::collections::HashSet::new();
-    stories.retain(|s| seen.insert(dedupe_key(&s.title)));
     stories.truncate(DESK_MAX);
     let readings: Vec<_> = stories
         .iter()
@@ -2172,6 +2376,16 @@ async fn openapi() -> Json<serde_json::Value> {
                     }
                 }
             },
+            "/api/v1/calibration": {
+                "get": {
+                    "summary": "The news calibration run: recorded headlines and the average move 1 and 5 sessions after each kind of news",
+                    "parameters": [{ "name": "reader", "in": "query", "schema": { "type": "string", "enum": ["built-in", "llm"], "default": "built-in" } }],
+                    "responses": {
+                        "200": { "description": "recording flag, counts, and event-study groups for company and market news" },
+                        "400": { "description": "reader=llm without a configured model" }
+                    }
+                }
+            },
             "/api/v1/projection": {
                 "get": {
                     "summary": "Forecast fans recomputed from a live price (10-year daily fit, cached until the next close)",
@@ -2892,6 +3106,7 @@ mod tests {
             "/api/v1/news",
             "/api/v1/desk",
             "/api/v1/projection",
+            "/api/v1/calibration",
         ] {
             assert!(payload["paths"].get(path).is_some(), "{path}");
         }
@@ -3049,6 +3264,50 @@ mod tests {
         })
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_recorder_keeps_headlines_and_calibration_reads_them() {
+        // Off unless a data directory is set.
+        let (_, off) = get_json(news_app(false, true).await, "/api/v1/calibration").await;
+        assert_eq!(off["recording"], false);
+
+        let dir = std::env::temp_dir().join(format!("gm-calibration-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let app = build_app(ApiConfig {
+            yahoo_base_url: Some(yahoo_stub(false).await),
+            yahoo_stream_url: Some(stream_stub().await),
+            gdelt_base_url: Some(gdelt_stub(true).await),
+            news_base_url: Some(news_stub(false).await),
+            data_dir: Some(dir.clone()),
+            ..ApiConfig::default()
+        })
+        .await
+        .unwrap();
+        // The first recording pass runs at start-up.
+        let mut body = serde_json::Value::Null;
+        for _ in 0..50 {
+            body = get_json(app.clone(), "/api/v1/calibration").await.1;
+            if body["n_records"].as_u64().unwrap_or(0) > 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert_eq!(body["recording"], true, "{body}");
+        let lines = std::fs::read_to_string(dir.join("news.jsonl")).unwrap();
+        assert_eq!(
+            body["n_records"].as_u64().unwrap() as usize,
+            lines.lines().count()
+        );
+        assert!(lines.lines().count() > 100, "{}", lines.lines().count());
+        // Headlines naming NIFTY 50 companies become company events.
+        assert!(body["company_events"].as_u64().unwrap() > 0, "{body}");
+        assert!(body["after_5_sessions"]["company"].is_array());
+        assert_eq!(body["reader"], "built-in");
+        // The model reader needs a model.
+        let (status, _) = get_json(app.clone(), "/api/v1/calibration?reader=llm").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[tokio::test]

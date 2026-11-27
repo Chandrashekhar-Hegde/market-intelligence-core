@@ -13,6 +13,7 @@ pub mod gdelt;
 pub mod llm;
 pub mod markets;
 pub mod news;
+pub mod universe;
 pub mod yahoo;
 pub mod yahoo_stream;
 

@@ -43,6 +43,9 @@ struct Args {
         default_value = "http://127.0.0.1:5173,http://localhost:5173"
     )]
     cors_origins: String,
+    /// Directory for the news recorder's `news.jsonl` (a Railway volume). Unset = not recording.
+    #[arg(long, env = "GM_DATA_DIR")]
+    data_dir: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -66,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
             .map(String::from)
             .collect(),
         llm: gm_integrations::llm::LlmConfig::from_env(),
+        data_dir: args.data_dir,
         ..ApiConfig::default()
     })
     .await?;

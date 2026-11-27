@@ -21,6 +21,7 @@ WORKDIR /app
 COPY --from=api-builder /workspace/target/release/gm-api /usr/local/bin/gm-api
 COPY --from=web-builder /workspace/apps/web/dist /app/web
 COPY migrations /app/migrations
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 ENV GM_HOST=0.0.0.0 \
     GM_PORT=8000 \
     GM_CORS_ORIGINS=none \
@@ -28,4 +29,4 @@ ENV GM_HOST=0.0.0.0 \
     WEB_ASSETS_DIR=/app/web
 USER gm
 EXPOSE 8000
-CMD ["gm-api"]
+CMD ["docker-entrypoint.sh"]
