@@ -22,6 +22,9 @@ pub const SOURCE: &str = "gdelt-doc-2.0";
 const BASE_URL: &str = "https://api.gdeltproject.org";
 const MIN_SPACING: Duration = Duration::from_millis(5_500);
 const CACHE_TTL: Duration = Duration::from_secs(15 * 60);
+/// After a failure (usually a 429 on a shared cloud IP), GDELT is skipped for this long, so
+/// every news request isn't held up retrying a source that just refused us.
+const BACKOFF: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Article {
@@ -148,6 +151,7 @@ pub struct GdeltClient {
     cache: Arc<Mutex<Cache>>,
     /// Held for the whole request, so at most one call is in flight and calls are spaced.
     last_call: Arc<tokio::sync::Mutex<Option<Instant>>>,
+    failed_at: Arc<Mutex<Option<Instant>>>,
 }
 
 impl Default for GdeltClient {
@@ -161,12 +165,13 @@ impl GdeltClient {
         Self {
             http: reqwest::Client::builder()
                 .user_agent("market-intelligence-core (+https://github.com/Chandrashekhar-Hegde/market-intelligence-core)")
-                .timeout(Duration::from_secs(20))
+                .timeout(Duration::from_secs(5))
                 .build()
                 .expect("static reqwest config is valid"),
             base_url: base_url.into(),
             cache: Arc::default(),
             last_call: Arc::default(),
+            failed_at: Arc::default(),
         }
     }
 
@@ -204,6 +209,36 @@ impl GdeltClient {
         if let Some(body) = cached(&self.cache) {
             return Ok(body);
         }
+        if let Some(at) = *self.failed_at.lock().expect("backoff lock")
+            && at.elapsed() < BACKOFF
+        {
+            return Err(ProviderError::Unavailable(format!(
+                "gdelt skipped for {} more min after a failure",
+                (BACKOFF - at.elapsed()).as_secs() / 60 + 1
+            )));
+        }
+        let result = self.fetch(&key, query, mode, extra).await;
+        if result.is_err() {
+            *self.failed_at.lock().expect("backoff lock") = Some(Instant::now());
+        }
+        result
+    }
+
+    async fn fetch(
+        &self,
+        key: &(String, &'static str),
+        query: &str,
+        mode: &'static str,
+        extra: &[(&str, &str)],
+    ) -> Result<Arc<String>, ProviderError> {
+        let cached = |cache: &Mutex<Cache>| {
+            cache
+                .lock()
+                .expect("cache lock")
+                .get(key)
+                .filter(|(at, _)| at.elapsed() < CACHE_TTL)
+                .map(|(_, body)| Arc::clone(body))
+        };
         let mut last = self.last_call.lock().await;
         // Another request may have filled the cache while this one waited for the lock.
         if let Some(body) = cached(&self.cache) {
@@ -240,7 +275,7 @@ impl GdeltClient {
         self.cache
             .lock()
             .expect("cache lock")
-            .insert(key, (Instant::now(), Arc::clone(&body)));
+            .insert(key.clone(), (Instant::now(), Arc::clone(&body)));
         Ok(body)
     }
 }

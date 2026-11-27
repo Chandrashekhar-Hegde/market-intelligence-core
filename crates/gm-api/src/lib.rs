@@ -796,6 +796,19 @@ async fn analyze_instrument(
             .map(|bar| (bar.date, bar.adjusted_close()))
             .collect::<Vec<_>>()
     });
+    // The maths runs while the rules are tested and the news is fetched.
+    let symbol = meta.symbol.clone();
+    let bench_symbol = benchmark.as_ref().map(|(s, _)| s.clone());
+    let report_task = tokio::task::spawn_blocking(move || {
+        analyze(&AnalysisInput {
+            symbol: &symbol,
+            prices: &prices,
+            benchmark: bench_symbol.as_deref().zip(bench_prices.as_deref()),
+            horizons: &DEFAULT_HORIZONS,
+            n_paths: paths,
+            seed,
+        })
+    });
     // Rules are tested on up to 10 years: the 3-month horizon needs 30+ separate calls.
     // Best-effort: the rest of the analysis does not depend on it.
     let mut news_vote = None;
@@ -848,21 +861,10 @@ async fn analyze_instrument(
         ),
     };
 
-    let symbol = meta.symbol.clone();
-    let bench_symbol = benchmark.as_ref().map(|(s, _)| s.clone());
-    let report = tokio::task::spawn_blocking(move || {
-        analyze(&AnalysisInput {
-            symbol: &symbol,
-            prices: &prices,
-            benchmark: bench_symbol.as_deref().zip(bench_prices.as_deref()),
-            horizons: &DEFAULT_HORIZONS,
-            n_paths: paths,
-            seed,
-        })
-    })
-    .await
-    .map_err(|e| ApiError::bad_request(format!("analysis task failed: {e}")))?
-    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let report = report_task
+        .await
+        .map_err(|e| ApiError::bad_request(format!("analysis task failed: {e}")))?
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
 
     let bench_currency = bench_chart.as_ref().and_then(|b| b.meta.currency.clone());
     let currency_note = match (&meta.currency, &bench_currency) {
@@ -987,6 +989,8 @@ async fn quote(
 
 /// Stories naming the company from every news source, newest first and de-duplicated, with
 /// each source's outcome. Errors only when every source fails.
+const NEWS_WAIT: std::time::Duration = std::time::Duration::from_secs(6);
+
 async fn gather_news(
     state: &AppState,
     name: &str,
@@ -1009,11 +1013,18 @@ async fn gather_news(
     let gdelt_query = news_query(name).unwrap_or_default();
 
     // Every source at once; each one's outcome is reported, and one failing never hides others.
-    let (google, feeds, gdelt) = tokio::join!(
-        state.news.google(&phrase),
-        state.news.feeds(),
-        state.gdelt.articles(&gdelt_query),
-    );
+    // GDELT paces callers through one lock; a request never waits more than this for it.
+    let gdelt = async {
+        tokio::time::timeout(NEWS_WAIT, state.gdelt.articles(&gdelt_query))
+            .await
+            .unwrap_or_else(|_| {
+                Err(gm_integrations::ProviderError::Unavailable(
+                    "gdelt: busy, skipped for this request".into(),
+                ))
+            })
+    };
+    let (google, feeds, gdelt) =
+        tokio::join!(state.news.google(&phrase), state.news.feeds(), gdelt,);
     let mut sources = Vec::new();
     let mut stories: Vec<Story> = Vec::new();
     let mut report = |name: &str, result: Result<Vec<Story>, String>| match result {
@@ -3016,7 +3027,7 @@ mod tests {
         })
         .await
         .unwrap();
-        let (status, body) = get_json(app, "/api/v1/news?symbol=RELIANCE.NS").await;
+        let (status, body) = get_json(app.clone(), "/api/v1/news?symbol=RELIANCE.NS").await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
         assert!(
             body["error"]
@@ -3025,6 +3036,18 @@ mod tests {
                 .contains("one every 5 seconds"),
             "{body}"
         );
+        // After a refusal GDELT is skipped for a while instead of being asked again (and
+        // paced) on every request.
+        let started = std::time::Instant::now();
+        let (_, body) = get_json(app, "/api/v1/news?symbol=RELIANCE.NS").await;
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("gdelt skipped for"),
+            "{body}"
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 
     async fn market_app(fail: bool, access_token: Option<&str>) -> Router {

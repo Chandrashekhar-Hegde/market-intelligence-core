@@ -38,6 +38,20 @@ Item states (GitHub labels):
 | 0.6 Usable | Intraday chart and live watchlist; six literature trading rules tested walk-forward with Buy/Hold/Sell only when proven; plain-language advice card, money cards and live close ranges; news with measured reaction and tone; `/decide` retired | #102, #103, #104, #105, #106 (closes #98–#101, #65) |
 | 0.7 Find and understand | Search with market and exchange filters (BSE twins resolved); Hold explained for owners and non-owners; 10-year analysis; forecast fans from each stock's own history with per-symbol seeds and sample paths; news from Google News, ET, Mint and GDELT; a headline reader whose strong news votes in the advice (companies only, labelled, uncalibrated); Compare tab in plain words | #115–#120, #122 (closes #108, #110–#114) |
 
+## Phase 0.8, in order ([plan](plans/phase-0.8.md))
+
+| Order | Issue | Goal | State |
+|---|---|---|---|
+| 1 | [#123](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/123) | Analysis and news in under 3 s (GDELT back-off, news cap, parallel maths) | in progress |
+| 2 | [#124](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/124) | Every number as a chance; the best-rated model leads the fan | `agent-ready` |
+| 3 | [#125](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/125) | The fan updates with live prices | `agent-ready` |
+| 4 | [#126](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/126) | News desk by theme (Bloomberg, BS, BusinessLine, Moneycontrol, CNBC), macro reader | `agent-ready` |
+| 5 | [#127](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/127) | Record headlines and outcomes on a Railway volume; calibrate news weights | `agent-ready` (volume: owner approved) |
+| 6 | [#128](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/128) | Today page: actions across NIFTY 50, gold, silver, rupee, US, AI; best position | `agent-ready` |
+| 7 | [#129](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/129) | Modular screen: drag, resize, collapse panels | `agent-ready` |
+
+These come before the queue below (owner, 27 Nov 2026).
+
 ## Next, in order
 
 | Order | Issue | Goal | State | Blocked by |

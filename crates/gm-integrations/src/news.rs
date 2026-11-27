@@ -170,7 +170,7 @@ impl NewsClient {
         Self {
             http: reqwest::Client::builder()
                 .user_agent("Mozilla/5.0 (compatible; market-intelligence-core)")
-                .timeout(Duration::from_secs(12))
+                .timeout(Duration::from_secs(5))
                 .build()
                 .expect("static reqwest config is valid"),
             google_base: google_base.trim_end_matches('/').to_string(),
