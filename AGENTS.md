@@ -162,7 +162,9 @@ Production-like (one origin, gated): build the web app with `VITE_API_BASE_URL=`
     accessibility check and a "no horizontal overflow" check.
   - `@live` specs only run via `npm run test:e2e:live`.
 - **Lint.** oxlint with warnings as errors (react, react-hooks, jsx-a11y, typescript, vitest).
-  `react-in-jsx-scope` and `prefer-tag-over-role` are off on purpose (see `.oxlintrc.json`).
+  `react-in-jsx-scope` and `prefer-tag-over-role` are off on purpose, and `no-noninteractive-tabindex`
+  allows labelled `region`s, because resizable (scrollable) panels must be keyboard-reachable for axe
+  (see `.oxlintrc.json`).
 
 ## Deployment and secrets
 
