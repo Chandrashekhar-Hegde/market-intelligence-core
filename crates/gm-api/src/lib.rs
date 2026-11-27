@@ -387,6 +387,7 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
         .route("/api/v1/quote", get(quote))
         .route("/api/v1/intraday", get(intraday))
         .route("/api/v1/news", get(news))
+        .route("/api/v1/desk", get(desk))
         .route("/api/v1/stream", get(stream))
         .route("/api/v1/analyze", get(analyze_instrument))
         .route("/api/v1/projection", get(live_projection))
@@ -1236,6 +1237,101 @@ fn vote_on(
 
 /// Recent news that mentions the instrument (GDELT), the tone of its coverage, and how the price
 /// moved after each story beyond what the market explains. Measurement only; nothing is stored.
+/// Google News topic searches behind the desk (last day), besides the publisher feeds.
+const DESK_QUERIES: [(&str, &str); 3] = [
+    (
+        "Google News: India",
+        "RBI OR rupee OR FII OR FPI OR Sensex OR Nifty when:1d",
+    ),
+    (
+        "Google News: global",
+        "\"Federal Reserve\" OR \"crude oil\" OR \"gold price\" OR \"silver price\" OR \"Wall Street\" OR dollar when:1d",
+    ),
+    (
+        "Google News: AI",
+        "Groq OR OpenAI OR Nvidia OR xAI OR Anthropic OR \"AI stocks\" when:1d",
+    ),
+];
+/// Stories older than this leave the desk.
+const DESK_HOURS: f64 = 36.0;
+const DESK_MAX: usize = 150;
+
+/// The market news desk: every publisher feed and a few topic searches, newest first, each
+/// headline read for what it means for gold, the rupee, banks, IT, oil marketers and US shares,
+/// and the resulting lean per asset (uncalibrated; shown as a lean, never as a call).
+async fn desk(State(state): State<AppState>) -> Json<serde_json::Value> {
+    use gm_domain::analysis::macro_news::{asset_leans, read_macro};
+    use gm_integrations::news::{Story, dedupe_key};
+    let topics = DESK_QUERIES.map(|(name, query)| {
+        let news = state.news.clone();
+        async move {
+            let result = tokio::time::timeout(NEWS_WAIT, news.google_query(query))
+                .await
+                .unwrap_or_else(|_| {
+                    Err(gm_integrations::ProviderError::Unavailable(
+                        "no answer in time".into(),
+                    ))
+                });
+            (name, result)
+        }
+    });
+    let (feeds, topics) = tokio::join!(state.news.feeds(), futures_util::future::join_all(topics));
+    let mut sources = Vec::new();
+    let mut stories: Vec<Story> = Vec::new();
+    for (name, result) in feeds.into_iter().chain(topics) {
+        match result {
+            Ok(found) => {
+                sources.push(serde_json::json!({ "name": name, "ok": true, "count": found.len(), "error": null }));
+                stories.extend(found.iter().cloned());
+            }
+            Err(e) => sources.push(
+                serde_json::json!({ "name": name, "ok": false, "count": 0, "error": e.to_string() }),
+            ),
+        }
+    }
+    // Ages run from the newest story (never later than now): in a session that is minutes ago;
+    // over a weekend the desk reads "as of" Friday's news instead of decaying it to nothing.
+    let now = stories
+        .iter()
+        .map(|s| s.seen_at)
+        .max()
+        .unwrap_or_else(chrono::Utc::now)
+        .min(chrono::Utc::now());
+    let hours = |s: &Story| (now - s.seen_at).num_seconds() as f64 / 3600.0;
+    stories.retain(|s| hours(s) <= DESK_HOURS);
+    stories.sort_by_key(|s| std::cmp::Reverse(s.seen_at));
+    let mut seen = std::collections::HashSet::new();
+    stories.retain(|s| seen.insert(dedupe_key(&s.title)));
+    stories.truncate(DESK_MAX);
+    let readings: Vec<_> = stories
+        .iter()
+        .map(|s| (read_macro(&s.title), hours(s)))
+        .collect();
+    let leans = asset_leans(&readings);
+    let items: Vec<_> = stories
+        .iter()
+        .zip(&readings)
+        .map(|(story, (reading, _))| {
+            serde_json::json!({
+                "title": story.title,
+                "url": story.url,
+                "publisher": story.publisher,
+                "source": story.source,
+                "seen_at": story.seen_at,
+                "theme": reading.theme,
+                "impacts": reading.impacts,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({
+        "sources": sources,
+        "stories": items,
+        "leans": leans,
+        "reader": "built-in",
+        "as_of": now,
+    }))
+}
+
 async fn news(
     State(state): State<AppState>,
     Query(query): Query<QuoteQuery>,
@@ -2068,15 +2164,38 @@ async fn openapi() -> Json<serde_json::Value> {
                     }
                 }
             },
+            "/api/v1/desk": {
+                "get": {
+                    "summary": "Market news desk: publisher feeds (ET, Mint, Business Standard, BusinessLine, CNBC, Bloomberg) and Google News topic searches, each headline read for its usual effect on gold, the rupee, banks, IT, oil marketers and US shares, with an uncalibrated lean per asset",
+                    "responses": {
+                        "200": { "description": "Sources with status, stories (newest first, last 36 h) with theme and impacts, leans per asset" }
+                    }
+                }
+            },
+            "/api/v1/projection": {
+                "get": {
+                    "summary": "Forecast fans recomputed from a live price (10-year daily fit, cached until the next close)",
+                    "parameters": [
+                        { "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" } },
+                        { "name": "price", "in": "query", "required": true, "schema": { "type": "number" } },
+                        { "name": "seed", "in": "query", "schema": { "type": "integer", "default": 42 } }
+                    ],
+                    "responses": {
+                        "200": { "description": "symbol, price, last_close, last_date, computed_at and projections as in /analyze" },
+                        "400": { "description": "Invalid symbol, a price far from the last close, or too little history" },
+                        "404": { "description": "Unknown symbol" }
+                    }
+                }
+            },
             "/api/v1/news": {
                 "get": {
-                    "summary": "Recent news mentioning the instrument (GDELT), coverage tone, and the price reaction after each story",
+                    "summary": "Recent news naming the instrument (Google News, publisher feeds, GDELT), each headline read, and the price reaction after each story",
                     "parameters": [{ "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" } }],
                     "responses": {
                         "200": { "description": "Articles (newest first) with measured reaction, tone summary, provenance" },
                         "400": { "description": "Invalid symbol, or a name too short to search" },
                         "404": { "description": "Unknown symbol" },
-                        "503": { "description": "GDELT unavailable or rate-limited (it allows one request every 5 s)" }
+                        "503": { "description": "Every news source unavailable" }
                     }
                 }
             },
@@ -2771,6 +2890,8 @@ mod tests {
             "/api/v1/quote",
             "/api/v1/intraday",
             "/api/v1/news",
+            "/api/v1/desk",
+            "/api/v1/projection",
         ] {
             assert!(payload["paths"].get(path).is_some(), "{path}");
         }
@@ -2888,6 +3009,12 @@ mod tests {
         include_str!("../../gm-integrations/tests/fixtures/googlenews_reliance.xml");
     const ET_RSS: &str = include_str!("../../gm-integrations/tests/fixtures/et_markets.xml");
     const MINT_RSS: &str = include_str!("../../gm-integrations/tests/fixtures/mint_markets.xml");
+    const BS_RSS: &str = include_str!("../../gm-integrations/tests/fixtures/bs_markets.xml");
+    const BUSINESSLINE_RSS: &str =
+        include_str!("../../gm-integrations/tests/fixtures/businessline_markets.xml");
+    const CNBC_RSS: &str = include_str!("../../gm-integrations/tests/fixtures/cnbc_top.xml");
+    const BLOOMBERG_RSS: &str =
+        include_str!("../../gm-integrations/tests/fixtures/bloomberg_markets.xml");
 
     /// Google News and the publisher feeds from recordings; `google_down` answers an HTML page.
     async fn news_stub(google_down: bool) -> String {
@@ -2901,7 +3028,11 @@ mod tests {
         let stub = Router::new()
             .route("/rss/search", get(google))
             .route("/et.xml", get(|| async { ET_RSS }))
-            .route("/mint.xml", get(|| async { MINT_RSS }));
+            .route("/mint.xml", get(|| async { MINT_RSS }))
+            .route("/bs.xml", get(|| async { BS_RSS }))
+            .route("/businessline.xml", get(|| async { BUSINESSLINE_RSS }))
+            .route("/cnbc.xml", get(|| async { CNBC_RSS }))
+            .route("/bloomberg.xml", get(|| async { BLOOMBERG_RSS }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
@@ -2918,6 +3049,41 @@ mod tests {
         })
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn desk_reads_market_news_into_asset_leans() {
+        let (status, body) = get_json(news_app(false, true).await, "/api/v1/desk").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let sources = body["sources"].as_array().unwrap();
+        // Six publisher feeds and three topic searches, each reported.
+        assert_eq!(sources.len(), 9, "{sources:?}");
+        assert!(sources.iter().all(|s| s["ok"] == true), "{sources:?}");
+        let stories = body["stories"].as_array().unwrap();
+        assert!(
+            stories.len() > 50 && stories.len() <= 150,
+            "{}",
+            stories.len()
+        );
+        // Newest first, all within 36 hours of the newest.
+        let times: Vec<&str> = stories
+            .iter()
+            .map(|s| s["seen_at"].as_str().unwrap())
+            .collect();
+        assert!(times.windows(2).all(|w| w[0] >= w[1]));
+        assert!(
+            stories
+                .iter()
+                .any(|s| s["theme"] == "Currency" && !s["impacts"].as_array().unwrap().is_empty())
+        );
+        let leans = body["leans"].as_array().unwrap();
+        assert_eq!(leans.len(), 10);
+        assert!(
+            leans
+                .iter()
+                .all(|l| l["symbol"].is_string() && l["score"].is_number())
+        );
+        assert_eq!(body["reader"], "built-in");
     }
 
     #[tokio::test]

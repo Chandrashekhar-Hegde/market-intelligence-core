@@ -175,6 +175,7 @@ export async function mockMarketData(page: Page, { liveTicks = false } = {}) {
     const symbol = new URL(route.request().url()).searchParams.get('symbol') ?? '^GSPC'
     return route.fulfill({ json: analysis(symbol) })
   })
+  await page.route('**/api/v1/desk**', (route) => route.fulfill({ json: deskResponse() }))
   await page.route('**/api/v1/compare**', (route) => {
     const symbols = (new URL(route.request().url()).searchParams.get('symbols') ?? '').split(',')
     return route.fulfill({ json: comparison(symbols) })
@@ -339,4 +340,35 @@ function comparison(symbols: string[]) {
 /** The Compare tab. */
 export async function openCompare(page: Page) {
   await page.getByRole('tab', { name: /compare/i }).click()
+}
+
+/** The news desk: two themed stories and the leans they produce. */
+export function deskResponse() {
+  return {
+    sources: [
+      { name: 'Bloomberg', ok: true, count: 20, error: null },
+      { name: 'Google News: India', ok: false, count: 0, error: 'no answer in time' },
+    ],
+    stories: [
+      {
+        title: 'Crude Oil Futures Rise on Positive Global Trends', url: 'https://example.com/crude', publisher: 'Rediff',
+        source: 'Google News', seen_at: '2026-11-25T06:00:00Z', theme: 'Commodities',
+        impacts: [
+          { asset: 'crude', direction: 1, reason: 'Dearer crude squeezes India’s oil marketers and weighs on the rupee (India imports most of its oil).' },
+          { asset: 'omc', direction: -1, reason: 'Dearer crude squeezes India’s oil marketers and weighs on the rupee (India imports most of its oil).' },
+        ],
+      },
+      {
+        title: 'Sensex rises 300 points', url: 'https://example.com/sensex', publisher: 'Mint', source: 'Mint',
+        seen_at: '2026-11-25T05:00:00Z', theme: 'Market report', impacts: [],
+      },
+    ],
+    leans: [
+      { asset: 'crude', label: 'Crude oil', symbol: 'BZ=F', score: 0.5, lean: 1, drivers: [0] },
+      { asset: 'omc', label: 'Oil marketers (BPCL, HPCL, IOC)', symbol: 'BPCL.NS', score: -0.5, lean: -1, drivers: [0] },
+      { asset: 'gold', label: 'Gold', symbol: 'GOLDBEES.NS', score: 0, lean: 0, drivers: [] },
+    ],
+    reader: 'built-in',
+    as_of: '2026-11-25T06:00:00Z',
+  }
 }

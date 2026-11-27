@@ -230,6 +230,18 @@ PY
   echo "  warm analyze RELIANCE.NS: ${took}s"
   python3 -c "import sys; t=float(sys.argv[1]); assert t < 3, f'warm analyze took {t}s'" "$took"
 
+  # News desk: at least one source answers and some stories are read.
+  curl -fsS "$BASE_URL/api/v1/desk" -o /tmp/gm_desk.json
+  python3 - /tmp/gm_desk.json <<'PY'
+import json, sys
+body = json.load(open(sys.argv[1]))
+ok = [s for s in body["sources"] if s["ok"]]
+assert ok, body["sources"]
+assert body["stories"] and len(body["leans"]) == 10, (len(body["stories"]), len(body["leans"]))
+print(f"  desk: {len(ok)}/{len(body['sources'])} sources, {len(body['stories'])} stories, leaning: "
+      + ", ".join(l["label"] + (" up" if l["lean"] > 0 else " down") for l in body["leans"] if l["lean"]))
+PY
+
   # Live fan: recomputed from a price near the last close; fast once the daily fit is cached.
   close="$(curl -fsS "$BASE_URL/api/v1/bars?symbol=RELIANCE.NS&range=10y" | python3 -c 'import json,sys; print(json.load(sys.stdin)["chart"]["bars"][-1]["adj_close"])')"
   live="$(python3 -c "print(round($close * 1.01, 2))")"
@@ -239,7 +251,9 @@ PY
   python3 - /tmp/gm_projection.json "$live" "$took" <<'PY'
 import json, sys
 body, live, took = json.load(open(sys.argv[1])), float(sys.argv[2]), float(sys.argv[3])
-assert took < 1.0, f"live projection took {took}s"
+# The compute is milliseconds; from India a round trip to Railway is ~0.5 s and the body is
+# ~130 KB, so 2 s leaves room for the network.
+assert took < 2.0, f"live projection took {took}s"
 assert [p["model"] for p in body["projections"]] == ["gbm", "garch_t", "bootstrap"]
 median = body["projections"][2]["fan"][0]["price"][2]
 assert abs(median / live - 1) < 0.02, (median, live)

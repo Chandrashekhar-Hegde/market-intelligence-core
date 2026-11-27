@@ -483,6 +483,36 @@ export function useLiveProjection(symbol: string, livePrice: number | null) {
   })
 }
 
+// ---- market news desk (/api/v1/desk) ----------------------------------------------------
+
+export type MacroImpact = { asset: string; direction: number; reason: string }
+
+export type DeskResponse = {
+  sources: NewsSource[]
+  stories: {
+    title: string
+    url: string
+    publisher: string
+    source: string
+    seen_at: string
+    theme: string
+    impacts: MacroImpact[]
+  }[]
+  leans: { asset: string; label: string; symbol: string; score: number; lean: number; drivers: number[] }[]
+  reader: string
+  as_of: string
+}
+
+export function useDesk() {
+  return useQuery<DeskResponse>({
+    queryKey: ['desk'],
+    queryFn: () => request<DeskResponse>('/api/v1/desk'),
+    staleTime: 5 * 60_000,
+    refetchInterval: 10 * 60_000,
+    retry: false,
+  })
+}
+
 // ---- news (/api/v1/news) ----------------------------------------------------------------
 
 export type NewsImpact = {
@@ -582,4 +612,14 @@ export function fetchComparison(symbols: string[], range = '5y'): Promise<Compar
   return request<CompareResponse>(
     `/api/v1/compare?symbols=${encodeURIComponent(symbols.join(','))}&range=${range}`,
   )
+}
+
+/** The current time, refreshed every `everyMs`. */
+export function useNow(everyMs: number): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), everyMs)
+    return () => window.clearInterval(id)
+  }, [everyMs])
+  return now
 }

@@ -23,9 +23,45 @@ const CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 pub const GOOGLE_NEWS: &str = "Google News";
 pub const ET_MARKETS: &str = "Economic Times";
 pub const MINT_MARKETS: &str = "Mint";
+pub const BUSINESS_STANDARD: &str = "Business Standard";
+pub const BUSINESSLINE: &str = "BusinessLine";
+pub const CNBC: &str = "CNBC";
+pub const BLOOMBERG: &str = "Bloomberg";
 const GOOGLE_BASE: &str = "https://news.google.com";
-const ET_URL: &str = "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms";
-const MINT_URL: &str = "https://www.livemint.com/rss/markets";
+/// Publisher feeds: (name, stub path, live URL). Headlines and links only.
+/// Moneycontrol's RSS was dropped on 27 Nov 2026: it served one item from 2017.
+const FEEDS: [(&str, &str, &str); 6] = [
+    (
+        ET_MARKETS,
+        "et.xml",
+        "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
+    ),
+    (
+        MINT_MARKETS,
+        "mint.xml",
+        "https://www.livemint.com/rss/markets",
+    ),
+    (
+        BUSINESS_STANDARD,
+        "bs.xml",
+        "https://www.business-standard.com/rss/markets-106.rss",
+    ),
+    (
+        BUSINESSLINE,
+        "businessline.xml",
+        "https://www.thehindubusinessline.com/markets/feeder/default.rss",
+    ),
+    (
+        CNBC,
+        "cnbc.xml",
+        "https://www.cnbc.com/id/10001147/device/rss/rss.html",
+    ),
+    (
+        BLOOMBERG,
+        "bloomberg.xml",
+        "https://feeds.bloomberg.com/markets/news.rss",
+    ),
+];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Story {
@@ -161,12 +197,18 @@ pub struct NewsClient {
 
 impl Default for NewsClient {
     fn default() -> Self {
-        Self::new(GOOGLE_BASE, ET_URL, MINT_URL)
+        Self::new(
+            GOOGLE_BASE,
+            FEEDS
+                .iter()
+                .map(|(name, _, url)| (*name, (*url).to_string()))
+                .collect(),
+        )
     }
 }
 
 impl NewsClient {
-    pub fn new(google_base: &str, et_url: &str, mint_url: &str) -> Self {
+    pub fn new(google_base: &str, feeds: Vec<(&'static str, String)>) -> Self {
         Self {
             http: reqwest::Client::builder()
                 .user_agent("Mozilla/5.0 (compatible; market-intelligence-core)")
@@ -174,35 +216,43 @@ impl NewsClient {
                 .build()
                 .expect("static reqwest config is valid"),
             google_base: google_base.trim_end_matches('/').to_string(),
-            feeds: Arc::from([
-                (ET_MARKETS, et_url.to_string()),
-                (MINT_MARKETS, mint_url.to_string()),
-            ]),
+            feeds: Arc::from(feeds),
             cache: Arc::default(),
         }
     }
 
-    /// Point every source at one stub server: /rss/search, /et.xml, /mint.xml.
+    /// Point every source at one stub server: /rss/search, /et.xml, /mint.xml, /bs.xml, ...
     pub fn stub(base: &str) -> Self {
         let base = base.trim_end_matches('/');
-        Self::new(base, &format!("{base}/et.xml"), &format!("{base}/mint.xml"))
+        Self::new(
+            base,
+            FEEDS
+                .iter()
+                .map(|(name, path, _)| (*name, format!("{base}/{path}")))
+                .collect(),
+        )
     }
 
     /// Google News stories from the last 3 days that match `phrase` exactly.
     pub async fn google(&self, phrase: &str) -> Result<Arc<Vec<Story>>, ProviderError> {
+        self.google_query(&format!("\"{phrase}\" when:3d")).await
+    }
+
+    /// Google News (India edition) for a raw query, e.g. `RBI OR rupee when:1d`.
+    pub async fn google_query(&self, query: &str) -> Result<Arc<Vec<Story>>, ProviderError> {
         let mut url = reqwest::Url::parse(&self.google_base)
             .map_err(|e| ProviderError::InvalidRequest(e.to_string()))?;
         url.set_path("/rss/search");
         url.query_pairs_mut()
-            .append_pair("q", &format!("\"{phrase}\" when:3d"))
+            .append_pair("q", query)
             .append_pair("hl", "en-IN")
             .append_pair("gl", "IN")
             .append_pair("ceid", "IN:en");
-        self.cached(format!("google:{phrase}"), url.as_str(), GOOGLE_NEWS)
+        self.cached(format!("google:{query}"), url.as_str(), GOOGLE_NEWS)
             .await
     }
 
-    /// Every publisher feed (ET, Mint), each fetched once per cache period, each result
+    /// Every publisher feed, each fetched once per cache period, each result
     /// reported on its own so one failure doesn't hide the others.
     pub async fn feeds(&self) -> Vec<(&'static str, Result<Arc<Vec<Story>>, ProviderError>)> {
         let calls = self.feeds.iter().map(|(name, url)| async move {
@@ -249,6 +299,8 @@ impl NewsClient {
 
 #[cfg(test)]
 mod tests {
+    use chrono::Datelike;
+
     use super::*;
 
     // Recorded 2026-11-27.
@@ -301,6 +353,45 @@ mod tests {
             "Gold drifts lower as Fed rate-hike fears loom"
         );
         assert!(mint[0].url.starts_with("https://www.livemint.com/market/"));
+    }
+
+    /// Recorded 2026-11-27. Every feed parses, with dates, clean titles and links.
+    #[test]
+    fn every_publisher_feed_parses() {
+        for (body, name, n) in [
+            (
+                include_str!("../tests/fixtures/bs_markets.xml"),
+                BUSINESS_STANDARD,
+                35,
+            ),
+            (
+                include_str!("../tests/fixtures/businessline_markets.xml"),
+                BUSINESSLINE,
+                60,
+            ),
+            (include_str!("../tests/fixtures/cnbc_top.xml"), CNBC, 30),
+            (
+                include_str!("../tests/fixtures/bloomberg_markets.xml"),
+                BLOOMBERG,
+                20,
+            ),
+            (
+                include_str!("../tests/fixtures/googlenews_topic_macro.xml"),
+                GOOGLE_NEWS,
+                100,
+            ),
+        ] {
+            let stories = parse_rss(body, name).unwrap();
+            assert_eq!(stories.len(), n, "{name}");
+            assert!(
+                stories.iter().all(|s| !s.title.is_empty()
+                    && s.url.starts_with("http")
+                    && !s.title.contains("CDATA")
+                    && s.seen_at.year() == 2026),
+                "{name}: {:?}",
+                stories.first()
+            );
+        }
     }
 
     #[test]

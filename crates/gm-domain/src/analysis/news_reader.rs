@@ -24,12 +24,12 @@ pub struct Reading {
     pub reader: String,
 }
 
-const UP: &[&str] = &[
+pub(super) const UP: &[&str] = &[
     "rise", "rises", "rose", "jump", "jumps", "jumped", "surge", "surges", "surged", "soar",
     "soars", "beat", "beats", "up", "grow", "grows", "grew", "growth", "record", "higher", "gain",
     "gains", "rally", "rallies", "strong", "boost", "boosts", "climbs", "doubles", "triples",
 ];
-const DOWN: &[&str] = &[
+pub(super) const DOWN: &[&str] = &[
     "fall", "falls", "fell", "drop", "drops", "dropped", "decline", "declines", "declined", "miss",
     "misses", "missed", "slump", "slumps", "down", "lower", "loss", "losses", "plunge", "plunges",
     "plunged", "tumble", "tumbles", "sink", "sinks", "weak", "slides", "slid", "crash", "halves",
@@ -111,7 +111,7 @@ const NEGATIVE_WORDS: &[&str] = &[
     "probe",
 ];
 
-fn words(text: &str) -> Vec<String> {
+pub(super) fn words(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric() && c != '&')
         .filter(|w| !w.is_empty())
         .map(str::to_lowercase)

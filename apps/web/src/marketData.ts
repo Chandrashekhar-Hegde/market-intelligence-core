@@ -233,3 +233,11 @@ export function formatIstTime(unixSeconds: number, withDate = false): string {
     ...(withDate ? { day: 'numeric', month: 'short' } : {}),
   }).format(new Date(unixSeconds * 1000))
 }
+
+/** "5 min ago", "3 h ago", "2 days ago". */
+export function timeAgo(iso: string, now: number): string {
+  const minutes = Math.max(0, Math.round((now - Date.parse(iso)) / 60_000))
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.round(minutes / 60)
+  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`
+}

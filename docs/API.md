@@ -81,6 +81,13 @@ Invalid input returns `400`, an unknown symbol `404`, and an upstream failure `5
 
 ## Analysis Endpoint
 
+`GET /api/v1/desk` is the market news desk: `{sources, stories, leans, reader, as_of}`.
+- `sources`: each feed and search with `ok`, `count` and `error`.
+- `stories`: `{title, url, publisher, source, seen_at, theme, impacts: [{asset, direction, reason}]}`.
+- `leans`: one per asset, `{asset, label, symbol, score, lean, drivers}`.
+
+The leans are uncalibrated and never feed the advice.
+
 `GET /api/v1/projection?symbol=&price=&seed=42` returns the forecast fans recomputed from a live
 `price`: `{symbol, price, last_close, last_date, computed_at, projections}`, with `projections`
 shaped as in `/analyze`. The 10-year daily fit is cached per symbol until the next close. A
