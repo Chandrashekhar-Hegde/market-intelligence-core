@@ -40,23 +40,47 @@ async fn read_with_model(dir: PathBuf) -> anyhow::Result<()> {
         titles.len(),
         known.len()
     );
-    for (i, chunk) in titles.chunks(gm_integrations::llm::BATCH).enumerate() {
-        // Transient network errors and busy periods: wait a minute and try again, three times.
+    // Smaller batches than live reading: a long reply is more likely to come back cut short.
+    const READ_BATCH: usize = 15;
+    let mut failed_in_a_row = 0;
+    let mut skipped = 0;
+    for (i, chunk) in titles.chunks(READ_BATCH).enumerate() {
+        // Transient errors and busy periods: wait a minute and try again, three times.
         let mut attempt = 0;
         let readings = loop {
             match llm.read(chunk).await {
-                Ok(r) => break r,
+                Ok(r) => break Some(r),
                 Err(e) if attempt < 3 => {
                     attempt += 1;
                     eprintln!("batch {i}: {e}; retrying in a minute");
                     tokio::time::sleep(Duration::from_secs(60)).await;
                 }
-                Err(e) => anyhow::bail!("stopped after {i} batches: {e}"),
+                Err(e) => {
+                    eprintln!("batch {i}: {e}; skipped");
+                    break None;
+                }
             }
         };
-        recorder.append_model_readings(&chunk.iter().cloned().zip(readings).collect::<Vec<_>>())?;
+        match readings {
+            Some(readings) => {
+                failed_in_a_row = 0;
+                recorder.append_model_readings(
+                    &chunk.iter().cloned().zip(readings).collect::<Vec<_>>(),
+                )?;
+            }
+            None => {
+                skipped += chunk.len();
+                failed_in_a_row += 1;
+                // Five batches failing in a row is a quota or an outage, not a bad reply.
+                if failed_in_a_row >= 5 {
+                    anyhow::bail!(
+                        "stopped after {i} batches (5 failures in a row); rerun later to resume"
+                    );
+                }
+            }
+        }
         if (i + 1) % 20 == 0 {
-            println!("{} read", (i + 1) * gm_integrations::llm::BATCH);
+            println!("{} read, {skipped} skipped", (i + 1) * READ_BATCH - skipped);
         }
         tokio::time::sleep(pace).await;
     }
