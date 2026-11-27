@@ -251,7 +251,9 @@ PY
   python3 - /tmp/gm_projection.json "$live" "$took" <<'PY'
 import json, sys
 body, live, took = json.load(open(sys.argv[1])), float(sys.argv[2]), float(sys.argv[3])
-assert took < 1.0, f"live projection took {took}s"
+# The compute is milliseconds; from India a round trip to Railway is ~0.5 s and the body is
+# ~130 KB, so 2 s leaves room for the network.
+assert took < 2.0, f"live projection took {took}s"
 assert [p["model"] for p in body["projections"]] == ["gbm", "garch_t", "bootstrap"]
 median = body["projections"][2]["fan"][0]["price"][2]
 assert abs(median / live - 1) < 0.02, (median, live)
