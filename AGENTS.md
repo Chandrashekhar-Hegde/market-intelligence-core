@@ -33,8 +33,8 @@ out of sample on that instrument (Phase 0.6).
    into Hold. The app advises; it never decides or places orders for the user.
 2. **A model earns its place.** It must beat historical simulation out of sample (Diebold–Mariano)
    and pass VaR backtests (Kupiec, Christoffersen). Otherwise the app says "no evidence".
-3. **Cite or calibrate.** Every constant is estimated from data or cites a source in
-   `docs/METHODOLOGY.md`. No magic numbers.
+3. **Cite or calibrate.** Every constant is estimated from data or cites a source, and is listed
+   with its kind in `docs/CONSTANTS.md` (a test enforces it for `gm-domain`). No magic numbers.
 4. **Provenance is visible.** Every result shows its source, fetch time and data-quality report.
 5. **The domain is pure.** `gm-domain` never touches the network, the clock or unseeded randomness.
    Providers fetch, the API passes data in, and Monte Carlo uses seeded ChaCha8 (same seed gives
@@ -75,7 +75,7 @@ scripts/
   smoke_api.sh        end-to-end API checks; works against Railway with a token
   gen_reference.py    regenerates analysis reference values with scipy/statsmodels/arch
 .githooks/pre-push    runs scripts/check.sh
-docs/                 STATUS, METHODOLOGY, API, TESTING, HISTORY, ARCHITECTURE, ...
+docs/                 STATUS, METHODOLOGY, CONSTANTS (every number and its source), API, TESTING, HISTORY, ...
 ```
 
 ## Setup from a clean clone
