@@ -389,6 +389,17 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
         tokio::spawn(async move {
             loop {
                 let (_, stories) = desk_stories(&state).await;
+                // Keep the model's readings warm for the desk and company news.
+                if let Some(llm) = &state.llm {
+                    let titles: Vec<String> = stories.iter().map(|s| s.title.clone()).collect();
+                    let named: Vec<String> = titles
+                        .iter()
+                        .filter(|t| !gm_integrations::universe::companies_named(t).is_empty())
+                        .cloned()
+                        .collect();
+                    llm.read_in_background(&named, false);
+                    llm.read_in_background(&titles, true);
+                }
                 let rec = Arc::clone(&rec);
                 match tokio::task::spawn_blocking(move || rec.record(&stories)).await {
                     Ok(Ok(new)) => tracing::info!(new, "news recorder"),
@@ -1254,13 +1265,16 @@ async fn read_stories(
     if let Some(llm) = &state.llm
         && !stories.is_empty()
     {
+        // Never wait for the model: use what it has read, queue the rest, and let the built-in
+        // reader cover until then.
         let titles: Vec<String> = stories.iter().map(|s| s.title.clone()).collect();
-        match llm.read(&titles).await {
-            Ok(readings) => return readings,
-            Err(e) => {
-                tracing::warn!(error = %e, "llm news reader failed; using the built-in reader")
-            }
-        }
+        llm.read_in_background(&titles, false);
+        return llm
+            .cached(&titles)
+            .into_iter()
+            .zip(stories)
+            .map(|(cached, s)| cached.unwrap_or_else(|| read_headline(&s.title)))
+            .collect();
     }
     stories.iter().map(|s| read_headline(&s.title)).collect()
 }
@@ -1539,9 +1553,29 @@ async fn desk(State(state): State<AppState>) -> Json<serde_json::Value> {
     let hours = |s: &Story| (now - s.seen_at).num_seconds() as f64 / 3600.0;
     stories.retain(|s| hours(s) <= DESK_HOURS);
     stories.truncate(DESK_MAX);
+    // The model's market readings where it has read the headline (queued otherwise); the
+    // keyword reader for the rest.
+    let titles: Vec<String> = stories.iter().map(|s| s.title.clone()).collect();
+    let model: Vec<Option<_>> = match &state.llm {
+        Some(llm) => {
+            llm.read_in_background(&titles, true);
+            llm.cached_market(&titles)
+        }
+        None => vec![None; titles.len()],
+    };
+    let n_model = model.iter().filter(|m| m.is_some()).count();
     let readings: Vec<_> = stories
         .iter()
-        .map(|s| (read_macro(&s.title), hours(s)))
+        .zip(model)
+        .map(|(s, m)| {
+            let reading = match m {
+                Some((theme, impacts)) => {
+                    gm_domain::analysis::macro_news::reading_from(&theme, &impacts)
+                }
+                None => read_macro(&s.title),
+            };
+            (reading, hours(s))
+        })
         .collect();
     let leans = asset_leans(&readings);
     let items: Vec<_> = stories
@@ -1563,7 +1597,15 @@ async fn desk(State(state): State<AppState>) -> Json<serde_json::Value> {
         "sources": sources,
         "stories": items,
         "leans": leans,
-        "reader": "built-in",
+        "reader": match &state.llm {
+            Some(llm) if n_model == stories.len() => llm.model().to_string(),
+            Some(llm) if n_model > 0 => format!(
+                "{} ({n_model} of {} headlines so far; the rest by the built-in reader)",
+                llm.model(),
+                stories.len()
+            ),
+            _ => "built-in".to_string(),
+        },
         "as_of": now,
     }))
 }
@@ -3545,6 +3587,7 @@ mod tests {
                 base_url: llm_stub(fail).await,
                 model: "stub-model".into(),
                 api_key: Some("k".into()),
+                pace: std::time::Duration::ZERO,
             }),
             ..ApiConfig::default()
         })
@@ -3554,9 +3597,19 @@ mod tests {
 
     #[tokio::test]
     async fn a_configured_model_reads_the_news_and_falls_back_when_it_fails() {
-        let (status, body) =
-            get_json(llm_news_app(false).await, "/api/v1/news?symbol=RELIANCE.NS").await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        // The first request is answered at once by the built-in reader while the model reads
+        // in the background; later requests carry the model's readings.
+        let app = llm_news_app(false).await;
+        let mut body = serde_json::Value::Null;
+        for _ in 0..50 {
+            let (status, b) = get_json(app.clone(), "/api/v1/news?symbol=RELIANCE.NS").await;
+            assert_eq!(status, StatusCode::OK, "{b}");
+            body = b;
+            if body["articles"][0]["reading"]["reader"] == "stub-model" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
         assert_eq!(body["reader"], "stub-model");
         let first = &body["articles"][0]["reading"];
         assert_eq!(

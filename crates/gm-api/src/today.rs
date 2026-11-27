@@ -18,14 +18,15 @@ use axum::{
 use futures_util::StreamExt;
 use gm_domain::analysis::{
     AnalysisInput, DEFAULT_HORIZONS, analyze,
-    news_reader::{NewsVote, read_headline},
+    news_reader::NewsVote,
     signals::{NewsInput, advise_with_news},
 };
 use gm_integrations::universe::{NIFTY50, OTHER_ASSETS, companies_named};
 use serde::Deserialize;
 
 use super::{
-    ApiError, AppState, desk_stories, is_single_stock, trading_signals, validate_symbol, vote_on,
+    ApiError, AppState, desk_stories, is_single_stock, read_stories, trading_signals,
+    validate_symbol, vote_on,
 };
 
 pub const TTL: Duration = Duration::from_secs(30 * 60);
@@ -66,13 +67,13 @@ async fn company_news(state: &AppState) -> HashMap<String, (NewsVote, Vec<String
                 .push(story.clone());
         }
     }
-    by_symbol
-        .into_iter()
-        .map(|(symbol, stories)| {
-            let readings: Vec<_> = stories.iter().map(|s| read_headline(&s.title)).collect();
-            (symbol, vote_on(&stories, &readings))
-        })
-        .collect()
+    let mut out = HashMap::new();
+    for (symbol, stories) in by_symbol {
+        // read_stories never waits on the model, so this loop stays fast.
+        let readings = read_stories(state, &stories).await;
+        out.insert(symbol, vote_on(&stories, &readings));
+    }
+    out
 }
 
 async fn entry(
