@@ -417,6 +417,8 @@ export type AnalyzeResponse = {
   signals_note: string | null
   /** Today's news, read and weighed; null when no news source answered. */
   news_vote: NewsVote | null
+  /** How the news vote is weighed: fitted on recorded events, or judgement. */
+  news_weights?: { fitted: boolean; n_events?: number; first?: string; last?: string; voting_kinds?: Record<string, number> }
   data: {
     symbol: string
     name: string | null

@@ -71,7 +71,7 @@ async fn company_news(state: &AppState) -> HashMap<String, (NewsVote, Vec<String
     for (symbol, stories) in by_symbol {
         // read_stories never waits on the model, so this loop stays fast.
         let readings = read_stories(state, &stories).await;
-        out.insert(symbol, vote_on(&stories, &readings));
+        out.insert(symbol, vote_on(state, &stories, &readings));
     }
     out
 }

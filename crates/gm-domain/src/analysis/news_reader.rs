@@ -658,6 +658,112 @@ pub struct NewsVote {
 /// Kinds that are context, not events: shown to the user but never voting.
 pub const NON_VOTING: [&str; 2] = ["general", "price_move"];
 
+/// News weights fitted on recorded headlines and what prices did after them (the calibration
+/// run). `per_kind` is the average move beyond the market over the 5 sessions after a story,
+/// signed by its reading's direction; kinds without enough events or a significant effect are
+/// absent, so they don't vote.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FittedWeights {
+    pub per_kind: std::collections::BTreeMap<String, f64>,
+    /// Every kind tested: (kind, events, mean signed move, standard error).
+    pub tested: Vec<(String, usize, f64, f64)>,
+    pub n_events: usize,
+    pub first: Option<chrono::NaiveDate>,
+    pub last: Option<chrono::NaiveDate>,
+}
+
+/// A kind's weight must clear this t-statistic (two-sided 5%) on at least `MIN_FIT_EVENTS`.
+const FIT_T: f64 = 1.96;
+pub const MIN_FIT_EVENTS: usize = 30;
+
+/// `events`: (kind, direction, abnormal 5-session log return), one per company, kind and day.
+pub fn fit_weights(
+    events: &[(String, i8, f64)],
+    first: Option<chrono::NaiveDate>,
+    last: Option<chrono::NaiveDate>,
+) -> FittedWeights {
+    let mut by_kind: std::collections::BTreeMap<&str, Vec<f64>> = Default::default();
+    for (kind, direction, abnormal) in events {
+        if *direction != 0 && abnormal.is_finite() && !NON_VOTING.contains(&kind.as_str()) {
+            by_kind
+                .entry(kind)
+                .or_default()
+                .push(f64::from(*direction) * abnormal);
+        }
+    }
+    let mut per_kind = std::collections::BTreeMap::new();
+    let mut tested = Vec::new();
+    for (kind, x) in by_kind {
+        let n = x.len();
+        let mean = x.iter().sum::<f64>() / n as f64;
+        let se = if n > 1 {
+            (x.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1) as f64 / n as f64).sqrt()
+        } else {
+            f64::NAN
+        };
+        // Only news that moved prices the way it was read, reliably, gets a vote.
+        if n >= MIN_FIT_EVENTS && mean > 0.0 && mean / se >= FIT_T {
+            per_kind.insert(kind.to_string(), mean);
+        }
+        tested.push((kind.to_string(), n, mean, se));
+    }
+    FittedWeights {
+        per_kind,
+        tested,
+        n_events: events.len(),
+        first,
+        last,
+    }
+}
+
+/// The news vote with fitted weights. The score is the expected move beyond the market over the
+/// next week; strong when it exceeds a round trip's trading cost (`cost`), so a news-driven call
+/// is one that has paid for itself on past events.
+pub fn news_vote_fitted(
+    readings: &[(Reading, f64)],
+    weights: &FittedWeights,
+    cost: f64,
+) -> NewsVote {
+    let contribution = |(r, hours): &(Reading, f64)| {
+        weights.per_kind.get(&r.kind).copied().unwrap_or(0.0)
+            * f64::from(r.direction)
+            * 0.5f64.powf(hours.max(0.0) / HALF_LIFE_HOURS)
+    };
+    let mut by_kind: std::collections::BTreeMap<&str, (f64, f64)> = Default::default();
+    for item in readings {
+        let c = contribution(item);
+        let entry = by_kind.entry(item.0.kind.as_str()).or_default();
+        entry.0 += c;
+        entry.1 = entry.1.max(c.abs());
+    }
+    let score: f64 = by_kind
+        .values()
+        .map(|(sum, strongest)| sum.signum() * sum.abs().min(*strongest))
+        .sum();
+    let sign: i8 = if score > 0.0 { 1 } else { -1 };
+    let mut drivers: Vec<usize> = (0..readings.len())
+        .filter(|&i| {
+            contribution(&readings[i]).signum() as i8 == sign && contribution(&readings[i]) != 0.0
+        })
+        .collect();
+    drivers.sort_by(|&a, &b| {
+        contribution(&readings[b])
+            .abs()
+            .total_cmp(&contribution(&readings[a]).abs())
+    });
+    let stance = if score.abs() >= cost && !drivers.is_empty() {
+        sign
+    } else {
+        0
+    };
+    NewsVote {
+        score,
+        stance,
+        n_stories: readings.len(),
+        drivers: if stance == 0 { Vec::new() } else { drivers },
+    }
+}
+
 pub fn news_vote(readings: &[(Reading, f64)]) -> NewsVote {
     let contribution = |(r, hours): &(Reading, f64)| {
         if NON_VOTING.contains(&r.kind.as_str()) {
@@ -709,6 +815,30 @@ pub fn news_vote(readings: &[(Reading, f64)]) -> NewsVote {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fitted_weights_vote_only_for_news_that_moved_prices() {
+        // 40 order wins followed by +1% (noisy), 40 legal stories with nothing after them.
+        let mut events = Vec::new();
+        for i in 0..40 {
+            let wiggle = if i % 2 == 0 { 0.004 } else { -0.004 };
+            events.push(("order_win".to_string(), 1, 0.01 + wiggle));
+            events.push(("legal".to_string(), -1, wiggle));
+        }
+        events.push(("general".to_string(), 1, 0.5));
+        let w = fit_weights(&events, None, None);
+        assert_eq!(w.per_kind.keys().collect::<Vec<_>>(), ["order_win"]);
+        assert!((w.per_kind["order_win"] - 0.01).abs() < 1e-12);
+        assert_eq!(w.tested.len(), 2, "general never votes");
+        let r = |kind: &str, direction: i8| (reading(kind, direction, 3, "x"), 1.0);
+        // One fresh order win: ~1% expected beyond the market, above a 0.25% cost: a call.
+        let vote = news_vote_fitted(&[r("order_win", 1), r("legal", -1)], &w, 0.0025);
+        assert_eq!((vote.stance, vote.drivers.clone()), (1, vec![0]));
+        // Legal news alone: no tested effect, no call.
+        assert_eq!(news_vote_fitted(&[r("legal", -1)], &w, 0.0025).stance, 0);
+        // Too few events: nothing fitted.
+        assert!(fit_weights(&events[..20], None, None).per_kind.is_empty());
+    }
 
     #[track_caller]
     fn reads(title: &str, kind: &str, direction: i8) {

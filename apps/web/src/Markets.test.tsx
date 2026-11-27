@@ -966,6 +966,21 @@ describe('advice card', () => {
     expect(await screen.findByText(/would switch to “leans sell” if the day closed here/)).toBeInTheDocument()
   })
 
+  test('fitted news weights are named with the events they rest on', async () => {
+    mockApi({
+      '/api/v1/analyze': () =>
+        Response.json({
+          ...analysis(),
+          news_weights: { fitted: true, n_events: 1834, first: '2023-11-02', last: '2026-11-26', voting_kinds: { results: 0.012 } },
+          advice: { ...HOLD_NO_EVIDENCE, stance: 'buy', basis: 'news_driven', headline: 'Buy, based on today’s news.', news_headlines: ['Infosys beats estimates'] },
+        }),
+    })
+    renderMarkets()
+    expect(await screen.findByTestId('news-behind')).toHaveTextContent(
+      'fitted on 1,834 past events (2023-11-02 to 2026-11-26). Only kinds of news with a reliable past effect count.',
+    )
+  })
+
   test('strong news with no proven rule: a labelled news-driven call with its headlines', async () => {
     mockApi({
       '/api/v1/analyze': () =>
@@ -988,6 +1003,7 @@ describe('advice card', () => {
     expect(within(card).getByTestId('stance')).toHaveTextContent('Sell / stay out')
     expect(card).toHaveTextContent('Based on today’s news · no track record')
     expect(within(card).getByTestId('news-behind')).toHaveTextContent('“SEBI orders forensic audit of the company”')
+    expect(within(card).getByTestId('news-behind')).toHaveTextContent('These weights are still judgement')
     expect(within(card).getByTestId('guidance')).toHaveTextContent('If you already own itConsider reducing it: today’s news is clearly bad')
     expect(within(card).getByTestId('guidance')).toHaveTextContent('Don’t buy until the news settles.')
   })

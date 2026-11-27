@@ -104,6 +104,8 @@ struct AppState {
     llm: Option<gm_integrations::llm::LlmReader>,
     live_fits: Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<LiveFit>>>>,
     recorder: Option<Arc<recorder::Recorder>>,
+    /// News weights fitted by the calibration run; None until enough has been recorded.
+    news_weights: Arc<std::sync::RwLock<Option<gm_domain::analysis::news_reader::FittedWeights>>>,
     today: today::Cache,
     access_token: Option<Arc<str>>,
 }
@@ -340,6 +342,7 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
 
     let state = AppState {
         live_fits: Arc::default(),
+        news_weights: Arc::default(),
         today: Arc::default(),
         registry: Arc::new(RuleRegistry::builtin()),
         store,
@@ -400,11 +403,44 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
                     llm.read_in_background(&named, false);
                     llm.read_in_background(&titles, true);
                 }
-                let rec = Arc::clone(&rec);
-                match tokio::task::spawn_blocking(move || rec.record(&stories)).await {
+                // Keep the model's readings of company headlines with the recording.
+                if let Some(llm) = &state.llm {
+                    let known = rec.model_readings();
+                    let named: Vec<String> = stories
+                        .iter()
+                        .map(|s| s.title.clone())
+                        .filter(|t| {
+                            !known.contains_key(t)
+                                && !gm_integrations::universe::companies_named(t).is_empty()
+                        })
+                        .collect();
+                    let rows: Vec<_> = named
+                        .iter()
+                        .cloned()
+                        .zip(llm.cached(&named))
+                        .filter_map(|(t, r)| r.map(|r| (t, r)))
+                        .collect();
+                    if let Err(error) = rec.append_model_readings(&rows) {
+                        tracing::warn!(%error, "could not store model readings");
+                    }
+                }
+                let writer = Arc::clone(&rec);
+                match tokio::task::spawn_blocking(move || writer.record(&stories)).await {
                     Ok(Ok(new)) => tracing::info!(new, "news recorder"),
                     Ok(Err(error)) => tracing::warn!(%error, "news recorder could not write"),
                     Err(error) => tracing::warn!(%error, "news recorder task failed"),
+                }
+                // Refit the news weights on everything recorded so far.
+                match calibrate(&state, Arc::clone(&rec), ReaderChoice::Best).await {
+                    Ok((_, weights)) => {
+                        tracing::info!(
+                            events = weights.n_events,
+                            voting_kinds = weights.per_kind.len(),
+                            "news weights refitted"
+                        );
+                        *state.news_weights.write().expect("weights lock") = Some(weights);
+                    }
+                    Err(error) => tracing::warn!(error = ?error, "news weights not refitted"),
                 }
                 tokio::time::sleep(RECORD_EVERY).await;
             }
@@ -901,7 +937,7 @@ async fn analyze_instrument(
                         true => match gather_news(&state, &name).await {
                             Ok((_, stories, _)) => {
                                 let readings = read_stories(&state, &stories).await;
-                                Some(vote_on(&stories, &readings))
+                                Some(vote_on(&state, &stories, &readings))
                             }
                             Err(_) => None,
                         },
@@ -952,6 +988,7 @@ async fn analyze_instrument(
         "advice": advice,
         "signals_note": signals_note,
         "news_vote": news_vote,
+        "news_weights": weights_summary(&state),
         "data": {
             "symbol": meta.symbol,
             "name": meta.name,
@@ -1293,7 +1330,24 @@ fn is_single_stock(instrument_type: Option<&str>, name: Option<&str>) -> bool {
 }
 
 /// Today's news vote from the readings, and the headlines behind it.
+/// What the news vote is weighed with, for the page to say.
+fn weights_summary(state: &AppState) -> serde_json::Value {
+    match state.news_weights.read().expect("weights lock").as_ref() {
+        Some(w) if !w.per_kind.is_empty() => serde_json::json!({
+            "fitted": true,
+            "n_events": w.n_events,
+            "first": w.first,
+            "last": w.last,
+            "voting_kinds": w.per_kind,
+        }),
+        _ => serde_json::json!({ "fitted": false }),
+    }
+}
+
+/// Fitted weights from the calibration run when it has any voting kind (the vote is then the
+/// expected move beyond the market, against a round trip's cost); judgement weights otherwise.
 fn vote_on(
+    state: &AppState,
     stories: &[gm_integrations::news::Story],
     readings: &[gm_domain::analysis::news_reader::Reading],
 ) -> (gm_domain::analysis::news_reader::NewsVote, Vec<String>) {
@@ -1304,7 +1358,15 @@ fn vote_on(
         .zip(stories)
         .map(|(r, s)| (r, (now - s.seen_at).num_minutes() as f64 / 60.0))
         .collect();
-    let vote = gm_domain::analysis::news_reader::news_vote(&aged);
+    let fitted = state.news_weights.read().expect("weights lock").clone();
+    let vote = match fitted.filter(|w| !w.per_kind.is_empty()) {
+        Some(w) => gm_domain::analysis::news_reader::news_vote_fitted(
+            &aged,
+            &w,
+            gm_domain::analysis::signals::ROUND_TRIP_COST,
+        ),
+        None => gm_domain::analysis::news_reader::news_vote(&aged),
+    };
     let headlines = vote
         .drivers
         .iter()
@@ -1383,80 +1445,72 @@ async fn desk_stories(
 /// group has. A group with `enough` events can start replacing a judgement weight.
 #[derive(Debug, Deserialize)]
 struct CalibrationQuery {
-    /// "built-in" (default) or "llm": re-read the recorded company headlines with the configured
-    /// model (GM_LLM_*) and run the same study, to compare the readers on the same events.
+    /// "best" (default: the model's stored reading where there is one, else the built-in
+    /// reader, as the live vote reads), "built-in", or "model" (only headlines it has read).
     reader: Option<String>,
 }
 
-async fn calibration(
-    State(state): State<AppState>,
-    Query(query): Query<CalibrationQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+/// Which readings the calibration uses.
+#[derive(Clone, Copy, PartialEq)]
+enum ReaderChoice {
+    Best,
+    BuiltIn,
+    Model,
+}
+
+/// The calibration study: events from the recording (live and backfill), what prices did 1 and
+/// 5 sessions after (company news beyond NIFTY 50, market news raw), and the weights fitted on
+/// the 5-session company moves.
+async fn calibrate(
+    state: &AppState,
+    rec: Arc<recorder::Recorder>,
+    choice: ReaderChoice,
+) -> Result<
+    (
+        serde_json::Value,
+        gm_domain::analysis::news_reader::FittedWeights,
+    ),
+    ApiError,
+> {
     use futures_util::StreamExt;
     use gm_domain::analysis::{
         macro_news::ASSETS,
         news::{EventOutcome, MIN_EVENTS, event_study},
-        news_reader::NON_VOTING,
+        news_reader::{NON_VOTING, fit_weights},
     };
     use recorder::{event_date, window_return};
-    let Some(rec) = state.recorder.clone() else {
-        return Ok(Json(serde_json::json!({
-            "recording": false,
-            "note": "The news recorder is off: set GM_DATA_DIR to a persistent directory.",
-        })));
-    };
-    let records = tokio::task::spawn_blocking(move || rec.read_all())
-        .await
-        .map_err(|e| ApiError::bad_request(format!("calibration task failed: {e}")))?
-        .map_err(|e| ApiError::bad_request(format!("cannot read the recording: {e}")))?;
-    let mut records = records;
-    let reader = match query.reader.as_deref().unwrap_or("built-in") {
-        "built-in" => "built-in".to_string(),
-        "llm" => {
-            let Some(llm) = &state.llm else {
-                return Err(ApiError::bad_request(
-                    "no model configured: set GM_LLM_BASE_URL, GM_LLM_MODEL and GM_LLM_API_KEY",
-                ));
-            };
-            // Only headlines naming a company feed company events; read those, 20 at a time.
-            let titles: Vec<String> = records
-                .iter()
-                .filter(|r| !r.symbols.is_empty())
-                .map(|r| r.title.clone())
-                .collect();
-            let mut readings = std::collections::HashMap::new();
-            for chunk in titles.chunks(20) {
-                let read = llm.read(chunk).await.map_err(ApiError::provider)?;
-                readings.extend(chunk.iter().cloned().zip(read));
-            }
-            for r in records.iter_mut() {
-                if let Some(reading) = readings.remove(&r.title) {
-                    r.reading = reading;
-                }
-            }
-            llm.model().to_string()
-        }
-        other => {
-            return Err(ApiError::bad_request(format!(
-                "reader must be built-in or llm, not {other:?}"
-            )));
-        }
-    };
+    let (records, model) = tokio::task::spawn_blocking(move || {
+        rec.read_all()
+            .map(|records| (records, rec.model_readings()))
+    })
+    .await
+    .map_err(|e| ApiError::bad_request(format!("calibration task failed: {e}")))?
+    .map_err(|e| ApiError::bad_request(format!("cannot read the recording: {e}")))?;
 
     // One event per (instrument, kind or theme, day): many outlets, one event.
     let mut seen = std::collections::HashSet::new();
     let mut company = Vec::new(); // (symbol, kind, direction, materiality, day)
     let mut market = Vec::new(); // (symbol, asset, direction, day)
+    let mut by_model = 0;
     for r in &records {
         let day = event_date(r.seen_at);
-        if r.reading.direction != 0 && !NON_VOTING.contains(&r.reading.kind.as_str()) {
+        let reading = match (choice, model.get(&r.title)) {
+            (ReaderChoice::BuiltIn, _) | (ReaderChoice::Best, None) => Some(&r.reading),
+            (_, Some(m)) => Some(m),
+            (ReaderChoice::Model, None) => None,
+        };
+        if let Some(reading) = reading
+            && reading.direction != 0
+            && !NON_VOTING.contains(&reading.kind.as_str())
+        {
             for symbol in &r.symbols {
-                if seen.insert((symbol.clone(), r.reading.kind.clone(), day)) {
+                if seen.insert((symbol.clone(), reading.kind.clone(), day)) {
+                    by_model += usize::from(reading.reader != "built-in");
                     company.push((
                         symbol.clone(),
-                        r.reading.kind.clone(),
-                        r.reading.direction,
-                        r.reading.materiality,
+                        reading.kind.clone(),
+                        reading.direction,
+                        reading.materiality,
                         day,
                     ));
                 }
@@ -1474,12 +1528,13 @@ async fn calibration(
         company.iter().map(|e| e.0.clone()).collect();
     symbols.extend(market.iter().map(|e| e.0.clone()));
     symbols.insert("^NSEI".to_string());
+    // Five years of prices: the backfill reaches three years back.
     let bars: std::collections::HashMap<String, Vec<(chrono::NaiveDate, f64)>> =
         futures_util::stream::iter(symbols)
             .map(|symbol| {
                 let yahoo = state.yahoo.clone();
                 async move {
-                    let chart = yahoo.chart(&symbol, "1y").await.ok()?;
+                    let chart = yahoo.chart(&symbol, "5y").await.ok()?;
                     let closes = chart
                         .bars
                         .iter()
@@ -1492,22 +1547,27 @@ async fn calibration(
             .filter_map(|x| async move { x })
             .collect()
             .await;
-    let study = |h: usize| {
-        let nifty = bars.get("^NSEI");
-        let company_events: Vec<EventOutcome> = company
+    let nifty = bars.get("^NSEI");
+    let company_at = |h: usize| -> Vec<(String, EventOutcome)> {
+        company
             .iter()
             .filter_map(|(symbol, kind, direction, materiality, day)| {
                 let own = window_return(bars.get(symbol)?, *day, h)?;
                 let index = window_return(nifty?, *day, h)?;
-                Some(EventOutcome {
-                    group: kind.clone(),
-                    direction: *direction,
-                    materiality: *materiality,
-                    abnormal: own - index,
-                })
+                Some((
+                    symbol.clone(),
+                    EventOutcome {
+                        group: kind.clone(),
+                        direction: *direction,
+                        materiality: *materiality,
+                        abnormal: own - index,
+                    },
+                ))
             })
-            .collect();
-        let market_events: Vec<EventOutcome> = market
+            .collect()
+    };
+    let market_at = |h: usize| -> Vec<EventOutcome> {
+        market
             .iter()
             .filter_map(|(symbol, asset, direction, day)| {
                 Some(EventOutcome {
@@ -1517,25 +1577,64 @@ async fn calibration(
                     abnormal: window_return(bars.get(symbol)?, *day, h)?,
                 })
             })
-            .collect();
-        serde_json::json!({
-            "company": event_study(&company_events),
-            "market": event_study(&market_events),
-        })
+            .collect()
     };
-    Ok(Json(serde_json::json!({
+    let study = |h: usize| {
+        let c: Vec<EventOutcome> = company_at(h).into_iter().map(|(_, e)| e).collect();
+        serde_json::json!({ "company": event_study(&c), "market": event_study(&market_at(h)) })
+    };
+    let five: Vec<(String, i8, f64)> = company_at(5)
+        .into_iter()
+        .map(|(_, e)| (e.group, e.direction, e.abnormal))
+        .collect();
+    let days: Vec<chrono::NaiveDate> = company.iter().map(|e| e.4).collect();
+    let weights = fit_weights(
+        &five,
+        days.iter().min().copied(),
+        days.iter().max().copied(),
+    );
+    let json = serde_json::json!({
         "recording": true,
-        "reader": reader,
+        "reader": match choice { ReaderChoice::Best => "best", ReaderChoice::BuiltIn => "built-in", ReaderChoice::Model => "model" },
         "n_records": records.len(),
+        "model_readings": model.len(),
         "first_seen": records.iter().map(|r| r.seen_at).min(),
         "last_recorded": records.iter().map(|r| r.recorded_at).max(),
         "company_events": company.len(),
+        "company_events_read_by_model": by_model,
         "market_events": market.len(),
         "min_events": MIN_EVENTS,
         "after_1_session": study(1),
         "after_5_sessions": study(5),
-        "note": "Moves are log returns: company news beyond NIFTY 50 over the same days, market news raw. A group needs enough events before its average move replaces a judgement weight.",
-    })))
+        "fitted_weights": &weights,
+        "note": "Moves are log returns: company news beyond NIFTY 50 over the same days, market news raw. A kind of company news votes only with 30+ events and a significant move in the direction it was read (fitted_weights.per_kind).",
+    });
+    Ok((json, weights))
+}
+
+/// The calibration run so far: what was recorded, what prices did after each kind of news, and
+/// the fitted weights the news vote uses.
+async fn calibration(
+    State(state): State<AppState>,
+    Query(query): Query<CalibrationQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Some(rec) = state.recorder.clone() else {
+        return Ok(Json(serde_json::json!({
+            "recording": false,
+            "note": "The news recorder is off: set GM_DATA_DIR to a persistent directory.",
+        })));
+    };
+    let choice = match query.reader.as_deref().unwrap_or("best") {
+        "best" => ReaderChoice::Best,
+        "built-in" => ReaderChoice::BuiltIn,
+        "model" | "llm" => ReaderChoice::Model,
+        other => {
+            return Err(ApiError::bad_request(format!(
+                "reader must be best, built-in or model, not {other:?}"
+            )));
+        }
+    };
+    Ok(Json(calibrate(&state, rec, choice).await?.0))
 }
 
 async fn desk(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -1690,7 +1789,7 @@ async fn news(
         },
         session_seconds,
     };
-    let (vote, _) = vote_on(&stories, &readings);
+    let (vote, _) = vote_on(&state, &stories, &readings);
     let articles: Vec<_> = stories
         .into_iter()
         .zip(readings)
@@ -3388,10 +3487,20 @@ mod tests {
         // Headlines naming NIFTY 50 companies become company events.
         assert!(body["company_events"].as_u64().unwrap() > 0, "{body}");
         assert!(body["after_5_sessions"]["company"].is_array());
-        assert_eq!(body["reader"], "built-in");
-        // The model reader needs a model.
-        let (status, _) = get_json(app.clone(), "/api/v1/calibration?reader=llm").await;
+        assert_eq!(body["reader"], "best");
+        // Too little recorded to fit anything yet: no kind votes on fitted weights.
+        assert!(
+            body["fitted_weights"]["per_kind"]
+                .as_object()
+                .unwrap()
+                .is_empty(),
+            "{body}"
+        );
+        let (status, _) = get_json(app.clone(), "/api/v1/calibration?reader=nonsense").await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, model) = get_json(app.clone(), "/api/v1/calibration?reader=model").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(model["company_events"], 0, "no stored model readings yet");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

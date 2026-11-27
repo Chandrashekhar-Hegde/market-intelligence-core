@@ -94,11 +94,19 @@ vol_annual, lead_model, prob_gain_1m, prob_gain_3m, prob_loss_10pct_3m, range_3m
 chance_check_3m, advice, news_vote}`, or `{symbol, group, error}` when an instrument can't be
 analysed. `extra` takes at most 20 watchlist symbols. Items are cached for 30 minutes.
 
-`GET /api/v1/calibration?reader=built-in|llm` reports the calibration run: `{recording, reader,
-n_records, first_seen, last_recorded, company_events, market_events, min_events,
-after_1_session, after_5_sessions, note}`. Each `after_*` holds `company` and `market` lists of
-`{group, direction, n, mean, se, hit_rate, enough}`. `recording` is false when `GM_DATA_DIR` is
-unset. `reader=llm` needs `GM_LLM_*` and answers 400 without them.
+`GET /api/v1/calibration?reader=best|built-in|model` reports the calibration run (live recording
+plus the historical backfill).
+- **Fields:** `{recording, reader, n_records, model_readings, first_seen, last_recorded,
+  company_events, company_events_read_by_model, market_events, min_events, after_1_session,
+  after_5_sessions, fitted_weights, note}`.
+- **Studies:** each `after_*` holds `company` and `market` lists of
+  `{group, direction, n, mean, se, hit_rate, enough}`.
+- **Weights:** `fitted_weights` is `{per_kind, tested, n_events, first, last}`. These are the
+  weights the news vote uses.
+- **Off:** `recording` is false when `GM_DATA_DIR` is unset.
+
+`/api/v1/analyze` adds `news_weights` (`{fitted, n_events, first, last, voting_kinds}`), so the
+page can say how the news vote was weighed.
 
 `GET /api/v1/projection?symbol=&price=&seed=42` returns the forecast fans recomputed from a live
 `price`: `{symbol, price, last_close, last_date, computed_at, projections}`, with `projections`
