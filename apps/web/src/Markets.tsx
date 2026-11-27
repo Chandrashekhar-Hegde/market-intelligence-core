@@ -32,10 +32,12 @@ import {
   searchInstruments,
   streamUrl,
   useAnalysis,
+  useNow,
 } from './api'
 import {
   QUICK_PICKS,
   type Candle,
+  timeAgo,
   appendTick,
   dayChange,
   displayPrice,
@@ -305,12 +307,6 @@ function LiveOutlook({
   )
 }
 
-function timeAgo(iso: string, now: number): string {
-  const minutes = Math.max(0, Math.round((now - Date.parse(iso)) / 60_000))
-  if (minutes < 60) return `${minutes} min ago`
-  const hours = Math.round(minutes / 60)
-  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`
-}
 
 const KIND_LABEL: Record<string, string> = {
   results: 'Results',
@@ -939,14 +935,6 @@ function useLiveTicks(symbols: string[]): Record<string, Tick> {
   return latest
 }
 
-function useNow(everyMs: number): number {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), everyMs)
-    return () => window.clearInterval(id)
-  }, [everyMs])
-  return now
-}
 
 function useDebounced<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value)

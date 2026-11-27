@@ -23,10 +23,10 @@ test('Markets view has no serious accessibility violations', async ({ page }) =>
   expect(blocking.map((v) => `${v.id}: ${v.nodes.map((n) => n.target).join(' | ')}`)).toEqual([])
 })
 
-test('How it works and Compare pages have no serious accessibility violations', async ({ page }) => {
+test('News desk, How it works and Compare pages have no serious accessibility violations', async ({ page }) => {
   await mockMarketData(page)
   await page.goto('/')
-  for (const tab of [/how it works/i, /compare/i]) {
+  for (const tab of [/news desk/i, /how it works/i, /compare/i]) {
     await page.getByRole('tab', { name: tab }).click()
     await expect(page.getByRole('main')).toBeVisible()
     const results = await new AxeBuilder({ page })

@@ -31,13 +31,13 @@ function renderApp() {
   )
 }
 
-test('opens on the live Markets view with three plain tabs and a standing disclaimer', async () => {
+test('opens on the live Markets view with four plain tabs and a standing disclaimer', async () => {
   mockFetch()
   renderApp()
 
   expect(screen.getByRole('heading', { name: 'Market Intelligence' })).toBeInTheDocument()
   expect(screen.getByRole('tab', { name: /markets/i })).toHaveAttribute('aria-selected', 'true')
-  expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Markets', 'Compare', 'How it works'])
+  expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Markets', 'News desk', 'Compare', 'How it works'])
   expect(screen.getByRole('heading', { name: /live prices, history and analysis/i })).toBeInTheDocument()
   expect(screen.getByText(/not personal financial advice/i)).toBeInTheDocument()
   expect(await screen.findByText('Online')).toBeInTheDocument()

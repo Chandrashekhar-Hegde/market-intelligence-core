@@ -336,6 +336,41 @@ This is the market-model abnormal return (MacKinlay 1997), applied intraday.
 
 **How news enters the advice:** see "News reading" (Phase 0.7, #114).
 
+## Market news desk (`/api/v1/desk`, `analysis/macro_news.rs`)
+
+- **Sources.** The ET, Mint, Business Standard, BusinessLine, CNBC and Bloomberg Markets RSS feeds
+  (headlines and links only), and three Google News searches over the last day (India: RBI,
+  rupee, FII, Sensex, Nifty; global: Fed, crude, gold, silver, Wall Street, dollar; AI: Groq,
+  OpenAI, Nvidia, xAI, Anthropic). Stories are de-duplicated by title, kept for 36 hours from the
+  newest one, newest first, at most 150. Moneycontrol's RSS was dropped: on 27 Nov 2026 it served
+  one item from 2017.
+- **Reading.** Each headline is matched to themes. A theme's direction comes from the first
+  direction word in the 4 words after its subject, else the 3 words before it, stopping at a clause
+  break ("as", "amid", "against", ...). Rates use hike/cut words and flows use buy/sell words.
+  The usual effects:
+
+  | News | Effect |
+  |---|---|
+  | RBI rate hike | banks ↓, NIFTY ↓ |
+  | Fed hike | US shares ↓, Nasdaq ↓, gold ↓, dollar/rupee ↑ |
+  | Crude up | crude ↑, oil marketers ↓, dollar/rupee ↑ |
+  | Gold or silver up | gold or silver ↑ |
+  | Rupee down | dollar/rupee ↑, IT exporters ↑ |
+  | Dollar up | dollar/rupee ↑, gold ↓ |
+  | Foreign investors buying | NIFTY ↑ |
+
+  The reverse news has the reverse effect. Reports of index moves ("Sensex rises 300 points")
+  are shown but never count.
+- **Leans.** Per asset: Σ direction × 0.5 × ½^(hours / 48). Within a theme the stories count for
+  no more than the strongest one, since many outlets cover one event. A lean shows from
+  |score| ≥ 0.25, about one fresh story.
+- **Uncalibrated, so shown as leans, never calls.** The 0.5 weight and the 0.25 threshold are
+  judgement. #127 records headlines and what prices did afterwards, to test them. The leans do
+  not feed the advice.
+- **Known limits.** It reads keywords, not meaning. For example, "eases pressure on RBI to use
+  rate hikes" still reads as a hike. An optional model reader (`GM_LLM_*`) or Claude (#121) can
+  replace it.
+
 ## News reading and the news vote (`analysis/news_reader.rs`)
 
 **Reading a headline.**

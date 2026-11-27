@@ -1933,3 +1933,15 @@ ol {
   background: #eef6f3;
   font-size: 0.92rem;
 }
+
+.desk-leans {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.news-reading .status-chip + .status-chip {
+  margin-left: 0.25rem;
+}

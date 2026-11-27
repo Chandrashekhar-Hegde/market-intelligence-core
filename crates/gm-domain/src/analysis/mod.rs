@@ -3,6 +3,7 @@
 //! crypto, FX, any exchange). A benchmark is optional and only adds the exposure section.
 
 pub mod distribution;
+pub mod macro_news;
 pub mod montecarlo;
 pub mod multi;
 pub mod news;
