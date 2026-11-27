@@ -330,3 +330,21 @@ export function equalMix(covarianceAnnual: number[][]): MixSummary | null {
   if (!(averageAloneVol > 0)) return null
   return { equalMixVol, averageAloneVol, cut: 1 - equalMixVol / averageAloneVol }
 }
+
+/**
+ * A risk-balanced mix: each holding sized by 1/volatility, so each contributes about the same
+ * swing (equal risk contribution when correlations are similar; Maillard, Roncalli & Teïletche
+ * 2010). With no proven edge it is the honest default, not a forecast of which will do best.
+ */
+export function riskBalancedMix(
+  holdings: { symbol: string; vol_annual: number }[],
+  budget: number,
+): { symbol: string; weight: number; amount: number }[] {
+  const usable = holdings.filter((h) => h.vol_annual > 0)
+  const total = usable.reduce((sum, h) => sum + 1 / h.vol_annual, 0)
+  if (!(total > 0) || !(budget > 0)) return []
+  return usable.map((h) => {
+    const weight = 1 / h.vol_annual / total
+    return { symbol: h.symbol, weight, amount: weight * budget }
+  })
+}

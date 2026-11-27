@@ -230,6 +230,17 @@ PY
   echo "  warm analyze RELIANCE.NS: ${took}s"
   python3 -c "import sys; t=float(sys.argv[1]); assert t < 3, f'warm analyze took {t}s'" "$took"
 
+  # Today's list: the whole universe answers, few instruments fail (first scan can take ~1 min).
+  curl -fsS --max-time 180 "$BASE_URL/api/v1/today?extra=BTC-USD" -o /tmp/gm_today.json
+  python3 - /tmp/gm_today.json <<'PY'
+import json, sys
+items = json.load(open(sys.argv[1]))["items"]
+failed = [i["symbol"] for i in items if "error" in i]
+calls = [f"{i['symbol']} {i['advice']['stance']}" for i in items if i.get("advice") and i["advice"]["stance"] != "hold"]
+assert len(items) >= 60 and len(failed) <= 5, (len(items), failed)
+print(f"  today: {len(items)} instruments, {len(failed)} unavailable, calls: {', '.join(calls) or 'none'}")
+PY
+
   # Calibration run: reports whether it is recording, and if so what it holds.
   curl -fsS "$BASE_URL/api/v1/calibration" -o /tmp/gm_calibration.json
   python3 - /tmp/gm_calibration.json <<'PY'

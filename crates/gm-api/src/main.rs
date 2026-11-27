@@ -70,6 +70,7 @@ async fn main() -> anyhow::Result<()> {
             .collect(),
         llm: gm_integrations::llm::LlmConfig::from_env(),
         data_dir: args.data_dir,
+        warm_today: true,
         ..ApiConfig::default()
     })
     .await?;

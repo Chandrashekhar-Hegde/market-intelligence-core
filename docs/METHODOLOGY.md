@@ -336,6 +336,29 @@ This is the market-model abnormal return (MacKinlay 1997), applied intraday.
 
 **How news enters the advice:** see "News reading" (Phase 0.7, #114).
 
+## Today's list (`/api/v1/today`, web "Today")
+
+- **Universe.** The NIFTY 50 (`gm-integrations/src/universe.rs`, membership as of late 2025,
+  every ticker checked on Yahoo on 27 Nov 2026), NIFTY, gold and silver ETFs, USD/INR, two
+  Indian-listed US ETFs, the S&P 500, eight large listed AI companies and the user's watchlist.
+- **Per instrument.** The same engine as `/analyze`: 10 years, no benchmark, 1,000 paths. It gives
+  the call (rules plus today's news for companies), the lead model's chances at 1 and 3 months,
+  and the walk-forward check of the 3-month chance.
+- **Company news.** Comes from the desk's feeds and topic searches, matched to each company by
+  name, so the list makes no per-company searches.
+- **Caching.** Entries are cached for 30 minutes and a background pass keeps the universe warm.
+  A cold scan of 67 instruments took 12 s locally.
+- **Real result (27 Nov 2026):** no proven rule was active on any of the 67 instruments. Power
+  Grid's proven rule was quiet. The page says "No Buy or Sell today" and leads with the chances.
+- **US in rupees.** The return in ₹ is (1 + return in $)(1 + change in USD/INR) − 1.
+- **A mix to consider.** Each chosen holding is weighted by 1/σ. This is naive risk parity, which
+  gives equal risk contributions when correlations are equal (Maillard, Roncalli & Teïletche
+  2010). With no proven edge it is the evidence-based default, and it makes no claim about which
+  holding will do best.
+- **Private beta only** (owner decision): publishing buy/sell lists to the public needs SEBI
+  Research Analyst or Investment Adviser registration. The page says it is research signals, not
+  registered advice.
+
 ## Market news desk (`/api/v1/desk`, `analysis/macro_news.rs`)
 
 - **Sources.** The ET, Mint, Business Standard, BusinessLine, CNBC and Bloomberg Markets RSS feeds
@@ -458,4 +481,4 @@ JBES 13; Gneiting & Raftery (2007) JASA 102; Kupiec (1995) J. Derivatives 3; Fab
 Granville (1963) New Key to Stock Market Profits; Hansen & Hodrick (1980) JPE 88; Holm (1979) Scand.
 J. Statistics 6; Jegadeesh (1990) J. Finance 45; Jegadeesh & Titman (1993) J. Finance 48; Lehmann
 (1990) QJE 105; Moskowitz, Ooi & Pedersen (2012) JFE 104; Newey & West (1987) Econometrica 55;
-Wilder (1978) New Concepts in Technical Trading Systems; Wilson (1927) JASA 22. MacKinlay (1997) J. Economic Literature 35. Evans (1996) Straightforward Statistics for the Behavioral Sciences. Brier (1950) Monthly Weather Review 78; Gigerenzer & Hoffrage (1995) Psychological Review 102.
+Wilder (1978) New Concepts in Technical Trading Systems; Wilson (1927) JASA 22. MacKinlay (1997) J. Economic Literature 35. Evans (1996) Straightforward Statistics for the Behavioral Sciences. Brier (1950) Monthly Weather Review 78; Maillard, Roncalli & Teïletche (2010) J. Portfolio Management 36(4); Gigerenzer & Hoffrage (1995) Psychological Review 102.

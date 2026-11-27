@@ -176,6 +176,7 @@ export async function mockMarketData(page: Page, { liveTicks = false } = {}) {
     return route.fulfill({ json: analysis(symbol) })
   })
   await page.route('**/api/v1/desk**', (route) => route.fulfill({ json: deskResponse() }))
+  await page.route('**/api/v1/today**', (route) => route.fulfill({ json: todayResponse() }))
   await page.route('**/api/v1/compare**', (route) => {
     const symbols = (new URL(route.request().url()).searchParams.get('symbols') ?? '').split(',')
     return route.fulfill({ json: comparison(symbols) })
@@ -370,5 +371,37 @@ export function deskResponse() {
     ],
     reader: 'built-in',
     as_of: '2026-11-25T06:00:00Z',
+  }
+}
+
+/** Today's list: a quiet day across a few groups. */
+export function todayResponse() {
+  const check = (said: number, rose: number) => ({
+    horizon_days: 63, n: 31, mean_forecast: said, realised: rose, brier: 0.24, skill_vs_coin: 0.02,
+    vs_coin: { statistic: -0.5, p_value: 0.6, reject_5pct: false },
+  })
+  const hold = (basis: string) => ({
+    stance: 'hold', basis, headline: 'Hold. No rule has a proven edge on this instrument.', drivers: [], horizon_days: null,
+    review_date: null, confidence: null, flip_level: null, reasons: [], news_headlines: [],
+  })
+  const item = (symbol: string, name: string, group: string, extra: Record<string, unknown> = {}) => ({
+    symbol, name, group, currency: 'INR', instrument_type: 'EQUITY', last_price: 100, change_pct: 0.5,
+    last_date: '2026-11-26', return_1y: 0.1, vol_annual: 0.2, lead_model: 'bootstrap', prob_gain_1m: 0.55,
+    prob_gain_3m: 0.6, prob_loss_10pct_3m: 0.1, range_3m: [-0.15, 0.2], chance_check_3m: check(0.6, 0.6),
+    advice: hold('no_evidence'), news_vote: null, ...extra,
+  })
+  return {
+    as_of: '2026-11-27T09:00:00Z',
+    notice: 'Research signals from past data, for a private beta. Not SEBI-registered investment advice: the app advises, you decide.',
+    items: [
+      item('^NSEI', 'NIFTY 50', 'India index', { instrument_type: 'INDEX', vol_annual: 0.15 }),
+      item('RELIANCE.NS', 'Reliance Industries', 'NIFTY 50', { prob_gain_3m: 0.61, chance_check_3m: check(0.69, 0.55) }),
+      item('POWERGRID.NS', 'Power Grid', 'NIFTY 50', { advice: hold('proven_but_quiet') }),
+      item('GOLDBEES.NS', 'Gold ETF', 'Gold, silver, rupee', { instrument_type: 'ETF', vol_annual: 0.13, prob_loss_10pct_3m: 0.03 }),
+      item('INR=X', 'USD/INR', 'Gold, silver, rupee', { instrument_type: 'CURRENCY', return_1y: 0.04, vol_annual: 0.05 }),
+      item('MON100.NS', 'Nasdaq 100 ETF', 'US from India', { instrument_type: 'ETF', vol_annual: 0.2 }),
+      item('NVDA', 'NVIDIA', 'AI', { currency: 'USD', return_1y: 0.3, vol_annual: 0.5, prob_gain_3m: 0.62 }),
+      { symbol: 'BADX', group: 'Your watchlist', error: 'symbol not found' },
+    ],
   }
 }

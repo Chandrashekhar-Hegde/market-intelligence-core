@@ -88,6 +88,12 @@ Invalid input returns `400`, an unknown symbol `404`, and an upstream failure `5
 
 The leans are uncalibrated and never feed the advice.
 
+`GET /api/v1/today?extra=SYM,...` is the daily list: `{as_of, notice, items}`. Each item is
+`{symbol, name, group, currency, instrument_type, last_price, change_pct, last_date, return_1y,
+vol_annual, lead_model, prob_gain_1m, prob_gain_3m, prob_loss_10pct_3m, range_3m,
+chance_check_3m, advice, news_vote}`, or `{symbol, group, error}` when an instrument can't be
+analysed. `extra` takes at most 20 watchlist symbols. Items are cached for 30 minutes.
+
 `GET /api/v1/calibration?reader=built-in|llm` reports the calibration run: `{recording, reader,
 n_records, first_seen, last_recorded, company_events, market_events, min_events,
 after_1_session, after_5_sessions, note}`. Each `after_*` holds `company` and `market` lists of

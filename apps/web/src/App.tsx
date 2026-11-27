@@ -1,17 +1,19 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { LineChart, ListChecks, Newspaper, Scale } from 'lucide-react'
+import { CalendarCheck, LineChart, ListChecks, Newspaper, Scale } from 'lucide-react'
 
 import { type HealthResponse, fetchHealth, getApiBaseUrl } from './api'
 import { Compare } from './Compare'
 import { Desk } from './Desk'
 import { Guide } from './Guide'
 import { Markets } from './Markets'
+import { Today } from './Today'
 
-type View = 'markets' | 'desk' | 'compare' | 'guide'
+type View = 'today' | 'markets' | 'desk' | 'compare' | 'guide'
 
 const TABS: { view: View; label: string; Icon: typeof LineChart }[] = [
   { view: 'markets', label: 'Markets', Icon: LineChart },
+  { view: 'today', label: 'Today', Icon: CalendarCheck },
   { view: 'desk', label: 'News desk', Icon: Newspaper },
   { view: 'compare', label: 'Compare', Icon: Scale },
   { view: 'guide', label: 'How it works', Icon: ListChecks },
@@ -59,7 +61,7 @@ function App() {
       </aside>
 
       <main className="workspace">
-        {view === 'markets' ? <Markets /> : view === 'desk' ? <Desk /> : view === 'compare' ? <Compare /> : <Guide />}
+        {view === 'markets' ? <Markets /> : view === 'today' ? <Today /> : view === 'desk' ? <Desk /> : view === 'compare' ? <Compare /> : <Guide />}
         <p className="disclaimer" role="note">
           Ranges and calls come from past data and are shown with their evidence. They are not
           personal financial advice, and past patterns can stop working.
