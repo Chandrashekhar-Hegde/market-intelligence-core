@@ -12,8 +12,9 @@ use chrono::{Datelike, Duration, NaiveDate, Weekday};
 use serde::{Deserialize, Serialize};
 use statrs::distribution::{ContinuousCDF, StudentsT};
 
-/// Forecast horizons in sessions: about a week, a month and a quarter.
-pub const HORIZONS: [usize; 3] = [5, 21, 63];
+/// Holding periods tested, in sessions: 1, 2 and 3 days, a week, two weeks, a month, a quarter
+/// (short horizons added 28 Nov 2026 for people who trade over days rather than months).
+pub const HORIZONS: [usize; 7] = [1, 2, 3, 5, 10, 21, 63];
 /// Round-trip cost of an Indian equity delivery trade with a zero-brokerage broker: STT 0.1% on
 /// each side, stamp duty 0.015% on the buy, exchange and SEBI fees, GST, plus a spread allowance.
 /// Rounded up to 0.25% (sources in METHODOLOGY.md). Used as the minimum edge worth acting on.
@@ -169,7 +170,8 @@ struct Rule {
 /// None when there are too few days for any rule (needs a year plus the longest horizon).
 pub fn evaluate(input: &SignalInput) -> Option<Signals> {
     let n = input.close.len();
-    if n != input.dates.len() || n < RANK_WINDOW + HORIZONS[2] + MIN_INDEPENDENT {
+    let longest = HORIZONS[HORIZONS.len() - 1];
+    if n != input.dates.len() || n < RANK_WINDOW + longest + MIN_INDEPENDENT {
         return None;
     }
     let close = input.close;
@@ -288,8 +290,12 @@ fn verdict(t: &SignalTest, m: usize) -> (bool, String) {
 
 pub fn horizon_words(days: usize) -> &'static str {
     match days {
-        0..=7 => "about a week",
-        8..=30 => "about a month",
+        0 | 1 => "a day",
+        2 => "two days",
+        3 | 4 => "three days",
+        5..=7 => "about a week",
+        8..=14 => "about two weeks",
+        15..=30 => "about a month",
         _ => "about three months",
     }
 }

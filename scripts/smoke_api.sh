@@ -305,6 +305,12 @@ assert all(len(p["typical_path"]) == 63 for p in report["projections"])
 garch_earns = any(m["model"] == "garch_t" and m["verdict"].startswith("Earns") for m in v["models"])
 assert report["lead_model"] == ("garch_t" if garch_earns else "bootstrap"), report["lead_model"]
 assert [c["horizon_days"] for c in v["chance_of_gain"]] == [5, 21, 63], v["chance_of_gain"]
+tr = report["track_record"]
+assert tr and len(tr["episodes"]) == 3, tr and tr["episodes"]
+# The holder rule never holds more than fully invested, so its worst fall is no deeper than holding's.
+assert tr["app"]["worst_fall"] >= tr["hold"]["worst_fall"] - 0.02, tr
+assert payload["signals"]["n_tests"] in (36, 42), payload["signals"]["n_tests"]
+print(f"  {symbol}: holder rule worst fall {tr['app']['worst_fall']:.0%} vs {tr['hold']['worst_fall']:.0%} holding; growth {tr['app']['growth']:.1%} vs {tr['hold']['growth']:.1%}")
 lr = report["long_run"]
 assert [l["years"] for l in lr] == [1, 3, 5] and all(len(l["resampled"]) == 101 for l in lr), lr and [l["years"] for l in lr]
 # A single stock's long-run growth is its market's; indices and crypto use their own.

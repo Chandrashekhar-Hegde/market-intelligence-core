@@ -171,6 +171,32 @@ impl Recorder {
         Ok(rows.len())
     }
 
+    /// Where a trading day's 1-minute bars are kept (`intraday/<date>.jsonl`, one line per
+    /// instrument). Yahoo keeps only 60 days of 5-minute bars, too few to test day-trading
+    /// rules, so the app keeps its own from 28 Nov 2026 on.
+    pub fn intraday_path(&self, day: chrono::NaiveDate) -> PathBuf {
+        self.path
+            .with_file_name("intraday")
+            .join(format!("{day}.jsonl"))
+    }
+
+    /// Writes a day's bars once; false when that day is already kept.
+    pub fn write_intraday(
+        &self,
+        day: chrono::NaiveDate,
+        lines: &[String],
+    ) -> std::io::Result<bool> {
+        let path = self.intraday_path(day);
+        if path.exists() || lines.is_empty() {
+            return Ok(false);
+        }
+        std::fs::create_dir_all(path.parent().expect("has a parent"))?;
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, lines.join("\n") + "\n")?;
+        std::fs::rename(tmp, &path)?;
+        Ok(true)
+    }
+
     /// The model's stored readings, by title.
     pub fn model_readings(&self) -> std::collections::HashMap<String, Reading> {
         let path = self.path.with_file_name(MODEL_FILE);
@@ -314,6 +340,27 @@ mod tests {
             seen_at: "2026-11-27T05:00:00Z".parse().unwrap(),
             summary: None,
         }
+    }
+
+    #[test]
+    fn intraday_days_are_written_once() {
+        let dir = std::env::temp_dir().join(format!("gm-intraday-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let r = Recorder::open(&dir).unwrap();
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 11, 27).unwrap();
+        assert!(
+            r.write_intraday(day, &["{\"symbol\":\"X\"}".into()])
+                .unwrap()
+        );
+        assert!(
+            !r.write_intraday(day, &["{}".into()]).unwrap(),
+            "kept already"
+        );
+        assert_eq!(
+            std::fs::read_to_string(r.intraday_path(day)).unwrap(),
+            "{\"symbol\":\"X\"}\n"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

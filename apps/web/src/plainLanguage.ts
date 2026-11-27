@@ -5,7 +5,15 @@ import type { Advice, AnalyzeResponse, LongRun, Projection, TodayItem } from './
 
 export type Card = { id: string; title: string; headline: string; why: string }
 
-const HORIZON_WORDS: Record<number, string> = { 5: '1 week', 21: '1 month', 63: '3 months' }
+const HORIZON_WORDS: Record<number, string> = {
+  1: '1 day',
+  2: '2 days',
+  3: '3 days',
+  5: '1 week',
+  10: '2 weeks',
+  21: '1 month',
+  63: '3 months',
+}
 
 export function horizonWords(sessions: number): string {
   return HORIZON_WORDS[sessions] ?? `${sessions} trading days`
@@ -395,11 +403,16 @@ export function longTermAnswer(analysis: AnalyzeResponse, rate: number): string 
   return `${verdict} Over 3 years it beat a ${rateText(rate)} FD in ${chanceWords(p3)} of the futures built from its own past swings${fiveText}.${actual}${growth}`
 }
 
-/** Today's volatility against its normal level (GARCH), and the size that keeps a bad day within `maxLoss`. */
+/**
+ * Today's volatility against its normal level, and the size that keeps a bad day within
+ * `maxLoss`. Same measure as the track record replays (EWMA forecast over the history's
+ * volatility), so the advice is the one that was tested.
+ */
 export function sizeToday(analysis: AnalyzeResponse, maxLoss: number): { ratio: number | null; today: number | null; normal: number | null } {
   const normal = maxPosition(analysis, maxLoss)
-  const g = analysis.report.volatility.garch
-  const ratio = g && g.long_run_vol_annual > 0 ? g.current_vol_annual / g.long_run_vol_annual : null
+  const ewma = analysis.report.volatility.ewma_annual
+  const usual = analysis.report.distribution.vol_annual
+  const ratio = ewma > 0 && usual > 0 ? ewma / usual : null
   return { ratio, normal, today: normal !== null && ratio !== null ? normal / ratio : normal }
 }
 
@@ -424,7 +437,7 @@ export function traderAnswer(analysis: AnalyzeResponse): string {
   if (advice.stance !== 'hold') return stanceGuidance(advice, null, analysis.data.currency).buyer
   if (advice.basis === 'proven_but_quiet') return 'A rule that has worked here has no signal today: wait for it rather than trade.'
   if (advice.basis === 'news_conflict') return 'Wait: the tested rule and today’s news disagree.'
-  return 'No timing edge: none of the rules beat trading costs on its own past, so the next days or weeks are close to a coin flip after costs. Don’t trade it short term.'
+  return 'No timing edge at any holding period from 1 day to 3 months: none of the six rules beat trading costs on its own past (tested at 1, 2 and 3 days, 1 and 2 weeks, 1 and 3 months). Across the NIFTY 50 over 10 years, no short-term rule beat buying on a random day after costs, and no day-trading pattern held up on recent 5-minute data. Short-term moves here are close to a coin flip after costs, so the evidence says don’t trade it short term.'
 }
 
 export type Move = { kind: 'call' | 'long-term' | 'size' | 'avoid'; symbol: string; text: string; chance: number | null }
@@ -517,4 +530,87 @@ export function bestMoves(items: TodayItem[], fdRate: number, maxLoss: number): 
     moves.push({ kind: 'avoid', symbol: i.symbol, chance: c, text: `${text} No clear case to buy it for the long run.` })
   }
   return moves
+}
+
+function monthYearShort(date: string): string {
+  return new Date(`${date}T00:00:00Z`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric', timeZone: 'UTC' })
+}
+
+/**
+ * Has the app's advice paid off here? Its holder rule ("hold less when it moves more than
+ * usual") replayed on this instrument's history, set against simply holding.
+ */
+export function trackRecordWords(analysis: AnalyzeResponse): { verdict: string; summary: string; falls: string[] } | null {
+  const tr = analysis.report.track_record
+  if (!tr) return null
+  const p = (x: number) => `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(0)}%`
+  const saved = tr.app.worst_fall > tr.hold.worst_fall + 0.02
+  const asGood = tr.app.sharpe >= tr.hold.sharpe - 0.01
+  const verdict = saved
+    ? asGood
+      ? 'It saved money in the big falls and earned as much or more for the risk taken.'
+      : 'It saved money in the big falls but cost some growth: here it works as insurance, not as extra return.'
+    : 'It made little difference here: this instrument’s swings rarely ran far above normal before its falls.'
+  const years = (Date.parse(tr.last) - Date.parse(tr.first)) / (365.25 * 86_400_000)
+  const summary = `Replaying the app’s “hold less when it moves more than usual” over the last ${years.toFixed(0)} years (trading costs included, money not invested earning ${(tr.cash_rate * 100).toFixed(0)}%): worst fall ${p(tr.app.worst_fall)} instead of ${p(tr.hold.worst_fall)} just holding; growth ${(tr.app.growth * 100).toFixed(1)}% a year instead of ${(tr.hold.growth * 100).toFixed(1)}%.`
+  const falls = tr.episodes.map(
+    (e) => `${monthYearShort(e.start)} to ${monthYearShort(e.end)}: ${p(e.app)} following the app, ${p(e.hold)} just holding.`,
+  )
+  return { verdict, summary, falls }
+}
+
+/**
+ * Where today's close is likely to land (9 in 10), from the price now. Fitted on the NIFTY 50's
+ * 5-minute bars (50 stocks x 60 days, 31 Aug - 27 Nov 2026): for each half hour since the
+ * 09:15 open, the share of a day's open-to-close variance still to come (it is U-shaped: the
+ * first and last half hours carry a third of it) and the band, in units of that remaining
+ * volatility, that held 90% of closes. Fitted on the first 30 days, it held 88.8% on the last
+ * 30; the old time-based range held 94% (too wide midday, too narrow late).
+ * [minutes since open, share of variance left, 90% band]
+ */
+const CLOSE_PROFILE: [number, number, number][] = [
+  [0, 1.0, 1.54],
+  [30, 0.82, 1.54],
+  [60, 0.714, 1.47],
+  [90, 0.636, 1.44],
+  [120, 0.574, 1.45],
+  [150, 0.519, 1.43],
+  [180, 0.469, 1.4],
+  [210, 0.416, 1.4],
+  [240, 0.368, 1.39],
+  [270, 0.323, 1.26],
+  [300, 0.276, 1.27],
+  [330, 0.227, 1.21],
+  [360, 0.15, 1.1],
+  [375, 0, 1.1],
+]
+const SESSION_MINUTES = 375
+
+function interpolate(minutes: number, column: 1 | 2): number {
+  const m = Math.min(Math.max(minutes, 0), SESSION_MINUTES)
+  for (let i = 1; i < CLOSE_PROFILE.length; i++) {
+    const a = CLOSE_PROFILE[i - 1]!
+    const b = CLOSE_PROFILE[i]!
+    if (m <= b[0]) return a[column] + ((b[column] - a[column]) * (m - a[0])) / (b[0] - a[0])
+  }
+  return CLOSE_PROFILE[CLOSE_PROFILE.length - 1]![column]
+}
+
+/** Standard deviation of daily open-to-close log moves over the last `days` sessions. */
+export function openToCloseVol(bars: { open: number; close: number }[], days = 250): number | null {
+  const moves = bars
+    .slice(-days)
+    .filter((b) => b.open > 0 && b.close > 0)
+    .map((b) => Math.log(b.close / b.open))
+  if (moves.length < 60) return null
+  const mean = moves.reduce((a, b) => a + b, 0) / moves.length
+  return Math.sqrt(moves.reduce((a, b) => a + (b - mean) ** 2, 0) / (moves.length - 1))
+}
+
+/** Today's close range (9 in 10) from `price`, with `elapsed` the share of the session gone. */
+export function closeRangeToday(price: number, sdOpenClose: number, elapsed: number): [number, number] | null {
+  if (!(price > 0) || !(sdOpenClose > 0) || elapsed >= 1) return null
+  const minutes = Math.max(0, elapsed) * SESSION_MINUTES
+  const half = interpolate(minutes, 2) * sdOpenClose * Math.sqrt(interpolate(minutes, 1))
+  return [price * Math.exp(-half), price * Math.exp(half)]
 }

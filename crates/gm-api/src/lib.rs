@@ -439,6 +439,8 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
                     Ok(Err(error)) => tracing::warn!(%error, "news recorder could not write"),
                     Err(error) => tracing::warn!(%error, "news recorder task failed"),
                 }
+                // After the NSE close, keep today's 1-minute bars for the NIFTY 50 and NIFTY.
+                keep_intraday(&state, &rec).await;
                 // Refit the news weights on everything recorded so far.
                 match calibrate(&state, Arc::clone(&rec), ReaderChoice::Best).await {
                     Ok((_, weights)) => {
@@ -1449,6 +1451,48 @@ async fn desk_stories(
     let mut seen = std::collections::HashSet::new();
     stories.retain(|s| seen.insert(dedupe_key(&s.title)));
     (sources, stories)
+}
+
+/// Once a trading day, after 16:00 IST: the day's 1-minute bars for every NIFTY 50 stock and
+/// NIFTY, so day-trading rules can be tested on more than the 60 days Yahoo keeps.
+async fn keep_intraday(state: &AppState, rec: &recorder::Recorder) {
+    let ist = chrono::Utc::now() + chrono::Duration::minutes(330);
+    let today = ist.date_naive();
+    let weekend = matches!(
+        chrono::Datelike::weekday(&today),
+        chrono::Weekday::Sat | chrono::Weekday::Sun
+    );
+    if weekend
+        || ist.time() < chrono::NaiveTime::from_hms_opt(16, 0, 0).expect("valid time")
+        || rec.intraday_path(today).exists()
+    {
+        return;
+    }
+    let mut lines = Vec::new();
+    let symbols = gm_integrations::universe::NIFTY50
+        .iter()
+        .map(|(s, _)| *s)
+        .chain(std::iter::once("^NSEI"));
+    for symbol in symbols {
+        let Ok(data) = state.yahoo.intraday(symbol, "1d").await else {
+            continue;
+        };
+        // Only a session that happened today (holidays repeat the previous one).
+        let session_day = data
+            .points
+            .first()
+            .and_then(|p| chrono::DateTime::from_timestamp(p.t + 330 * 60, 0))
+            .map(|d| d.date_naive());
+        if session_day == Some(today) {
+            lines.push(serde_json::json!({ "symbol": symbol, "points": data.points }).to_string());
+        }
+    }
+    let rec_lines = lines.len();
+    match rec.write_intraday(today, &lines) {
+        Ok(true) => tracing::info!(instruments = rec_lines, "kept today's 1-minute bars"),
+        Ok(false) => {}
+        Err(error) => tracing::warn!(%error, "could not keep today's 1-minute bars"),
+    }
 }
 
 #[derive(Debug, Deserialize)]

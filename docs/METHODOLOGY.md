@@ -364,6 +364,70 @@ This is the market-model abnormal return (MacKinlay 1997), applied intraday.
 
 **How news enters the advice:** see "News reading" (Phase 0.7, #114).
 
+## Track record: has the advice paid off? (`report.track_record`, `analysis/track_record.rs`)
+
+The app's standing advice to a holder is "hold less when it moves more than usual".
+- **The rule:** exposure = min(1, √(normal variance / EWMA variance forecast)), the
+  volatility-managed rule of Moreira & Muir (2017), never above fully invested.
+  - "Normal" is the average squared return over all history so far; the EWMA uses λ = 0.94.
+  - Rebalanced weekly; each change pays half a round trip (0.125%).
+  - Money not invested earns 7%.
+  - Replayed on every instrument's own history, after a year's warm-up.
+- **Reported:** growth, volatility, Sharpe over the deposit, worst fall, and the instrument's
+  three worst falls (found in the data) with what each did.
+- **The live size is the same measure:** EWMA ÷ the history's volatility.
+- **Evidence (28 Nov 2026):**
+  - *NIFTY 50 index:* worst fall −23% vs −38% just holding, Sharpe 0.22 vs 0.20, growth 10.2% vs
+    10.7%. Covid crash: −21% vs −37%.
+  - *Single NIFTY 50 stocks:* smaller worst fall in 44 of 49, more money in 10 of 49. That's
+    insurance, not extra return (Liu, Tang & Zhou 2019).
+  - *Not avoided:* one-day shocks (election day 2024, the April 2025 tariff shock), because the
+    rule reacts once the swings have started.
+
+## Short holding periods and day trading
+
+- **Rule horizons.** The six rules are tested at 1, 2, 3, 5, 10, 21 and 63 sessions: 42 tests,
+  Holm across all of them, graded with the NIFTY 50 panel. On 28 Nov 2026 no NIFTY 50 stock
+  gained a passing rule from the short horizons.
+- **Panel study** (`scripts/research/short_horizons.py`, 10 years, delivery cost 0.25%). Long
+  trades entered at the close after:
+  - a 1-day fall over 2%, or a 5-day fall over 5%;
+  - RSI below 30;
+  - the price being above its 200-day average;
+  - being among the top 10 12-month winners, or the top 10 weekly losers.
+
+  None beat buying the same stocks on a random day at any of 1, 2, 3, 5, 10 or 21 sessions;
+  every "vs random" t is below 2, apart from significantly negative ones. Trades held 10–21 days
+  made money only from the market's general rise.
+- **Day trading** (`scripts/research/day_trading_5min.py`).
+  - *Daily bars:* fading opening gaps of more than 1% looked profitable over 10 years (about
+    +0.2% a day after a 0.06% round trip). But Yahoo's daily "open" for NSE differs from the
+    first 5-minute open by a median 0.13% (90th percentile 0.47%), as big as the effect, so
+    those results are unreliable.
+  - *5-minute bars (60 days), entering at 09:20:* buying a gap down earned +0.32% a day (t 1.9,
+    47 days), and shorting a gap up lost 0.30%.
+  - *Intraday momentum* (first half hour predicting the last; Gao, Han, Li & Zhou 2018) lost
+    0.05% a day (t −3.4).
+  - *Conclusion:* no tested day-trading edge, so no intraday call. From 28 Nov 2026 the app keeps
+    each trading day's 1-minute bars for the NIFTY 50 and NIFTY (`intraday/<date>.jsonl` on the
+    volume) to test the gap-down pattern on enough days.
+
+## Today's close range (web `closeRangeToday`)
+
+- **Formula:** price × exp(± b(t) · σ<sub>oc</sub> · √V(t)).
+  - σ<sub>oc</sub> is the standard deviation of daily open-to-close log moves over the last
+    250 sessions.
+  - V(t) is the share of a day's open-to-close variance still to come at minute t since the open.
+  - b(t) is the symmetric band that held 90% of closes.
+- **Fitting:** V and b were fitted on 50 NIFTY 50 stocks × 60 days of 5-minute bars
+  (31 Aug–27 Nov 2026). Variance is U-shaped: 18% falls in the first half hour and 15% in the
+  last, so at 15:00 about 19% of it is still to come with 8% of the time left.
+- **Checked out of sample:** fitted on the first 30 days, it held 88.8% of closes on the last 30
+  (target 90%). The time-based range it replaces (daily quantiles × √(time left)) held 94%: too
+  wide midday, 89% at 15:00.
+- **Other markets:** the NSE profile is applied by share of the session; intraday U-shapes are
+  typical of equity markets (Wood, McInish & Ord 1985).
+
 ## Long run against a fixed deposit (`report.long_run`, `analysis/long_run.rs`)
 
 The decision most people face is "should this money be here or in an FD?", not "can I time it?".
@@ -595,4 +659,4 @@ JBES 13; Gneiting & Raftery (2007) JASA 102; Kupiec (1995) J. Derivatives 3; Fab
 Granville (1963) New Key to Stock Market Profits; Hansen & Hodrick (1980) JPE 88; Holm (1979) Scand.
 J. Statistics 6; Jegadeesh (1990) J. Finance 45; Jegadeesh & Titman (1993) J. Finance 48; Lehmann
 (1990) QJE 105; Moskowitz, Ooi & Pedersen (2012) JFE 104; Newey & West (1987) Econometrica 55;
-Wilder (1978) New Concepts in Technical Trading Systems; Wilson (1927) JASA 22. MacKinlay (1997) J. Economic Literature 35. Evans (1996) Straightforward Statistics for the Behavioral Sciences. Brier (1950) Monthly Weather Review 78; Politis & Romano (1994) JASA 89; Maillard, Roncalli & Teïletche (2010) J. Portfolio Management 36(4); DerSimonian & Laird (1986) Controlled Clinical Trials 7; Kish (1965) Survey Sampling; Gelman, Hill & Yajima (2012) J. Research on Educational Effectiveness 5; Gigerenzer & Hoffrage (1995) Psychological Review 102.
+Wilder (1978) New Concepts in Technical Trading Systems; Wilson (1927) JASA 22. MacKinlay (1997) J. Economic Literature 35. Evans (1996) Straightforward Statistics for the Behavioral Sciences. Brier (1950) Monthly Weather Review 78; Moreira & Muir (2017) J. Finance 72; Liu, Tang & Zhou (2019) J. Financial Economics 133; Gao, Han, Li & Zhou (2018) J. Financial Economics 129; Wood, McInish & Ord (1985) J. Finance 40; Politis & Romano (1994) JASA 89; Maillard, Roncalli & Teïletche (2010) J. Portfolio Management 36(4); DerSimonian & Laird (1986) Controlled Clinical Trials 7; Kish (1965) Survey Sampling; Gelman, Hill & Yajima (2012) J. Research on Educational Effectiveness 5; Gigerenzer & Hoffrage (1995) Psychological Review 102.

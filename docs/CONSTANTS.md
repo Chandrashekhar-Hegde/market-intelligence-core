@@ -33,7 +33,8 @@ The owner asked for no unexplained hardcoded numbers (27 Nov 2026). Each constan
 | `TERM_HORIZONS` | 1, 5, 21, 63 | Product | A day, a week, a month, a quarter |
 | `LEVELS` | 95%, 99% | Convention | Basel and industry VaR/ES levels |
 | `NORMAL_NU` | 200 | Engineering | Above this, t ≈ normal; statrs' t quantile hangs for huge ν |
-| `DEFAULT_HORIZONS`, `HORIZONS`, `CHANCE_HORIZONS` | 5, 21, 63 | Product | A week, a month, three months |
+| `DEFAULT_HORIZONS`, `CHANCE_HORIZONS` | 5, 21, 63 | Product | A week, a month, three months |
+| `HORIZONS` (rules) | 1, 2, 3, 5, 10, 21, 63 | Product | Holding periods traders use, from a day to a quarter (short ones added 28 Nov 2026) |
 | `DEFAULT_PATHS` | 2,000 | Engineering | Quantile error under 1 point at the 5/95% levels |
 | `MAX_PATHS` | 20,000 | Engineering | Request limit |
 | `PATHS` (long run) | 2,000 | Engineering | As above |
@@ -74,6 +75,13 @@ The owner asked for no unexplained hardcoded numbers (27 Nov 2026). Each constan
 | `HALF_LIFE_HOURS` | 48 | Judgement | Fade of a story's weight. Only matters if a kind of news earns a weight; then fit it from the 1/2/5/10-session decay |
 | `STORY_WEIGHT`, `LEAN_SCORE` | 0.5, 0.25 | Judgement | Desk leans (shown as pointers, never calls). To be fitted on market events once 30+ per asset |
 
+## Track record (`track_record.rs`)
+| Constant | Value | Kind | Basis |
+|---|---|---|---|
+| `REBALANCE` | 5 sessions | Convention | Weekly rebalancing keeps trading costs low (daily changes cost more than they save) |
+| `WARM_UP` | 250 sessions | Convention | A year of history before "normal volatility" is known |
+| `DEPOSIT_RATE` | 7% | Market fact | What un-invested money earns in the replay; the page's FD default |
+
 ## Comparison (`multi.rs`)
 | Constant | Value | Kind | Basis |
 |---|---|---|---|
@@ -96,4 +104,5 @@ The owner asked for no unexplained hardcoded numbers (27 Nov 2026). Each constan
 | Single-stock growth | home index's | Fitted | Across the NIFTY 50 (2016–2026), the spread of 10-year mean returns is smaller than sampling noise (τ̂ = 0) |
 | Panel correlation ρ̄ | measured daily (0.25 on 27 Nov 2026) | Fitted | Design effect for the rule priors |
 | Model reader pacing | 5 s, batches of 25 | Engineering | Free-tier limits |
+| Close-range profile (web `CLOSE_PROFILE`) | share of variance left and 90% band per half hour | Fitted | 50 NIFTY 50 stocks × 60 days of 5-minute bars (31 Aug–27 Nov 2026); held 88.8% out of sample. Refit when the kept 1-minute bars cover a year |
 | Cache times, timeouts, parallelism | various | Engineering | `gm-api`, `gm-integrations` |
