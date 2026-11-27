@@ -138,9 +138,9 @@ function analysis(overrides: Partial<AnalyzeResponse['report']> = {}): AnalyzeRe
         },
       },
       projections: [
-        { model: 'gbm', n_paths: 2000, seed: 42, fan, horizons, sample_paths: samples, block_length: null },
-        { model: 'garch_t', n_paths: 2000, seed: 42, fan, horizons: horizons.map((h) => ({ ...h, prob_gain: 0.52 })), sample_paths: samples, block_length: null },
-        { model: 'bootstrap', n_paths: 2000, seed: 42, fan, horizons: horizons.map((h) => ({ ...h, prob_gain: 0.51 })), sample_paths: samples, block_length: 12.4 },
+        { model: 'gbm', n_paths: 2000, seed: 42, fan, horizons, sample_paths: samples, typical_path: samples[0] ?? [], block_length: null },
+        { model: 'garch_t', n_paths: 2000, seed: 42, fan, horizons: horizons.map((h) => ({ ...h, prob_gain: 0.52 })), sample_paths: samples, typical_path: samples[0] ?? [], block_length: null },
+        { model: 'bootstrap', n_paths: 2000, seed: 42, fan, horizons: horizons.map((h) => ({ ...h, prob_gain: 0.51 })), sample_paths: samples, typical_path: samples[0] ?? [], block_length: 12.4 },
       ],
       risk: {
         var_es: [
@@ -176,7 +176,12 @@ function analysis(overrides: Partial<AnalyzeResponse['report']> = {}): AnalyzeRe
             verdict: 'Earns its place: forecasts beat historical simulation out of sample and its VaR holds up.',
           },
         ],
+        chance_of_gain: [5, 21, 63].map((h) => ({
+          horizon_days: h, n: 30, mean_forecast: 0.6, realised: 0.57, brier: 0.24, skill_vs_coin: 0.04, vs_coin: result(-0.8, 0.42),
+        })),
       },
+      lead_model: 'garch_t',
+      lead_reason: 'On this instrument’s past days, the volatility model (GARCH-t) forecast better than simply replaying history, and its risk limits held up, so it leads.',
       findings: [
         'Annualised volatility 17.4% over 1253 trading days.',
         'No evidence of predictability in returns: Ljung–Box p = 0.164 and no variance ratio is significant.',
@@ -682,11 +687,13 @@ describe('analysis panels', () => {
     const findings = await screen.findByTestId('findings')
     expect(findings).toHaveTextContent('No evidence of predictability')
     expect(screen.getByTestId('fan-days')).toHaveTextContent('63')
-    // The stock's own history replayed is preferred; GARCH-t and GBM are one click away.
-    expect(screen.getByRole('button', { name: 'Own history' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('row', { name: /^21 sessions/ })).toHaveTextContent('51%')
+    // The model validation rates best leads (GARCH-t earns its place here); the others are one click away.
+    expect(screen.getByRole('button', { name: 'GARCH-t · leads' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('row', { name: /^21 sessions/ })).toHaveTextContent('52 in 100')
+    await userEvent.click(screen.getByRole('button', { name: 'Own history' }))
+    expect(screen.getByRole('row', { name: /^21 sessions/ })).toHaveTextContent('51 in 100')
     await userEvent.click(screen.getByRole('button', { name: 'GBM' }))
-    expect(screen.getByRole('row', { name: /^21 sessions/ })).toHaveTextContent('54%')
+    expect(screen.getByRole('row', { name: /^21 sessions/ })).toHaveTextContent('54 in 100')
     expect(screen.getByRole('row', { name: /^21 sessions/ })).toHaveTextContent('-8.0% to 9.0%')
 
     const varTable = screen.getByTestId('var-table')
@@ -779,9 +786,17 @@ describe('plain language', () => {
     expect(cards['typical-day']).toMatch(/about 1\.1% up or down in a day: ₹110 on ₹10,000/)
     expect(cards['bad-day']).toMatch(/1 day in 20 it has fallen more than 1\.7% \(₹171 on ₹10,000\).*average fall was 2\.5% \(₹254\)/)
     expect(cards['worst-fall']).toMatch(/25% \(Jan 2022 to Oct 2022\), and it recovered by Jan 2024/)
-    expect(cards['where-it-could-be']).toMatch(/in 1 month, between ₹9,200 and ₹10,900 \(chance of being higher: 51%\)/)
-    expect(meaningCards(analysis(), 10_000).find((c) => c.id === 'where-it-could-be')?.why).toMatch(
+    expect(cards['where-it-could-be']).toMatch(/in 1 month, between ₹9,200 and ₹10,900 \(52 in 100 chance of being higher\)/)
+    // GARCH-t earns its place in this fixture, so it leads; without that, the own-history replay does.
+    expect(meaningCards(analysis(), 10_000).find((c) => c.id === 'where-it-could-be')?.why).toMatch(/^From 2,000 simulated futures that start from today’s volatility/)
+    const noWinner = analysis({ lead_model: 'bootstrap' })
+    expect(meaningCards(noWinner, 10_000).find((c) => c.id === 'where-it-could-be')?.why).toMatch(
       /^From 2,000 possible futures built by replaying this stock’s own past days in runs of about 12 days/,
+    )
+    // The chances in words, with the honesty check from the walk-forward.
+    expect(cards['chances']).toMatch(/^52 in 100 chance it is higher; /)
+    expect(meaningCards(analysis(), 10_000).find((c) => c.id === 'chances')?.why).toMatch(
+      /Checked on 30 past 3-month stretches: its history said about 60 in 100 on average, and it actually rose 57 in 100\. With only 30 checks, that is not yet clearly better than a coin flip\./,
     )
     expect(cards['predictable']).toMatch(/^No\./)
     expect(cards['trust']).toMatch(/^Yes/)
@@ -877,7 +892,7 @@ describe('advice card', () => {
     renderMarkets()
     const card = await screen.findByTestId('advice')
     expect(within(card).getByTestId('stance')).toHaveTextContent('Buy')
-    expect(card).toHaveTextContent('Right 64% of the time over 110 past calls (likely between 55% and 72%)')
+    expect(card).toHaveTextContent('Right 64 times in 100 over 110 past calls (likely between 55 and 72 in 100)')
     expect(card).toHaveTextContent(/Time frame: 1 month\. Look again on Tue, 22 Dec 2026/)
     expect(card).toHaveTextContent(/changes if the price closes below ₹24,800\.00/)
     expect(card).toHaveTextContent('✓ Has worked here (1 month)')

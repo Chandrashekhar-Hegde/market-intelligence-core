@@ -222,9 +222,10 @@ function analysis(symbol: string) {
       },
       volatility: { ewma_annual: 0.21, garch: null },
       projections: [
-        { model: 'gbm', n_paths: 2000, seed: 42, fan, horizons, sample_paths: [], block_length: null },
+        { model: 'gbm', n_paths: 2000, seed: 42, fan, horizons, sample_paths: [], typical_path: [], block_length: null },
         {
           model: 'bootstrap', n_paths: 2000, seed: 42, fan, horizons, block_length: 12,
+          typical_path: fan.map((p) => p.price[2]),
           sample_paths: [0.95, 1.04, 1.0].map((f) => fan.map((p) => p.price[2] * (1 + (f - 1) * Math.sqrt(p.day / 63)))),
         },
       ],
@@ -259,7 +260,12 @@ function analysis(symbol: string) {
               ? 'Earns its place: forecasts beat historical simulation out of sample and its VaR holds up.'
               : 'No significant difference from historical simulation out of sample.',
         })),
+        chance_of_gain: [5, 21, 63].map((h) => ({
+          horizon_days: h, n: 30, mean_forecast: 0.6, realised: 0.57, brier: 0.24, skill_vs_coin: 0.04, vs_coin: result(-0.8, 0.42),
+        })),
       },
+      lead_model: 'bootstrap',
+      lead_reason: 'No model forecast this instrument’s past days better than simply replaying its history, so the forecast replays its own past days.',
       findings: [
         'Annualised volatility 22.0% over 59 trading days.',
         'No evidence of predictability in returns: Ljung–Box p = 0.520 and no variance ratio is significant.',

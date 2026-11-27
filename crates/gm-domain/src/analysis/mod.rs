@@ -83,6 +83,9 @@ pub struct AnalysisReport {
     pub benchmark: Option<BenchmarkExposure>,
     /// Out-of-sample scores of the 1-day forecasts; None below 600 returns.
     pub validation: Option<Validation>,
+    /// The projection to show first, chosen by validation (see `lead_projection`).
+    pub lead_model: String,
+    pub lead_reason: String,
     /// Plain-language conclusions, each tied to a number above.
     pub findings: Vec<String>,
 }
@@ -129,6 +132,7 @@ pub fn analyze(input: &AnalysisInput) -> Result<AnalysisReport, AnalysisError> {
         .and_then(|(symbol, bars)| risk::exposure(symbol, prices, bars, periods_per_year));
 
     let validation = validation::validate(&returns);
+    let (lead_model, lead_reason) = lead_projection(&projections, validation.as_ref());
 
     let mut report = AnalysisReport {
         symbol: input.symbol.to_string(),
@@ -144,10 +148,44 @@ pub fn analyze(input: &AnalysisInput) -> Result<AnalysisReport, AnalysisError> {
         risk,
         benchmark,
         validation,
+        lead_model: lead_model.into(),
+        lead_reason: lead_reason.into(),
         findings: Vec::new(),
     };
     report.findings = findings(&report);
     Ok(report)
+}
+
+/// Lead with the model the walk-forward rates best: GARCH-t when it earns its place (beats
+/// historical simulation and its VaR holds), otherwise the bootstrap of the stock's own days,
+/// which is what historical simulation does. GBM is never validated, so it only leads when
+/// the history is too short for the others.
+fn lead_projection(
+    projections: &[Projection],
+    validation: Option<&Validation>,
+) -> (&'static str, &'static str) {
+    let has = |m: &str| projections.iter().any(|p| p.model == m);
+    let garch_earns = validation.is_some_and(|v| {
+        v.models
+            .iter()
+            .any(|m| m.model == "garch_t" && m.verdict.starts_with("Earns its place"))
+    });
+    if garch_earns && has("garch_t") {
+        (
+            "garch_t",
+            "On this instrument's past days, the volatility model (GARCH-t) forecast better than simply replaying history, and its risk limits held up, so it leads.",
+        )
+    } else if has("bootstrap") {
+        (
+            "bootstrap",
+            "No model forecast this instrument's past days better than simply replaying its history, so the forecast replays its own past days.",
+        )
+    } else {
+        (
+            "gbm",
+            "Too little history to test the models; this is the simplest one (steady volatility), so treat it as rough.",
+        )
+    }
 }
 
 fn pct(x: f64) -> String {

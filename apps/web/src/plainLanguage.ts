@@ -26,13 +26,42 @@ function monthYear(date: string): string {
   return new Date(`${date}T00:00:00Z`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric', timeZone: 'UTC' })
 }
 
-/**
- * The forecast to read: the instrument's own history replayed (its real crashes and calm
- * spells), else GARCH-t (today's volatility), else GBM.
- */
+/** The forecast to read first: the one validation rates best (chosen by the API). */
 export function preferredProjection(analysis: AnalyzeResponse): Projection | undefined {
-  const { projections } = analysis.report
-  return projections.find((p) => p.model === 'bootstrap') ?? projections.find((p) => p.model === 'garch_t') ?? projections[0]
+  const { projections, lead_model: lead } = analysis.report
+  return projections.find((p) => p.model === lead) ?? projections[0]
+}
+
+/**
+ * A chance as a natural frequency, which people read correctly far more often than a
+ * percentage (Gigerenzer & Hoffrage 1995): "64 in 100", or "1 in 12" when it is rare.
+ */
+export function chanceWords(p: number): string {
+  if (!Number.isFinite(p)) return '—'
+  if (p > 0 && p < 0.095) {
+    const n = Math.round(1 / p)
+    return n > 100 ? 'under 1 in 100' : `1 in ${n}`
+  }
+  return `${Math.round(p * 100)} in 100`
+}
+
+/**
+ * Did the history-based chance of a gain hold up? From the walk-forward check, in words.
+ * The chance mostly reflects the stock's long-run growth, so this is what keeps it honest.
+ */
+export function chanceHonesty(analysis: AnalyzeResponse, horizon: number): string | null {
+  const c = analysis.report.validation?.chance_of_gain.find((x) => x.horizon_days === horizon)
+  if (!c) return null
+  const verdict =
+    c.vs_coin.reject_5pct && c.vs_coin.statistic < 0
+      ? 'That is clearly better than a coin flip.'
+      : c.vs_coin.reject_5pct
+        ? 'That is worse than a coin flip, so don’t lean on it.'
+        : `With only ${c.n} checks, that is not yet clearly better than a coin flip.`
+  const stretch = horizonWords(horizon).replace(/s$/, '').replace(' ', '-')
+  return `Checked on ${c.n} past ${stretch} stretches: its history said about ${chanceWords(
+    c.mean_forecast,
+  )} on average, and it actually rose ${chanceWords(c.realised)}. ${verdict}`
 }
 
 /** One line on how a projection's futures were made. */
@@ -106,14 +135,28 @@ export function meaningCards(analysis: AnalyzeResponse, amount: number): Card[] 
   if (projection) {
     const lines = projection.horizons.map((h) => {
       const [low, , , , high] = h.return_quantiles
-      return `in ${horizonWords(h.horizon_days)}, between ${money(amount * (1 + low))} and ${money(amount * (1 + high))} (chance of being higher: ${pct(h.prob_gain, 0)})`
+      return `in ${horizonWords(h.horizon_days)}, between ${money(amount * (1 + low))} and ${money(amount * (1 + high))} (${chanceWords(h.prob_gain)} chance of being higher)`
     })
     cards.push({
       id: 'where-it-could-be',
       title: 'Where it could be',
       headline: `9 times in 10, ${money(amount)} ends up ${lines.join('; ')}.`,
-      why: `${projectionSource(projection)} These are ranges, not predictions.`,
+      why: `${projectionSource(projection)} These are chances, not predictions.`,
     })
+    const longest = projection.horizons.at(-1)
+    if (longest) {
+      const honest = chanceHonesty(analysis, longest.horizon_days)
+      cards.push({
+        id: 'chances',
+        title: `The chances over ${horizonWords(longest.horizon_days)}`,
+        headline: `${chanceWords(longest.prob_gain)} chance it is higher; ${chanceWords(
+          longest.prob_loss_over_10pct,
+        )} chance it is more than 10% lower; ${chanceWords(longest.prob_drawdown_over_10pct)} chance it falls 10% from a high at some point on the way.`,
+        why:
+          honest ??
+          'Much of the chance of a gain comes from its average growth in the past, which may not continue.',
+      })
+    }
   }
 
   const pr = report.predictability

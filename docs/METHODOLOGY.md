@@ -65,7 +65,11 @@ honest finding (Fama 1970).
     seed always give byte-identical output, but two instruments never share random draws.
   - **Why the symbol is in the seed:** until 27 Nov 2026 every symbol used the same draws, so
     every GBM fan had the same shape, only stretched by σ, and looked fake.
-- **Own history (`bootstrap`, the default display).** A stationary bootstrap (Politis & Romano
+- **Which model leads (`lead_model`, `lead_reason`).** Chosen by validation, not fixed:
+  GARCH-t leads when it *earns its place* (below); otherwise the own-history bootstrap, which is
+  what the historical-simulation baseline does. GBM is never validated and leads only when the
+  history is too short for the others.
+- **Own history (`bootstrap`).** A stationary bootstrap (Politis & Romano
   1994) of the instrument's own daily log returns.
   - **How it runs:** each path starts on a random past day. Each next day continues the same run of
     history, with probability 1 − 1/*L*, or jumps to a new random day.
@@ -78,6 +82,10 @@ honest finding (Fama 1970).
     historical-simulation family that every model is scored against in validation.
 - **Sample paths.** The first 30 simulated paths of each model are returned and drawn faintly
   behind the bands, so the fan is visibly made of possible futures.
+- **Typical path (`typical_path`).** Of all simulated paths, the one with the least total
+  distance Σ<sub>d</sub>|log P<sub>d</sub> − median<sub>d</sub>| from the day-by-day median (the
+  medoid under that distance), drawn in orange. A random walk has no single "most likely
+  path"; this is the most ordinary of the simulated ones, and the chart says so.
 - **GBM.** Log returns are μ + σZ, with Z ~ N(0,1) and μ, σ the historical daily mean and
   standard deviation.
 - **GARCH-t.** rₜ = μ + σₜzₜ, with σ² updated by the fitted GARCH recursion from today's
@@ -113,6 +121,15 @@ earn their place. Validation runs when there are at least 600 daily returns.
 - **Verdict.** A model *earns its place* only if its loss is significantly below the baseline's
   (DM, 5%) **and** both VaR levels pass. Being sharper but failing a VaR backtest is reported
   separately, as "don't use its tail numbers".
+
+- **Is the chance of a gain honest? (`chance_of_gain`).** At 5, 21 and 63 sessions, walk
+  forward over non-overlapping windows from day 500. At each start, the forecast is the share of
+  all earlier windows of that length that gained (what replaying the stock's own history says,
+  which is mostly its past average growth). The outcome is whether this window gained. Scored by
+  the Brier (1950) score against a coin flip's 0.25, with skill = 1 − Brier/0.25 and a DM test on
+  the per-window difference. The UI says "its history said about X in 100, it actually rose Y in
+  100", and whether that beats a coin flip. On simulated data with real drift the check finds
+  skill; with none, it does not (`chance_check_rewards_real_drift_only`).
 
 Verification: Kupiec, Christoffersen, DM and the binomial p-values match numpy/scipy computations
 on fixed sequences. On simulated GARCH-t data, the harness rates GARCH-t as earning its place,
@@ -270,8 +287,12 @@ These are computed in `apps/web/src/plainLanguage.ts`, from API numbers only.
 - **Bad day:** historical 95% one-day VaR and ES, times the amount.
 - **How much to put in:** maximum amount = the user's bad-day loss limit / 95% ES. The average loss
   on the worst 1 day in 20 then equals the limit.
-- **Where it could be:** the 5% and 95% return quantiles of the GARCH-t projection (GBM when GARCH
-  wasn't fitted) at 5, 21 and 63 sessions, with the share of paths that gain.
+- **Chances as natural frequencies.** Every chance is written "64 in 100", or "1 in 12" below
+  9.5%, because people reason about frequencies far more accurately than about percentages
+  (Gigerenzer & Hoffrage 1995).
+- **Where it could be:** the 5% and 95% return quantiles of the lead projection at 5, 21 and 63
+  sessions, with the share of paths that gain. **The chances** card adds the chance of ending
+  more than 10% lower and of a 10% fall along the way, followed by the honesty check above.
 - **Likely close today / tomorrow:** the 5% and 95% one-session log-return quantiles of the same
   projection, scaled by √(sessions left) and applied to the live price. For today, "sessions left"
   is the share of the regular session still to trade. This square-root-of-time rule ignores
@@ -369,4 +390,4 @@ JBES 13; Gneiting & Raftery (2007) JASA 102; Kupiec (1995) J. Derivatives 3; Fab
 Granville (1963) New Key to Stock Market Profits; Hansen & Hodrick (1980) JPE 88; Holm (1979) Scand.
 J. Statistics 6; Jegadeesh (1990) J. Finance 45; Jegadeesh & Titman (1993) J. Finance 48; Lehmann
 (1990) QJE 105; Moskowitz, Ooi & Pedersen (2012) JFE 104; Newey & West (1987) Econometrica 55;
-Wilder (1978) New Concepts in Technical Trading Systems; Wilson (1927) JASA 22. MacKinlay (1997) J. Economic Literature 35. Evans (1996) Straightforward Statistics for the Behavioral Sciences.
+Wilder (1978) New Concepts in Technical Trading Systems; Wilson (1927) JASA 22. MacKinlay (1997) J. Economic Literature 35. Evans (1996) Straightforward Statistics for the Behavioral Sciences. Brier (1950) Monthly Weather Review 78; Gigerenzer & Hoffrage (1995) Psychological Review 102.

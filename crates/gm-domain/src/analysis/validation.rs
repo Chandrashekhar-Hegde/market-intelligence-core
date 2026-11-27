@@ -24,6 +24,80 @@ pub struct Validation {
     pub first_forecast_index: usize,
     pub baseline: String,
     pub models: Vec<ModelScore>,
+    /// Was the history-based "chance of a gain" honest? One check per `CHANCE_HORIZONS`.
+    pub chance_of_gain: Vec<ChanceCheck>,
+}
+
+/// Horizons (trading days) at which the chance of a gain is checked: those the fan shows.
+pub const CHANCE_HORIZONS: [usize; 3] = [5, 21, 63];
+
+/// Walk forward over non-overlapping windows: at each start, the chance of a gain over the
+/// next `horizon_days` is the share of all earlier windows of that length that gained (what a
+/// bootstrap of the stock's own history says); then see whether it did gain. Brier (1950)
+/// score vs a coin flip's 0.25.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChanceCheck {
+    pub horizon_days: usize,
+    /// Separate, non-overlapping forecasts scored.
+    pub n: usize,
+    /// Average forecast chance of a gain.
+    pub mean_forecast: f64,
+    /// Share of those windows that actually gained.
+    pub realised: f64,
+    /// Mean squared error of the chance against the outcome (0 or 1); lower is better.
+    pub brier: f64,
+    /// 1 − brier/0.25: above 0 beats always saying 50%.
+    pub skill_vs_coin: f64,
+    /// Diebold–Mariano on (brier − coin) per window. Negative = better than a coin flip.
+    pub vs_coin: TestResult,
+}
+
+/// None when there are fewer than 10 windows to score.
+pub fn chance_check(returns: &[f64], horizon: usize) -> Option<ChanceCheck> {
+    let mut cum = Vec::with_capacity(returns.len() + 1);
+    cum.push(0.0);
+    for r in returns {
+        cum.push(cum[cum.len() - 1] + r);
+    }
+    let gain = |start: usize| cum[start + horizon] > cum[start];
+    let (mut gains_before, mut windows_before, mut next_window) = (0usize, 0usize, 0usize);
+    let (mut forecasts, mut outcomes) = (Vec::new(), Vec::new());
+    let mut t = WARMUP;
+    while t + horizon <= returns.len() {
+        // Every window that ended before t, counted incrementally.
+        while next_window + horizon <= t {
+            gains_before += usize::from(gain(next_window));
+            windows_before += 1;
+            next_window += 1;
+        }
+        forecasts.push(gains_before as f64 / windows_before.max(1) as f64);
+        outcomes.push(f64::from(u8::from(gain(t))));
+        t += horizon;
+    }
+    if forecasts.len() < 10 {
+        return None;
+    }
+    let sq = |f: f64, o: f64| (f - o) * (f - o);
+    let d: Vec<f64> = forecasts
+        .iter()
+        .zip(&outcomes)
+        .map(|(f, o)| sq(*f, *o) - sq(0.5, *o))
+        .collect();
+    let brier = forecasts
+        .iter()
+        .zip(&outcomes)
+        .map(|(f, o)| sq(*f, *o))
+        .sum::<f64>()
+        / forecasts.len() as f64;
+    Some(ChanceCheck {
+        horizon_days: horizon,
+        n: forecasts.len(),
+        mean_forecast: numeric::mean(&forecasts),
+        realised: numeric::mean(&outcomes),
+        brier,
+        skill_vs_coin: 1.0 - brier / 0.25,
+        vs_coin: diebold_mariano(&d),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -105,6 +179,10 @@ pub fn validate(returns: &[f64]) -> Option<Validation> {
         first_forecast_index: WARMUP,
         baseline: "historical_sim".into(),
         models,
+        chance_of_gain: CHANCE_HORIZONS
+            .iter()
+            .filter_map(|h| chance_check(returns, *h))
+            .collect(),
     })
 }
 
@@ -377,6 +455,36 @@ mod tests {
         };
         close(p(560, 1000), 0.000_165_049_870_550_452_86, 1e-6);
         close(p(37, 80), 0.576_430_626_188_393_1, 1e-9);
+    }
+
+    /// A steady riser: saying "it usually gains" beats a coin flip. No drift: it can't.
+    #[test]
+    fn chance_check_rewards_real_drift_only() {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(5);
+        let noise: Vec<f64> = (0..3000)
+            .map(|_| {
+                0.01 * rand_distr::Distribution::<f64>::sample(
+                    &rand_distr::StandardNormal,
+                    &mut rng,
+                )
+            })
+            .collect();
+        let drifting: Vec<f64> = noise.iter().map(|x| x + 0.004).collect();
+        let up = chance_check(&drifting, 5).unwrap();
+        // True chance: Φ(5·0.004 / (√5·0.01)) ≈ 0.81.
+        assert!(
+            (up.mean_forecast - 0.81).abs() < 0.04 && (up.realised - 0.81).abs() < 0.05,
+            "{up:?}"
+        );
+        assert!(up.skill_vs_coin > 0.3 && up.vs_coin.reject_5pct, "{up:?}");
+        let flat = chance_check(&noise, 5).unwrap();
+        assert!((flat.mean_forecast - 0.5).abs() < 0.05, "{flat:?}");
+        assert!(
+            flat.skill_vs_coin < 0.02 && !flat.vs_coin.reject_5pct,
+            "{flat:?}"
+        );
+        assert_eq!(up.n, (3000 - WARMUP) / 5);
+        assert!(chance_check(&noise[..WARMUP + 40], 5).is_none());
     }
 
     #[test]

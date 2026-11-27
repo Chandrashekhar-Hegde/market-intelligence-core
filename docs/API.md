@@ -84,8 +84,12 @@ Invalid input returns `400`, an unknown symbol `404`, and an upstream failure `5
 `GET /api/v1/analyze?symbol=&range=10y&benchmark=auto&seed=42&paths=2000` analyses any symbol (default `10y` since 27 Nov 2026; the app offers 5 or 10 years):
 
 - `report` holds `distribution`, `predictability`, `volatility` (EWMA and GARCH-t),
-  `projections` (Monte Carlo fans for `gbm` and `garch_t`), `risk` (VaR/ES, drawdown,
-  Sharpe), `benchmark` (beta/alpha) and `findings` (plain-language conclusions).
+  `projections` (Monte Carlo fans for `gbm`, `garch_t` and `bootstrap`, each with 30
+  `sample_paths` and a highlighted `typical_path`), `lead_model` and `lead_reason` (the
+  projection validation rates best, shown first), `risk` (VaR/ES, drawdown, Sharpe),
+  `benchmark` (beta/alpha), `validation` (walk-forward scores, plus `chance_of_gain`: whether the
+  history-based chance of a gain beat a coin flip at 5, 21 and 63 sessions) and `findings`
+  (plain-language conclusions).
 - `data` carries provenance: source, fetch time, currency, exchange, TradingView symbol and the
   data-quality report.
 - `benchmark` records which index was used (`selection`: `auto` or `requested`), whether it

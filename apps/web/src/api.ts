@@ -214,6 +214,8 @@ export type Projection = {
   fan: { day: number; price: [number, number, number, number, number] }[]
   /** The first simulated price paths, one price per day, for drawing. */
   sample_paths: number[][]
+  /** The simulated path closest to the median day by day: a typical path to highlight. */
+  typical_path: number[]
   /** Mean block length of the stationary bootstrap, in days (bootstrap only). */
   block_length: number | null
   horizons: {
@@ -283,7 +285,21 @@ export type AnalysisReport = {
     idiosyncratic_vol_annual: number
   }
   validation: Validation | null
+  /** The projection validation rates best, shown first, and why. */
+  lead_model: Projection['model']
+  lead_reason: string
   findings: string[]
+}
+
+/** Was the history-based chance of a gain honest? Scored walk-forward against a coin flip. */
+export type ChanceCheck = {
+  horizon_days: number
+  n: number
+  mean_forecast: number
+  realised: number
+  brier: number
+  skill_vs_coin: number
+  vs_coin: TestResult
 }
 
 export type Validation = {
@@ -307,6 +323,7 @@ export type Validation = {
     direction: { n: number; hits: number; accuracy: number; binomial: TestResult } | null
     verdict: string
   }[]
+  chance_of_gain: ChanceCheck[]
 }
 
 export type SignalTest = {
