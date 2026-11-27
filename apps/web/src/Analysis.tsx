@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createChart, LineSeries, LineStyle, type LineData } from 'lightweight-charts'
 
-import { type Advice, type AnalysisRange, type AnalyzeResponse, type PriceBar, type Projection, type Signal, describeApiError, useAnalysis, useLiveProjection } from './api'
+import { type Advice, type AnalysisRange, type AnalyzeResponse, type PriceBar, type Projection, type Signal, describeApiError, useAnalysis, useFdRate, useLiveProjection } from './api'
 import { fanLines, formatP, formatPct, formatPrice, futureSessions } from './marketData'
 import {
   formatMoney,
@@ -9,7 +9,10 @@ import {
   maxPosition,
   meaningCards,
   chanceWords,
+  longTermAnswer,
+  ownerAnswer,
   preferredProjection,
+  traderAnswer,
   projectionSource,
   stanceGuidance,
   yearsCovered,
@@ -143,7 +146,9 @@ function formatDate(date: string): string {
 function AdviceCard({ analysis, livePrice }: { analysis: AnalyzeResponse; livePrice: number | null }) {
   const { advice, signals, signals_note: note, data } = analysis
   const [maxLoss, setMaxLoss] = useState(500)
+  const [fdRate, setFdRate] = useFdRate()
   const lossId = useId()
+  const fdId = useId()
   const currency = data.currency
   if (!advice || !signals) {
     return (
@@ -191,14 +196,35 @@ function AdviceCard({ analysis, livePrice }: { analysis: AnalyzeResponse; livePr
       ) : null}
       <dl className="guidance" data-testid="guidance">
         <div>
-          <dt>If you already own it</dt>
-          <dd>{guidance.owner}</dd>
+          <dt>Investing for 3+ years</dt>
+          <dd data-testid="answer-long">{longTermAnswer(analysis, fdRate) ?? guidance.buyer}</dd>
         </div>
         <div>
-          <dt>If you don’t own it yet</dt>
-          <dd>{guidance.buyer}</dd>
+          <dt>If you already own it</dt>
+          <dd data-testid="answer-owner">{ownerAnswer(analysis, maxLoss)}</dd>
+        </div>
+        <div>
+          <dt>Trading in the next days or weeks</dt>
+          <dd data-testid="answer-trader">{traderAnswer(analysis)}</dd>
         </div>
       </dl>
+      <p className="fd-input">
+        <label htmlFor={fdId}>Compared with a fixed deposit at</label>{' '}
+        <input
+          id={fdId}
+          type="number"
+          min={0}
+          max={20}
+          step={0.25}
+          inputMode="decimal"
+          value={Math.round(fdRate * 10000) / 100}
+          onChange={(event) => {
+            const pct = Number(event.target.value)
+            if (pct >= 0 && pct < 50) setFdRate(pct / 100)
+          }}
+        />
+        % a year <span className="quiet-copy">(typical big-bank 1–3 year FD; change it to yours)</span>
+      </p>
 
       {confidence ? (
         <div className="confidence" aria-label="How often this rule was right">

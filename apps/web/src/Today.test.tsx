@@ -101,3 +101,25 @@ test('riskBalancedMix: inverse volatility, nothing for nothing', () => {
   expect(riskBalancedMix([], 1000)).toEqual([])
   expect(riskBalancedMix([{ symbol: 'A', vol_annual: 0.2 }], 0)).toEqual([])
 })
+
+test('best moves: long term against the deposit, holders sized for today, and no-case names', async () => {
+  window.localStorage.removeItem('fd-rate')
+  renderToday(todayResponse())
+  const list = await screen.findByTestId('moves-list')
+  const items = within(list).getAllByRole('listitem').map((li) => li.textContent ?? '')
+  // Best 3-year chance first: gold (0…1.2), then Reliance (−0.1…1.0), then NIFTY (−0.2…1.0).
+  expect(items[0]).toMatch(/^Long term For 3\+ years, Gold ETF beat a 7% FD in 83 in 100/)
+  expect(items[1]).toMatch(/Reliance Industries beat a 7% FD in 72 in 100.*Ahead of NIFTY \(66 in 100\), but one company can fall much further/)
+  expect(items.some((t) => /^Long term For 3\+ years, NIFTY 50 beat a 7% FD in 66 in 100/.test(t))).toBe(true)
+  // Gold is 1.6× as jumpy as usual: ₹500 / 2% = ₹25,000 normally, ₹15,625 today.
+  expect(items.find((t) => t.startsWith('If you hold it'))).toBe(
+    'If you hold it If you hold Gold ETF: it is moving 1.6× more than usual, so keep it under ₹15,625 for a bad day of ₹500 (₹25,000 in normal times).',
+  )
+  expect(items).toContain(
+    'Long term: no case For the long term, an FD at 7% has done better than Nasdaq 100 ETF (it beat the FD in 38 in 100 over 3 years). No clear case to buy it for the long run.',
+  )
+  // Stock-pickers are told how the single stocks compare with the index fund.
+  expect(items.some((t) => t.includes('Picking single NIFTY 50 stocks: 1 of 2 had a lower long-term chance than a NIFTY index fund (66 in 100)'))).toBe(true)
+  // A currency is a price, not a place for long-term money.
+  expect(items.some((t) => t.includes('USD/INR'))).toBe(false)
+})

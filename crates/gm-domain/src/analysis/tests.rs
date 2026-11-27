@@ -35,6 +35,7 @@ fn report(csv: &str, bench: Option<(&str, &[(NaiveDate, f64)])>) -> AnalysisRepo
         horizons: &DEFAULT_HORIZONS,
         n_paths: 2000,
         seed: 7,
+        long_run_drift_from: None,
     })
     .unwrap()
 }
@@ -231,6 +232,7 @@ fn same_seed_same_projection_different_seed_different() {
         horizons: &DEFAULT_HORIZONS,
         n_paths: 2000,
         seed: 8,
+        long_run_drift_from: None,
     })
     .unwrap();
     assert_ne!(a.projections[0].fan, c.projections[0].fan);
@@ -315,6 +317,7 @@ fn white_noise_is_reported_unpredictable_and_normal() {
         horizons: &[5],
         n_paths: 200,
         seed: 1,
+        long_run_drift_from: None,
     })
     .unwrap();
     assert!(!r.predictability.ljung_box_returns.reject_5pct);
@@ -342,6 +345,7 @@ fn rejects_short_or_bad_series() {
         horizons: &[5],
         n_paths: 100,
         seed: 0,
+        long_run_drift_from: None,
     };
     assert_eq!(
         analyze(&input(&short)).unwrap_err(),

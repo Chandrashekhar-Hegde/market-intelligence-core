@@ -286,10 +286,27 @@ export type AnalysisReport = {
     idiosyncratic_vol_annual: number
   }
   validation: Validation | null
+  /** 1, 3 and 5-year outcome distributions to compare with a fixed deposit. */
+  long_run: LongRun[] | null
   /** The projection validation rates best, shown first, and why. */
   lead_model: Projection['model']
   lead_reason: string
   findings: string[]
+}
+
+/** Total log return over `years` at percentiles 0…100: resampled, and from actual past windows. */
+export type LongRun = {
+  years: number
+  resampled: number[]
+  historical: number[]
+  n_windows: number
+  n_independent: number
+  worst: number | null
+  block_length: number
+  /** Annual growth assumed for the resampled futures, its uncertainty, and where it came from. */
+  drift_annual: number
+  drift_se_annual: number
+  drift_from: string
 }
 
 /** Was the history-based chance of a gain honest? Scored walk-forward against a coin flip. */
@@ -505,6 +522,10 @@ export type TodayItem = {
   chance_check_3m?: ChanceCheck | null
   advice?: Advice | null
   news_vote?: NewsVote | null
+  long_run?: LongRun[]
+  single_stock?: boolean
+  vol_ratio?: number | null
+  es95?: number | null
 }
 
 export type TodayResponse = { as_of: string; items: TodayItem[]; notice: string }
@@ -657,4 +678,27 @@ export function useNow(everyMs: number): number {
     return () => window.clearInterval(id)
   }, [everyMs])
   return now
+}
+
+/** The deposit rate to compare with (a year, as a fraction), remembered per browser. */
+export const DEFAULT_FD_RATE = 0.07
+
+export function useFdRate(): [number, (rate: number) => void] {
+  const [rate, setRate] = useState<number>(() => {
+    try {
+      const saved = Number(window.localStorage.getItem('fd-rate'))
+      return saved > 0 && saved < 0.5 ? saved : DEFAULT_FD_RATE
+    } catch {
+      return DEFAULT_FD_RATE
+    }
+  })
+  const update = (next: number) => {
+    setRate(next)
+    try {
+      window.localStorage.setItem('fd-rate', String(next))
+    } catch {
+      // Not remembered in private windows; the page still works.
+    }
+  }
+  return [rate, update]
 }

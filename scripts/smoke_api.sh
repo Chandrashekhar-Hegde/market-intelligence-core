@@ -305,6 +305,11 @@ assert all(len(p["typical_path"]) == 63 for p in report["projections"])
 garch_earns = any(m["model"] == "garch_t" and m["verdict"].startswith("Earns") for m in v["models"])
 assert report["lead_model"] == ("garch_t" if garch_earns else "bootstrap"), report["lead_model"]
 assert [c["horizon_days"] for c in v["chance_of_gain"]] == [5, 21, 63], v["chance_of_gain"]
+lr = report["long_run"]
+assert [l["years"] for l in lr] == [1, 3, 5] and all(len(l["resampled"]) == 101 for l in lr), lr and [l["years"] for l in lr]
+# A single stock's long-run growth is its market's; indices and crypto use their own.
+expected_from = {"AAPL": "^GSPC", "7203.T": "^N225"}.get(symbol, "own history")
+assert lr[1]["drift_from"] == expected_from, (symbol, lr[1]["drift_from"])
 c = v["chance_of_gain"][-1]
 print(f"  {symbol}: leads {report['lead_model']}; 3-month gain said {c['mean_forecast']:.0%}, rose {c['realised']:.0%} over {c['n']} checks, skill vs coin {c['skill_vs_coin']:+.2f} (p={c['vs_coin']['p_value']:.2f})")
 if bench:
