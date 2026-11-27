@@ -222,7 +222,7 @@ def signals_reference():
 
     tests = []
     for name, p in pos.items():
-        for h in (5, 21, 63):
+        for h in (1, 2, 3, 5, 10, 21, 63):
             days = [t for t in range(n - h) if not np.isnan(p[t])]
             x = p[days]
             y = np.log(c[np.array(days) + h] / c[days])

@@ -13,6 +13,7 @@ pub mod numeric;
 pub mod predictability;
 pub mod risk;
 pub mod signals;
+pub mod track_record;
 pub mod validation;
 pub mod volatility;
 
@@ -32,6 +33,9 @@ pub const MIN_RETURNS: usize = 60;
 pub const DEFAULT_HORIZONS: [usize; 3] = [5, 21, 63];
 pub const DEFAULT_PATHS: usize = 2_000;
 pub const MAX_PATHS: usize = 20_000;
+/// The fixed-deposit rate money not invested earns in the track record: a typical big-bank 1–3
+/// year FD (Nov 2026), the same default the page offers.
+pub const DEPOSIT_RATE: f64 = 0.07;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TestResult {
@@ -90,6 +94,9 @@ pub struct AnalysisReport {
     /// 1, 3 and 5-year outcome distributions (resampled and as they happened), to compare with a
     /// fixed deposit. None below a year of history.
     pub long_run: Option<Vec<long_run::LongRun>>,
+    /// The app's holder sizing replayed on this history against simply holding (see
+    /// track_record.rs). None below two years.
+    pub track_record: Option<track_record::TrackRecord>,
     /// The projection to show first, chosen by validation (see `lead_projection`).
     pub lead_model: String,
     pub lead_reason: String,
@@ -153,6 +160,9 @@ pub fn analyze(input: &AnalysisInput) -> Result<AnalysisReport, AnalysisError> {
         input.seed ^ 0x0001_0962_u64,
     );
     let (lead_model, lead_reason) = lead_projection(&projections, validation.as_ref());
+    let return_dates: Vec<NaiveDate> = prices[1..].iter().map(|(d, _)| *d).collect();
+    let track_record =
+        track_record::track_record(&return_dates, &returns, periods_per_year, DEPOSIT_RATE);
 
     let mut report = AnalysisReport {
         symbol: input.symbol.to_string(),
@@ -169,6 +179,7 @@ pub fn analyze(input: &AnalysisInput) -> Result<AnalysisReport, AnalysisError> {
         benchmark,
         validation,
         long_run,
+        track_record,
         lead_model: lead_model.into(),
         lead_reason: lead_reason.into(),
         findings: Vec::new(),

@@ -196,6 +196,12 @@ function analysis(overrides: Partial<AnalyzeResponse['report']> = {}): AnalyzeRe
         drift_se_annual: 0.05,
         drift_from: 'own history',
       })),
+      track_record: {
+        first: '2017-11-29', last: '2026-11-26', cash_rate: 0.07, average_exposure: 0.93,
+        app: { growth: 0.102, vol: 0.136, sharpe: 0.22, worst_fall: -0.231 },
+        hold: { growth: 0.107, vol: 0.169, sharpe: 0.2, worst_fall: -0.384 },
+        episodes: [{ start: '2020-01-15', end: '2020-03-23', app: -0.231, hold: -0.384, exposure_at_start: 0.88 }],
+      },
       lead_model: 'garch_t',
       lead_reason: 'On this instrument’s past days, the volatility model (GARCH-t) forecast better than simply replaying history, and its risk limits held up, so it leads.',
       findings: [
@@ -898,9 +904,9 @@ describe('advice card', () => {
     expect(screen.getByTestId('answer-long')).toHaveTextContent(
       'For 3+ years it has usually beaten an FD, but not reliably: invest gradually (a SIP) and only money you won’t need. Over 3 years it beat a 7% FD in 66 in 100 of the futures built from its own past swings (over 5 years: 72 in 100). In the actual past, 74 in 100 rolling 3-year stretches beat it, but that is only 3 separate periods. Growth assumed: its own past average, 12% a year (could be anywhere from 2% to 22%).',
     )
-    // GARCH now 21% vs 17% long run: 1.2× normal, so the safe size shrinks by that much.
+    // EWMA 19% vs 17.4% over the history: 1.1× normal (the measure the track record tests).
     expect(screen.getByTestId('answer-owner')).toHaveTextContent('Keep it if it still fits your plan')
-    expect(screen.getByTestId('answer-owner')).toHaveTextContent('moving 1.2× more than usual right now, so hold at most ₹15,936 for a bad day of ₹500 (₹19,685 in normal times)')
+    expect(screen.getByTestId('answer-owner')).toHaveTextContent('moving 1.1× more than usual right now, so hold at most ₹18,027 for a bad day of ₹500 (₹19,685 in normal times)')
     expect(screen.getByTestId('answer-trader')).toHaveTextContent('No timing edge')
     // A higher deposit rate lowers the chance, and is remembered.
     const fd = screen.getByLabelText('Compared with a fixed deposit at')
@@ -909,6 +915,15 @@ describe('advice card', () => {
     expect(screen.getByTestId('answer-long')).toHaveTextContent('An FD has done about as well. There is no clear long-term case for this one on its own. Over 3 years it beat a 12% FD in 55 in 100')
     expect(window.localStorage.getItem('fd-rate')).toBe('0.12')
     window.localStorage.removeItem('fd-rate')
+  })
+
+  test('the advice shows whether it paid off on this instrument', async () => {
+    mockApi()
+    renderMarkets()
+    const tr = await screen.findByTestId('track-record')
+    expect(tr).toHaveTextContent('It saved money in the big falls and earned as much or more for the risk taken.')
+    expect(tr).toHaveTextContent('worst fall −23% instead of −38% just holding; growth 10.2% a year instead of 10.7%')
+    expect(tr).toHaveTextContent('Jan 2020 to Mar 2020: −23% following the app, −38% just holding.')
   })
 
   test('explains what the labels mean', async () => {

@@ -274,12 +274,9 @@ async fn entry(
             })
         })
         .collect();
-    let vol_ratio = report
-        .volatility
-        .garch
-        .as_ref()
-        .filter(|g| g.long_run_vol_annual > 0.0)
-        .map(|g| g.current_vol_annual / g.long_run_vol_annual);
+    // Today's swings against the usual ones: the measure the track record replays.
+    let vol_ratio = (report.distribution.vol_annual > 0.0)
+        .then(|| report.volatility.ewma_annual / report.distribution.vol_annual);
     let es95 = report
         .risk
         .var_es

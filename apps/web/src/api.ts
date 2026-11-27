@@ -286,12 +286,26 @@ export type AnalysisReport = {
     idiosyncratic_vol_annual: number
   }
   validation: Validation | null
+  /** The app's holder sizing replayed on this history, against simply holding. */
+  track_record: TrackRecord | null
   /** 1, 3 and 5-year outcome distributions to compare with a fixed deposit. */
   long_run: LongRun[] | null
   /** The projection validation rates best, shown first, and why. */
   lead_model: Projection['model']
   lead_reason: string
   findings: string[]
+}
+
+export type Perf = { growth: number; vol: number; sharpe: number; worst_fall: number }
+
+export type TrackRecord = {
+  first: string
+  last: string
+  cash_rate: number
+  app: Perf
+  hold: Perf
+  average_exposure: number
+  episodes: { start: string; end: string; app: number; hold: number; exposure_at_start: number }[]
 }
 
 /** Total log return over `years` at percentiles 0…100: resampled, and from actual past windows. */

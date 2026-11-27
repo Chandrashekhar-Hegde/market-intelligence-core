@@ -13,6 +13,7 @@ import {
   ownerAnswer,
   preferredProjection,
   traderAnswer,
+  trackRecordWords,
   projectionSource,
   stanceGuidance,
   yearsCovered,
@@ -218,6 +219,23 @@ function AdviceCard({ analysis, livePrice }: { analysis: AnalyzeResponse; livePr
           <dd data-testid="answer-trader">{traderAnswer(analysis)}</dd>
         </div>
       </dl>
+      {trackRecordWords(analysis) ? (
+        <div className="track-record" data-testid="track-record">
+          <h4 className="advice-subhead">Has this advice paid off here?</h4>
+          <p>
+            <strong>{trackRecordWords(analysis)!.verdict}</strong> {trackRecordWords(analysis)!.summary}
+          </p>
+          <ul className="plain-list">
+            {trackRecordWords(analysis)!.falls.map((f) => (
+              <li key={f}>{f}</li>
+            ))}
+          </ul>
+          <p className="quiet-copy">
+            It cuts back only after the swings have started, so a one-day shock (like election day 2024) isn’t avoided;
+            drawn-out falls are where it helps.
+          </p>
+        </div>
+      ) : null}
       <p className="fd-input">
         <label htmlFor={fdId}>Compared with a fixed deposit at</label>{' '}
         <input

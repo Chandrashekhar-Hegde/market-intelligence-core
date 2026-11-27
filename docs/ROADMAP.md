@@ -38,19 +38,8 @@ Item states (GitHub labels):
 | 0.6 Usable | Intraday chart and live watchlist; six literature trading rules tested walk-forward with Buy/Hold/Sell only when proven; plain-language advice card, money cards and live close ranges; news with measured reaction and tone; `/decide` retired | #102, #103, #104, #105, #106 (closes #98–#101, #65) |
 | 0.7 Find and understand | Search with market and exchange filters (BSE twins resolved); Hold explained for owners and non-owners; 10-year analysis; forecast fans from each stock's own history with per-symbol seeds and sample paths; news from Google News, ET, Mint and GDELT; a headline reader whose strong news votes in the advice (companies only, labelled, uncalibrated); Compare tab in plain words | #115–#120, #122 (closes #108, #110–#114) |
 | 0.8 Today, every asset, live chances | Analysis and news in about a second (GDELT back-off); every forecast as a chance ("64 in 100") with the validation-rated model leading, a typical path and a walk-forward honesty check; the fan recalculated from live prices; a news desk (ET, Mint, Business Standard, BusinessLine, CNBC, Bloomberg, Google topics) read into per-asset leans; a calibration run recording headlines on a Railway volume, with an LLM comparison ready; a Today page across NIFTY 50, gold, silver, the rupee, US and AI with a risk-balanced mix; a modular Markets screen | #130–#136, #137 (closes #123–#129) |
-
-## Phase 0.9, in order ([plan](plans/phase-0.9.md))
-
-| Order | Issue | Goal | State |
-|---|---|---|---|
-| 1 | [#138](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/138) | Drop one-day bad prices before any maths (gold ETF showed 207% volatility) | in progress |
-| 2 | [#139](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/139) | Real actions: invest vs FD, holder size actions, best moves today | `agent-ready` |
-| 3 | [#140](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/140) | Gemini reads the news (company and market) | `agent-ready` |
-| 4 | [#141](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/141) | Backfill 3 years of news; fit the news weights | `agent-ready` |
-| 5 | [#142](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/142) | Timing rules as probabilities; call at 80 in 100 | `agent-ready` |
-| 6 | [#143](https://github.com/Chandrashekhar-Hegde/market-intelligence-core/issues/143) | One register of every constant; market facts in config | `agent-ready` |
-
-These come before the queue below (owner, 27 Nov 2026).
+| 0.9 Actions that mean something | Vendor bad prints removed; invest-vs-FD chances with honest growth (single stocks grow like their market) and size-for-today; Gemini reads company and market news; 3-year news backfill and calibration (published news doesn't keep moving prices, so it doesn't vote); timing rules graded with the NIFTY 50 panel; every constant registered | #144–#150 (closes #138–#143) |
+| 0.10 Does the advice pay? | Track record of the holder rule on every instrument; rules tested at 1–63 days; day-trading evidence and 1-minute bar collection; fitted close range for today | [plan](plans/phase-0.10.md) |
 
 ## Next, in order
 

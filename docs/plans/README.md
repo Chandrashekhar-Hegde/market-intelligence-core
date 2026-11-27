@@ -13,7 +13,8 @@ explain the *why* and the *order*.
 | [Phase 0.6: live data and validated advice](phase-0.6-advice.md) | 2026-11-26 | Done | #102–#106 |
 | [Phase 0.7: find any listing, understand the advice, real forecasts, news](phase-0.7.md) | 2026-11-27 | Done | #115–#120, #122 |
 | [Phase 0.8: today's actions, every asset, news desk, live probabilities, modular UI](phase-0.8.md) | 2026-11-27 | Done | #130–#137 |
-| [Phase 0.9: actions that mean something, numbers from data, Gemini](phase-0.9.md) | 2026-11-27 | In progress | #138–#143 |
+| [Phase 0.9: actions that mean something, numbers from data, Gemini](phase-0.9.md) | 2026-11-27 | Done | #144–#150 |
+| [Phase 0.10: does the advice pay, at every holding period?](phase-0.10.md) | 2026-11-28 | Done | this PR |
 | [Phase 1: real events and fundamentals](phase-1-events-and-fundamentals.md) | 2026-11-25 | Planned | #64, #67, #80–#88, #13, #17, #65, #66 |
 | [Phase 2: portfolio, accounts, broker data](phase-2-portfolio.md) | 2026-11-25 | Planned | #91–#93, #89, #90, #18, #68, #69, #70 |
 
