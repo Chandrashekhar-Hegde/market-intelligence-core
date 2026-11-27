@@ -676,6 +676,14 @@ pub struct FittedWeights {
 const FIT_T: f64 = 1.96;
 pub const MIN_FIT_EVENTS: usize = 30;
 
+impl FittedWeights {
+    /// The fit decides once any kind has been tested on enough events: from then on, a kind
+    /// without a weight doesn't vote, even if that leaves none (news then explains, not calls).
+    pub fn is_authoritative(&self) -> bool {
+        self.tested.iter().any(|(_, n, _, _)| *n >= MIN_FIT_EVENTS)
+    }
+}
+
 /// `events`: (kind, direction, abnormal 5-session log return), one per company, kind and day.
 pub fn fit_weights(
     events: &[(String, i8, f64)],
@@ -836,8 +844,17 @@ mod tests {
         assert_eq!((vote.stance, vote.drivers.clone()), (1, vec![0]));
         // Legal news alone: no tested effect, no call.
         assert_eq!(news_vote_fitted(&[r("legal", -1)], &w, 0.0025).stance, 0);
-        // Too few events: nothing fitted.
-        assert!(fit_weights(&events[..20], None, None).per_kind.is_empty());
+        // Too few events: nothing fitted, and the fit doesn't decide yet.
+        let few = fit_weights(&events[..20], None, None);
+        assert!(few.per_kind.is_empty() && !few.is_authoritative());
+        // Enough events but no effect: authoritative, and nothing votes.
+        let none: Vec<_> = events.iter().filter(|e| e.0 == "legal").cloned().collect();
+        let w0 = fit_weights(&none, None, None);
+        assert!(w0.is_authoritative() && w0.per_kind.is_empty());
+        assert_eq!(
+            news_vote_fitted(&[r("legal", -1), r("results", 1)], &w0, 0.0025).stance,
+            0
+        );
     }
 
     #[track_caller]

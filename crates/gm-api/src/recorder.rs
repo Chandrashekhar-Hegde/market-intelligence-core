@@ -213,6 +213,19 @@ pub fn window_return(
     Some((end / before).ln())
 }
 
+/// Log return you could still have earned after the news: from the close of the event day (the
+/// first bar on or after `day`, when someone who read it could act) to `h` sessions later.
+pub fn window_after(
+    bars: &[(chrono::NaiveDate, f64)],
+    day: chrono::NaiveDate,
+    h: usize,
+) -> Option<f64> {
+    let start = bars.iter().position(|(d, _)| *d >= day)?;
+    let entry = bars.get(start)?.1;
+    let exit = bars.get(start + h)?.1;
+    Some((exit / entry).ln())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,6 +254,12 @@ mod tests {
         );
         assert_eq!(window_return(&bars, d("2026-11-26"), 3), None);
         assert_eq!(window_return(&bars, d("2026-11-24"), 1), None);
+        // After the news: from the event day's close (27th) one session on (30th).
+        assert!(
+            (window_after(&bars, d("2026-11-26"), 1).unwrap() - (99.0f64 / 103.0).ln()).abs()
+                < 1e-12
+        );
+        assert_eq!(window_after(&bars, d("2026-11-26"), 2), None);
     }
 
     fn story(title: &str) -> Story {

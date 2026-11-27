@@ -256,7 +256,7 @@ function buyAnalysis(): AnalyzeResponse {
   const base = analysis()
   const signals = signalsFixture()
   signals.signals[0]!.tests[1] = signalTest(21, {
-    effect: 0.012, p_holm: 0.01, earns_place: true, hit_rate: 0.64, hit_n: 110, hit_low: 0.55, hit_high: 0.72,
+    effect: 0.012, p_holm: 0.01, earns_place: true, hit_rate: 0.64, hit_n: 110, hit_low: 0.55, hit_high: 0.72, p_edge: 0.86,
     verdict: 'Has worked on this instrument over about a month (adjusted p = 0.010).',
   })
   return {
@@ -956,6 +956,7 @@ describe('advice card', () => {
     expect(card).toHaveTextContent(/Time frame: 1 month\. Look again on Tue, 22 Dec 2026/)
     expect(card).toHaveTextContent(/changes if the price closes below ₹24,800\.00/)
     expect(card).toHaveTextContent('✓ Has worked here (1 month)')
+    expect(within(card).getByTestId('rule-chance-trend_200d')).toHaveTextContent('Chance that following it beats trading costs: 86 in 100')
   })
 
   test('a live price across the flip level says the rule would switch', async () => {
@@ -977,7 +978,22 @@ describe('advice card', () => {
     })
     renderMarkets()
     expect(await screen.findByTestId('news-behind')).toHaveTextContent(
-      'fitted on 1,834 past events (2023-11-02 to 2026-11-26). Only kinds of news with a reliable past effect count.',
+      'moved prices after it was published: fitted on 1,834 past events (2023-11-02 to 2026-11-26). Only kinds of news with a reliable effect count.',
+    )
+  })
+
+  test('a fit where no kind of news kept moving prices says news explains but does not call', async () => {
+    mockApi({
+      '/api/v1/analyze': () =>
+        Response.json({
+          ...analysis(),
+          news_weights: { fitted: true, n_events: 4207, first: '2023-11-01', last: '2026-11-01', voting_kinds: {} },
+          advice: { ...HOLD_NO_EVIDENCE, stance: 'buy', basis: 'news_driven', headline: 'Buy.', news_headlines: ['X beats estimates'] },
+        }),
+    })
+    renderMarkets()
+    expect(await screen.findByTestId('news-behind')).toHaveTextContent(
+      'on 4,207 past events (2023-11-01 to 2026-11-01) no kind of news kept moving prices once it was published',
     )
   })
 

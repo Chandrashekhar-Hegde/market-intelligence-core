@@ -41,10 +41,19 @@ async fn read_with_model(dir: PathBuf) -> anyhow::Result<()> {
         known.len()
     );
     for (i, chunk) in titles.chunks(gm_integrations::llm::BATCH).enumerate() {
-        let readings = llm
-            .read(chunk)
-            .await
-            .map_err(|e| anyhow::anyhow!("stopped after {} batches: {e}", i))?;
+        // Transient network errors and busy periods: wait a minute and try again, three times.
+        let mut attempt = 0;
+        let readings = loop {
+            match llm.read(chunk).await {
+                Ok(r) => break r,
+                Err(e) if attempt < 3 => {
+                    attempt += 1;
+                    eprintln!("batch {i}: {e}; retrying in a minute");
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                }
+                Err(e) => anyhow::bail!("stopped after {i} batches: {e}"),
+            }
+        };
         recorder.append_model_readings(&chunk.iter().cloned().zip(readings).collect::<Vec<_>>())?;
         if (i + 1) % 20 == 0 {
             println!("{} read", (i + 1) * gm_integrations::llm::BATCH);

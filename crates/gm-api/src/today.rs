@@ -19,7 +19,9 @@ use futures_util::StreamExt;
 use gm_domain::analysis::{
     AnalysisInput, DEFAULT_HORIZONS, analyze,
     news_reader::NewsVote,
-    signals::{NewsInput, advise_with_news},
+    signals::{
+        NewsInput, RulePrior, advise_with_news, apply_priors, average_correlation, panel_priors,
+    },
 };
 use gm_integrations::universe::{NIFTY50, OTHER_ASSETS, companies_named};
 use serde::Deserialize;
@@ -36,6 +38,92 @@ const MAX_EXTRA: usize = 20;
 const PATHS: usize = 1_000;
 
 pub type Cache = Arc<Mutex<HashMap<String, (Instant, serde_json::Value)>>>;
+pub type Priors = Arc<Mutex<Option<(Instant, Arc<Vec<((String, usize), RulePrior)>>)>>>;
+
+/// Panel priors are rebuilt this often: the daily bars change once a day.
+const PRIORS_TTL: Duration = Duration::from_secs(12 * 3600);
+
+/// Grade a NIFTY 50 stock's rules against the panel (empirical Bayes); others keep the strict
+/// test, having no panel to be judged with.
+pub fn grade(state: &AppState, symbol: &str, signals: &mut gm_domain::analysis::signals::Signals) {
+    if !NIFTY50.iter().any(|(s, _)| *s == symbol) {
+        return;
+    }
+    let priors = state
+        .rule_priors
+        .lock()
+        .expect("priors lock")
+        .as_ref()
+        .map(|(_, p)| Arc::clone(p));
+    if let Some(priors) = priors {
+        apply_priors(signals, &priors);
+    }
+}
+
+/// Rebuild the NIFTY 50 rule priors when they are missing or a day old.
+async fn refresh_priors(state: &AppState) {
+    let fresh = state
+        .rule_priors
+        .lock()
+        .expect("priors lock")
+        .as_ref()
+        .is_some_and(|(at, _)| at.elapsed() < PRIORS_TTL);
+    if fresh {
+        return;
+    }
+    let symbols: Vec<String> = NIFTY50.iter().map(|(s, _)| s.to_string()).collect();
+    let charts: Vec<_> = futures_util::stream::iter(symbols)
+        .map(|symbol| async move { state.yahoo.chart(&symbol, "10y").await.ok() })
+        .buffer_unordered(PARALLEL)
+        .filter_map(|x| async move { x })
+        .collect()
+        .await;
+    // Average correlation of the stocks' daily returns over the last 500 days they all traded.
+    let common: std::collections::BTreeSet<chrono::NaiveDate> = charts
+        .iter()
+        .map(|c| {
+            c.bars
+                .iter()
+                .rev()
+                .take(500)
+                .map(|b| b.date)
+                .collect::<std::collections::BTreeSet<_>>()
+        })
+        .reduce(|a, b| a.intersection(&b).copied().collect())
+        .unwrap_or_default();
+    let series: Vec<Vec<f64>> = charts
+        .iter()
+        .map(|c| {
+            let closes: Vec<f64> = c
+                .bars
+                .iter()
+                .filter(|b| common.contains(&b.date))
+                .map(|b| b.adjusted_close())
+                .collect();
+            closes.windows(2).map(|w| (w[1] / w[0]).ln()).collect()
+        })
+        .collect();
+    let rho = average_correlation(&series);
+    let panel: Vec<_> = futures_util::stream::iter(charts)
+        .map(|chart| async move {
+            tokio::task::spawn_blocking(move || trading_signals(&chart))
+                .await
+                .ok()
+                .flatten()
+        })
+        .buffer_unordered(PARALLEL)
+        .filter_map(|x| async move { x.map(|(s, _)| s) })
+        .collect()
+        .await;
+    let priors = panel_priors(&panel.iter().collect::<Vec<_>>(), rho);
+    tracing::info!(
+        stocks = panel.len(),
+        rho,
+        rules = priors.len(),
+        "trading-rule panel priors rebuilt"
+    );
+    *state.rule_priors.lock().expect("priors lock") = Some((Instant::now(), Arc::new(priors)));
+}
 
 #[derive(Debug, Deserialize)]
 pub struct TodayQuery {
@@ -130,10 +218,13 @@ async fn entry(
     .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string())?;
     let long = Arc::clone(&chart);
-    let signals = tokio::task::spawn_blocking(move || trading_signals(&long))
+    let mut signals = tokio::task::spawn_blocking(move || trading_signals(&long))
         .await
         .ok()
         .flatten();
+    if let Some((s, _)) = signals.as_mut() {
+        grade(state, &meta.symbol, s);
+    }
     let single = is_single_stock(meta.instrument_type.as_deref(), meta.name.as_deref());
     let vote = single.then(|| news.get(&meta.symbol)).flatten();
     let advice = signals.as_ref().map(|(signals, every_day)| {
@@ -247,6 +338,7 @@ async fn cached_entry(
 }
 
 async fn scan(state: &AppState, list: Vec<(String, String)>) -> Vec<serde_json::Value> {
+    refresh_priors(state).await;
     let news = company_news(state).await;
     let news = &news;
     futures_util::stream::iter(list)

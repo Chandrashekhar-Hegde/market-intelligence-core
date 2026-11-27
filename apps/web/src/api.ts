@@ -362,6 +362,8 @@ export type SignalTest = {
   mean_return_short: number | null
   earns_place: boolean
   verdict: string
+  /** P(edge beats costs), judged with the NIFTY 50 panel; null without a panel. */
+  p_edge?: number | null
 }
 
 export type Signal = {

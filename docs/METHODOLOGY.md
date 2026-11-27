@@ -294,6 +294,22 @@ The leading rule is the one with the smallest adjusted p. It sets:
 - 200 seeded fat-tailed random walks with random volume produce a proven rule in ≤ 5% of cases
   (measured: 1.5%).
 
+**Graded against the NIFTY 50 (empirical Bayes, `signals::panel_priors`, `apply_priors`).**
+For NIFTY 50 stocks, each rule-and-horizon's effect is pulled toward the panel.
+- **Panel prior:** the DerSimonian & Laird (1986) random-effects mean across the 50 stocks, and
+  the spread of true effects τ².
+- **Design effect:** the 50 estimates share market days, so the panel mean's variance is
+  multiplied by 1 + (k − 1)ρ̄ (Kish 1965). ρ̄ is the average correlation of the stocks' daily
+  returns over the last 500 common days: 0.25 on 27 Nov 2026, so 50 stocks count as about 3.7.
+  Without this, one rule looked certain on a 0.4% ± 1.5% estimate.
+- **Chance:** P(true effect > the round-trip cost) under the normal posterior. A rule counts when
+  that is at least 80 in 100 (owner, 27 Nov 2026) with 30+ separate calls. The hierarchical
+  model takes the place of the Holm correction (Gelman, Hill & Yajima 2012).
+- **Other instruments** have no panel and keep the strict test.
+- **Result (27 Nov 2026):** 1 of 50 stocks has a rule that counts, Power Grid's RSI over a week
+  at 85 in 100. That is the same stock the strict test found, so grading didn't loosen the bar,
+  in line with the panel evidence that timing rules don't work on these large caps.
+
 **Measured on real data (26 Nov 2026):** 37 instruments were tested. They were 30 large NSE stocks,
 NIFTY 50, Reliance, TCS, HDFC Bank, Infosys, AAPL, Bitcoin and the gold ETF. One rule earned its
 place on one stock: Power Grid, RSI over a week. Every other instrument got "Hold: no proven edge".
@@ -468,8 +484,10 @@ now, calibrate later, compare with a model reader once one is configured).
   standard error, and the share that moved the way the reading said.
 - **Fitted weights replace the judgement ones** (`news_reader::fit_weights`, refitted on every
   recorder pass).
-  - For each kind of company news, the weight is the average 5-session move beyond NIFTY 50,
-    signed by the reading's direction. Readings are the model's where stored, else the built-in
+  - For each kind of company news, the weight is the average move beyond NIFTY 50 from the close
+    of the day the news came out to 5 sessions later, signed by the reading's direction. That is
+    what someone reading the headline could still earn; the same-day reaction is reported but
+    not fitted. Readings are the model's where stored, else the built-in
     reader's, which is how the live vote reads.
   - A kind gets a weight only with at least 30 events and t ≥ 1.96; otherwise it doesn't vote.
   - The fitted vote's score is the expected move beyond the market over the next week. A
@@ -478,6 +496,18 @@ now, calibrate later, compare with a model reader once one is configured).
   - The materiality weights are no longer used once a fit exists. The 48-hour half-life is still
     judgement until measured.
   - The advice card says which weights it used, and on how many events.
+  - Once any kind has 30+ events the fit is authoritative: a kind without a weight doesn't vote,
+    even if none has one.
+- **Result on three years** (27 Nov 2026; built-in reader; 68,149 headlines, 4,207 company events).
+  - *On the day:* news moves prices. Bad results average −1.44% beyond NIFTY that day, going the
+    way they were read 72 times in 100. Good results average +0.47%, and broker ratings +0.38%.
+  - *After that day's close:* no kind of news keeps moving prices over the next 5 sessions.
+    Results +0.09% (t = 0.9), legal −0.17%, ratings −0.03%.
+  - *So:* published headlines are priced the same day, no kind of news gets a vote, and news
+    explains the day's move without making a call.
+  - *Still to compare:* the model reader's readings (`model_readings.jsonl`, being filled).
+  - *Caveat:* Google's publication date can lag the first report, which only makes the
+    after-the-news window more favourable to news, and it still found nothing.
 - **Comparing readers.** `?reader=built-in` and `?reader=model` run the same study with only one
   reader's readings. `model` uses only headlines it has read. `best`, the default, uses the
   model's where stored. The hit rates and fitted effects of the two can be compared on the same
@@ -564,4 +594,4 @@ JBES 13; Gneiting & Raftery (2007) JASA 102; Kupiec (1995) J. Derivatives 3; Fab
 Granville (1963) New Key to Stock Market Profits; Hansen & Hodrick (1980) JPE 88; Holm (1979) Scand.
 J. Statistics 6; Jegadeesh (1990) J. Finance 45; Jegadeesh & Titman (1993) J. Finance 48; Lehmann
 (1990) QJE 105; Moskowitz, Ooi & Pedersen (2012) JFE 104; Newey & West (1987) Econometrica 55;
-Wilder (1978) New Concepts in Technical Trading Systems; Wilson (1927) JASA 22. MacKinlay (1997) J. Economic Literature 35. Evans (1996) Straightforward Statistics for the Behavioral Sciences. Brier (1950) Monthly Weather Review 78; Politis & Romano (1994) JASA 89; Maillard, Roncalli & Teïletche (2010) J. Portfolio Management 36(4); Gigerenzer & Hoffrage (1995) Psychological Review 102.
+Wilder (1978) New Concepts in Technical Trading Systems; Wilson (1927) JASA 22. MacKinlay (1997) J. Economic Literature 35. Evans (1996) Straightforward Statistics for the Behavioral Sciences. Brier (1950) Monthly Weather Review 78; Politis & Romano (1994) JASA 89; Maillard, Roncalli & Teïletche (2010) J. Portfolio Management 36(4); DerSimonian & Laird (1986) Controlled Clinical Trials 7; Kish (1965) Survey Sampling; Gelman, Hill & Yajima (2012) J. Research on Educational Effectiveness 5; Gigerenzer & Hoffrage (1995) Psychological Review 102.

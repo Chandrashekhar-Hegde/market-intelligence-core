@@ -142,6 +142,12 @@ function formatDate(date: string): string {
   return `${dayMonth} ${d.getUTCFullYear()}`
 }
 
+/** A rule's best chance of beating costs across its time frames, when graded against the panel. */
+function bestChance(signal: Signal): number | null {
+  const ps = signal.tests.map((t) => t.p_edge).filter((p): p is number => typeof p === 'number')
+  return ps.length ? Math.max(...ps) : null
+}
+
 /** Buy / Sell / Hold, only from rules that have worked on this instrument, with the evidence. */
 function AdviceCard({ analysis, livePrice }: { analysis: AnalyzeResponse; livePrice: number | null }) {
   const { advice, signals, signals_note: note, data } = analysis
@@ -191,7 +197,9 @@ function AdviceCard({ analysis, livePrice }: { analysis: AnalyzeResponse; livePr
           <p className="quiet-copy">
             News is read headline by headline and weighed by how recent it is and{' '}
             {analysis.news_weights?.fitted
-              ? `by how much that kind of news actually moved prices: fitted on ${analysis.news_weights.n_events?.toLocaleString('en-IN')} past events (${analysis.news_weights.first} to ${analysis.news_weights.last}). Only kinds of news with a reliable past effect count.`
+              ? Object.keys(analysis.news_weights.voting_kinds ?? {}).length
+                ? `by how much that kind of news moved prices after it was published: fitted on ${analysis.news_weights.n_events?.toLocaleString('en-IN')} past events (${analysis.news_weights.first} to ${analysis.news_weights.last}). Only kinds of news with a reliable effect count.`
+                : `by what happened after similar news: on ${analysis.news_weights.n_events?.toLocaleString('en-IN')} past events (${analysis.news_weights.first} to ${analysis.news_weights.last}) no kind of news kept moving prices once it was published, so news explains the day’s move but doesn’t make a call.`
               : 'by how much that kind of news usually matters. These weights are still judgement: not enough past events have been measured yet.'}
           </p>
         </div>
@@ -287,6 +295,12 @@ function AdviceCard({ analysis, livePrice }: { analysis: AnalyzeResponse; livePr
                 </span>
               </div>
               <p className="quiet-copy">{signal.today}</p>
+              {bestChance(signal) !== null ? (
+                <p className="quiet-copy" data-testid={`rule-chance-${signal.id}`}>
+                  Chance that following it beats trading costs: {chanceWords(bestChance(signal)!)} (best time frame,
+                  judged with how it did on all NIFTY 50 stocks; a call needs 80 in 100).
+                </p>
+              ) : null}
               {liveFlip && livePrice !== null ? (
                 <p className="live-flip" role="status">
                   Live: at {formatPrice(livePrice, currency)} this rule would switch to “
