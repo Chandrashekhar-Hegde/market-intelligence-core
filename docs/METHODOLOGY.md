@@ -465,6 +465,24 @@ now, calibrate later, compare with a model reader once one is configured).
   readings are followed by moves in the stated direction more often, with enough events, should
   read the news.
 
+## The model reader (Gemini, `gm-integrations/src/llm.rs`)
+
+With `GM_LLM_*` set (production: `gemini-3.1-flash-lite` through Google's OpenAI-compatible
+endpoint, free tier), a language model reads headlines in two ways.
+- **Company news:** kind, direction, materiality and a reason, the same fields as the built-in
+  reader. `price_move` is a kind, so "shares rise 3%" never votes.
+- **Market news (desk):** a theme and asset effects, validated against the desk's ten assets
+  (`macro_news::reading_from`: unknown assets dropped, one effect per asset). The prompt is
+  strict: no effects for price reports, forecasts, speeches without a decision, routine
+  regulatory items or one company's news. Checked on real headlines (27 Nov 2026): price
+  reports, speeches and circulars got no effects; a rate cut, FPI outflows, a falling rupee and
+  rising crude got the textbook ones.
+- **Requests never wait for the model.** Each request uses the readings already made and queues
+  the rest. A background reader sends batches of 25, one every 5 s (free tiers allow about 15
+  a minute), and retries once on 429 or 503. Until a headline is read, and whenever the model
+  fails, the built-in reader covers it, and each reading says which reader made it. The
+  recorder's 30-minute pass keeps both caches warm.
+
 ## News reading and the news vote (`analysis/news_reader.rs`)
 
 **Reading a headline.**

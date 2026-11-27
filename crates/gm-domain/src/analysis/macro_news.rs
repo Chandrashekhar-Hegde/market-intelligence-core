@@ -234,7 +234,48 @@ fn subject_direction(ws: &[String], at: usize, len: usize, kind: Words) -> i8 {
 pub struct MacroImpact {
     pub asset: &'static str,
     pub direction: i8,
-    pub reason: &'static str,
+    pub reason: String,
+}
+
+/// The desk's themes, in display order.
+pub const THEMES: [&str; 7] = [
+    "Rates",
+    "Currency",
+    "Commodities",
+    "Flows",
+    "AI & tech",
+    "Market report",
+    "Other",
+];
+
+/// A reading from another reader (a language model): unknown themes become "Other", unknown
+/// assets and zero directions are dropped, one effect per asset.
+pub fn reading_from(theme: &str, impacts: &[(String, i8, String)]) -> MacroReading {
+    let theme = THEMES
+        .iter()
+        .copied()
+        .find(|t| t.eq_ignore_ascii_case(theme))
+        .unwrap_or("Other");
+    let mut out: Vec<MacroImpact> = Vec::new();
+    for (asset, direction, reason) in impacts {
+        let Some((key, _, _)) = ASSETS
+            .iter()
+            .find(|(k, _, _)| k.eq_ignore_ascii_case(asset))
+        else {
+            continue;
+        };
+        if *direction != 0 && out.iter().all(|i| i.asset != *key) {
+            out.push(MacroImpact {
+                asset: key,
+                direction: (*direction).clamp(-1, 1),
+                reason: reason.chars().take(240).collect(),
+            });
+        }
+    }
+    MacroReading {
+        theme,
+        impacts: out,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -275,7 +316,7 @@ pub fn read_macro(title: &str) -> MacroReading {
                 impacts.push(MacroImpact {
                     asset,
                     direction: d * effect,
-                    reason: if d > 0 { rule.why_up } else { rule.why_down },
+                    reason: if d > 0 { rule.why_up } else { rule.why_down }.to_string(),
                 });
             }
         }
@@ -448,6 +489,24 @@ mod tests {
         );
         reads("Nvidia results lift AI trade", "AI & tech", &[]);
         reads("Goldman Sachs hires new India head", "Other", &[]);
+    }
+
+    #[test]
+    fn model_readings_are_validated() {
+        let r = reading_from(
+            "commodities",
+            &[
+                ("crude".into(), 1, "Oil up.".into()),
+                ("bitcoin".into(), 1, "Not an asset we map.".into()),
+                ("omc".into(), -3, "Margins squeezed.".into()),
+                ("crude".into(), -1, "Duplicate.".into()),
+                ("gold".into(), 0, "No effect.".into()),
+            ],
+        );
+        assert_eq!(r.theme, "Commodities");
+        let got: Vec<_> = r.impacts.iter().map(|i| (i.asset, i.direction)).collect();
+        assert_eq!(got, [("crude", 1), ("omc", -1)]);
+        assert_eq!(reading_from("weather", &[]).theme, "Other");
     }
 
     #[test]
