@@ -62,6 +62,8 @@ pub struct ApiConfig {
     pub llm: Option<gm_integrations::llm::LlmConfig>,
     /// Where the news recorder keeps `news.jsonl` (GM_DATA_DIR, a Railway volume). None = off.
     pub data_dir: Option<PathBuf>,
+    /// Keep the daily list warm in the background (on in the server, off in tests).
+    pub warm_today: bool,
 }
 
 impl Default for ApiConfig {
@@ -82,11 +84,13 @@ impl Default for ApiConfig {
             news_base_url: None,
             llm: None,
             data_dir: None,
+            warm_today: false,
         }
     }
 }
 
 pub mod recorder;
+mod today;
 
 #[derive(Clone)]
 struct AppState {
@@ -100,6 +104,7 @@ struct AppState {
     llm: Option<gm_integrations::llm::LlmReader>,
     live_fits: Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<LiveFit>>>>,
     recorder: Option<Arc<recorder::Recorder>>,
+    today: today::Cache,
     access_token: Option<Arc<str>>,
 }
 
@@ -335,6 +340,7 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
 
     let state = AppState {
         live_fits: Arc::default(),
+        today: Arc::default(),
         registry: Arc::new(RuleRegistry::builtin()),
         store,
         payment_provider: Arc::new(MockPaymentProvider::test_mode(
@@ -375,6 +381,9 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
             .filter(|token| !token.trim().is_empty())
             .map(Arc::from),
     };
+    if config.warm_today {
+        today::spawn_warmer(state.clone());
+    }
     if let Some(rec) = state.recorder.clone() {
         let state = state.clone();
         tokio::spawn(async move {
@@ -420,6 +429,7 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
         .route("/api/v1/news", get(news))
         .route("/api/v1/desk", get(desk))
         .route("/api/v1/calibration", get(calibration))
+        .route("/api/v1/today", get(today::today))
         .route("/api/v1/stream", get(stream))
         .route("/api/v1/analyze", get(analyze_instrument))
         .route("/api/v1/projection", get(live_projection))
@@ -2376,6 +2386,16 @@ async fn openapi() -> Json<serde_json::Value> {
                     }
                 }
             },
+            "/api/v1/today": {
+                "get": {
+                    "summary": "Today's list: NIFTY 50, gold, silver, the rupee, US and AI names and the given watchlist, each with its call, chances and evidence (research signals, not registered advice)",
+                    "parameters": [{ "name": "extra", "in": "query", "schema": { "type": "string" }, "description": "Comma-separated watchlist symbols (at most 20)" }],
+                    "responses": {
+                        "200": { "description": "items (one per instrument, or an error entry) and a notice" },
+                        "400": { "description": "An invalid symbol or more than 20 extras" }
+                    }
+                }
+            },
             "/api/v1/calibration": {
                 "get": {
                     "summary": "The news calibration run: recorded headlines and the average move 1 and 5 sessions after each kind of news",
@@ -3107,6 +3127,7 @@ mod tests {
             "/api/v1/desk",
             "/api/v1/projection",
             "/api/v1/calibration",
+            "/api/v1/today",
         ] {
             assert!(payload["paths"].get(path).is_some(), "{path}");
         }
@@ -3881,6 +3902,50 @@ mod tests {
         // No news source answered: no vote, and the rules' advice stands on its own.
         assert!(body["news_vote"].is_null());
         assert!(advice["news_headlines"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn today_scans_the_universe_and_reports_each_instrument() {
+        let app = market_app(false, None).await;
+        let (status, body) = get_json(app.clone(), "/api/v1/today?extra=RELIANCE.NS").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let items = body["items"].as_array().unwrap();
+        // NIFTY 50 and 15 other assets; RELIANCE.NS is already in, so not added twice.
+        assert_eq!(items.len(), 65);
+        let reliance = items.iter().find(|i| i["symbol"] == "RELIANCE.NS").unwrap();
+        assert_eq!(reliance["group"], "NIFTY 50");
+        assert!(
+            reliance["prob_gain_3m"].as_f64().unwrap() > 0.0,
+            "{reliance}"
+        );
+        assert!(reliance["advice"]["stance"].is_string(), "{reliance}");
+        // Instruments the stub doesn't know are reported, not dropped.
+        assert!(items.iter().any(|i| i["error"].is_string()));
+        assert!(
+            body["notice"]
+                .as_str()
+                .unwrap()
+                .contains("Not SEBI-registered")
+        );
+        // Cached: the second scan is instant and identical.
+        let (_, again) = get_json(app.clone(), "/api/v1/today?extra=RELIANCE.NS").await;
+        assert_eq!(
+            reliance,
+            again["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|i| i["symbol"] == "RELIANCE.NS")
+                .unwrap()
+        );
+        let (status, _) = get_json(app.clone(), "/api/v1/today?extra=bad%20symbol").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let many = (0..21)
+            .map(|i| format!("X{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let (status, _) = get_json(app, &format!("/api/v1/today?extra={many}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

@@ -483,6 +483,41 @@ export function useLiveProjection(symbol: string, livePrice: number | null) {
   })
 }
 
+// ---- today's list (/api/v1/today) --------------------------------------------------------
+
+export type TodayItem = {
+  symbol: string
+  group: string
+  error?: string
+  name?: string | null
+  currency?: string | null
+  instrument_type?: string | null
+  last_price?: number
+  change_pct?: number | null
+  last_date?: string
+  return_1y?: number | null
+  vol_annual?: number
+  lead_model?: Projection['model']
+  prob_gain_1m?: number | null
+  prob_gain_3m?: number | null
+  prob_loss_10pct_3m?: number | null
+  range_3m?: [number, number] | null
+  chance_check_3m?: ChanceCheck | null
+  advice?: Advice | null
+  news_vote?: NewsVote | null
+}
+
+export type TodayResponse = { as_of: string; items: TodayItem[]; notice: string }
+
+export function useToday(extra: string[]) {
+  return useQuery<TodayResponse>({
+    queryKey: ['today', extra],
+    queryFn: () => request<TodayResponse>(`/api/v1/today?extra=${encodeURIComponent(extra.join(','))}`),
+    staleTime: 10 * 60_000,
+    retry: false,
+  })
+}
+
 // ---- market news desk (/api/v1/desk) ----------------------------------------------------
 
 export type MacroImpact = { asset: string; direction: number; reason: string }

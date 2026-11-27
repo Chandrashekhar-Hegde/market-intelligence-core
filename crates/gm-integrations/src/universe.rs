@@ -57,6 +57,26 @@ pub const NIFTY50: [(&str, &str); 50] = [
     ("WIPRO.NS", "Wipro"),
 ];
 
+/// Besides the NIFTY 50, the daily list scans these: (symbol, group). US names are the large
+/// listed AI plays; Indian-listed ETFs are the way in without sending money abroad.
+pub const OTHER_ASSETS: [(&str, &str); 15] = [
+    ("^NSEI", "India index"),
+    ("GOLDBEES.NS", "Gold, silver, rupee"),
+    ("SILVERBEES.NS", "Gold, silver, rupee"),
+    ("INR=X", "Gold, silver, rupee"),
+    ("MON100.NS", "US from India"),
+    ("MAFANG.NS", "US from India"),
+    ("^GSPC", "US from India"),
+    ("NVDA", "AI"),
+    ("MSFT", "AI"),
+    ("GOOGL", "AI"),
+    ("AMZN", "AI"),
+    ("META", "AI"),
+    ("AVGO", "AI"),
+    ("TSM", "AI"),
+    ("AMD", "AI"),
+];
+
 fn tokens(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric() && c != '&')
         .filter(|w| !w.is_empty())

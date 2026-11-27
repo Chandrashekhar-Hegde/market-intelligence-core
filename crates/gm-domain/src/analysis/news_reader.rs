@@ -278,6 +278,28 @@ pub fn read_headline(title: &str) -> Reading {
             },
         );
     }
+    // Market-move reports that mention "profit" without being results: "snaps winning streak
+    // on profit booking; HCL Tech, TCS lead losses" describes trading, not the companies.
+    if has_any(
+        &t,
+        &[
+            "profit booking",
+            "profit-booking",
+            "profit taking",
+            "profit-taking",
+            "lead losses",
+            "lead gains",
+            "winning streak",
+            "losing streak",
+        ],
+    ) {
+        return reading(
+            "price_move",
+            0,
+            1,
+            "A report of share prices moving (profit booking, a streak), not news about the company itself.",
+        );
+    }
     if has_any(
         &t,
         &[
@@ -796,6 +818,12 @@ mod tests {
             0,
         );
         reads("HDFC Bank hits 52-week high", "price_move", 0);
+        // Recorded 27 Nov 2026: produced two news-driven Sells before this rule.
+        reads(
+            "Nifty IT snaps 4-day winning streak on profit booking; HCL Tech, TCS lead losses",
+            "price_move",
+            0,
+        );
         // A price move explained by results is a results story.
         reads(
             "TCS shares fall 3% after Q2 profit misses estimates",
