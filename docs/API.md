@@ -105,6 +105,11 @@ plus the historical backfill).
   weights the news vote uses.
 - **Off:** `recording` is false when `GM_DATA_DIR` is unset.
 
+`POST /api/v1/calibration/import?file=backfill|model` appends JSONL (under 2 MB per request):
+backfilled headlines in the recorder's format, or model readings `{title, reading}`. Records
+already present are skipped. `scripts/upload_backfill.sh <data-dir>` sends a workstation backfill
+in chunks. Like every route, it needs the beta token.
+
 `/api/v1/analyze` adds `news_weights` (`{fitted, n_events, first, last, voting_kinds}`), so the
 page can say how the news vote was weighed.
 
