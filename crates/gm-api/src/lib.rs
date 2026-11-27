@@ -104,6 +104,8 @@ struct AppState {
     llm: Option<gm_integrations::llm::LlmReader>,
     live_fits: Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<LiveFit>>>>,
     recorder: Option<Arc<recorder::Recorder>>,
+    /// The historical backfill file beside the live recording (filled by `/calibration/import`).
+    backfill: Option<Arc<recorder::Recorder>>,
     /// NIFTY 50 panel priors for the trading rules (refreshed daily by the Today pass).
     rule_priors: today::Priors,
     /// News weights fitted by the calibration run; None until enough has been recorded.
@@ -374,6 +376,10 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
         llm: config.llm.map(gm_integrations::llm::LlmReader::new),
         // A recorder that cannot open its file is logged and switched off; it never stops the
         // server from starting.
+        backfill: config
+            .data_dir
+            .as_deref()
+            .and_then(|dir| recorder::Recorder::open_backfill(dir).ok().map(Arc::new)),
         recorder: config.data_dir.as_deref().and_then(|dir| {
             recorder::Recorder::open(dir)
                 .inspect_err(
@@ -479,6 +485,7 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
         .route("/api/v1/news", get(news))
         .route("/api/v1/desk", get(desk))
         .route("/api/v1/calibration", get(calibration))
+        .route("/api/v1/calibration/import", post(import_calibration))
         .route("/api/v1/today", get(today::today))
         .route("/api/v1/stream", get(stream))
         .route("/api/v1/analyze", get(analyze_instrument))
@@ -1442,6 +1449,38 @@ async fn desk_stories(
     let mut seen = std::collections::HashSet::new();
     stories.retain(|s| seen.insert(dedupe_key(&s.title)));
     (sources, stories)
+}
+
+#[derive(Debug, Deserialize)]
+struct ImportQuery {
+    /// "backfill" (recorded headlines) or "model" (model readings).
+    file: String,
+}
+
+/// Bring the workstation backfill onto the server's volume, in chunks under the 2 MB body limit
+/// (`scripts/upload_backfill.sh`). Only records not already there are appended.
+async fn import_calibration(
+    State(state): State<AppState>,
+    Query(query): Query<ImportQuery>,
+    body: String,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let (Some(live), Some(backfill)) = (state.recorder.clone(), state.backfill.clone()) else {
+        return Err(ApiError::bad_request(
+            "the recorder is off: set GM_DATA_DIR",
+        ));
+    };
+    let file = query.file.clone();
+    let added = tokio::task::spawn_blocking(move || match file.as_str() {
+        "backfill" => backfill.import_records(&body).map_err(|e| e.to_string()),
+        "model" => live.import_model_readings(&body).map_err(|e| e.to_string()),
+        other => Err(format!("file must be backfill or model, not {other:?}")),
+    })
+    .await
+    .map_err(|e| ApiError::bad_request(format!("import task failed: {e}")))?
+    .map_err(ApiError::bad_request)?;
+    Ok(Json(
+        serde_json::json!({ "file": query.file, "added": added }),
+    ))
 }
 
 /// The calibration run so far: what was recorded, and what prices did 1 and 5 sessions after
@@ -2579,6 +2618,16 @@ async fn openapi() -> Json<serde_json::Value> {
                     }
                 }
             },
+            "/api/v1/calibration/import": {
+                "post": {
+                    "summary": "Append backfilled headlines (file=backfill) or model readings (file=model), JSONL under 2 MB per request; records already present are skipped",
+                    "parameters": [{ "name": "file", "in": "query", "required": true, "schema": { "type": "string", "enum": ["backfill", "model"] } }],
+                    "responses": {
+                        "200": { "description": "{file, added}" },
+                        "400": { "description": "Recorder off (no GM_DATA_DIR) or an unknown file" }
+                    }
+                }
+            },
             "/api/v1/projection": {
                 "get": {
                     "summary": "Forecast fans recomputed from a live price (10-year daily fit, cached until the next close)",
@@ -3458,6 +3507,67 @@ mod tests {
         })
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn backfill_chunks_import_once_and_need_a_data_dir() {
+        let line = serde_json::json!({
+            "recorded_at": "2026-11-27T10:00:00Z", "seen_at": "2024-01-15T05:00:00Z",
+            "title": "HDFC Bank beats Q3 profit forecast", "url": "https://example.com", "publisher": "Reuters",
+            "source": "Google News", "symbols": ["HDFCBANK.NS"],
+            "reading": { "kind": "results", "direction": 1, "materiality": 3, "reason": "x", "reader": "built-in" },
+            "theme": "Other", "impacts": []
+        })
+        .to_string();
+        let (status, _) = raw_request(
+            news_app(false, true).await,
+            "POST",
+            "/api/v1/calibration/import?file=backfill",
+            line.clone(),
+            "",
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "no data dir");
+        let dir = std::env::temp_dir().join(format!("gm-import-api-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let app = build_app(ApiConfig {
+            data_dir: Some(dir.clone()),
+            ..ApiConfig::default()
+        })
+        .await
+        .unwrap();
+        let (status, body) = raw_request(
+            app.clone(),
+            "POST",
+            "/api/v1/calibration/import?file=backfill",
+            line.clone(),
+            "",
+        )
+        .await;
+        assert_eq!(
+            (status, body["added"].as_u64()),
+            (StatusCode::OK, Some(1)),
+            "{body}"
+        );
+        let (_, again) = raw_request(
+            app.clone(),
+            "POST",
+            "/api/v1/calibration/import?file=backfill",
+            line,
+            "",
+        )
+        .await;
+        assert_eq!(again["added"], 0);
+        let (status, _) = raw_request(
+            app,
+            "POST",
+            "/api/v1/calibration/import?file=other",
+            String::new(),
+            "",
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[tokio::test]

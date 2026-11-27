@@ -128,6 +128,49 @@ impl Recorder {
         Ok(new)
     }
 
+    /// Appends records (JSONL, the recorder's format) not already in this file; returns how many
+    /// were new. Used to bring the workstation backfill onto the server's volume.
+    pub fn import_records(&self, jsonl: &str) -> std::io::Result<usize> {
+        let mut seen = self.seen.lock().expect("recorder lock");
+        let mut text = String::new();
+        let mut new = 0;
+        for line in jsonl.lines() {
+            let Ok(record) = serde_json::from_str::<Record>(line) else {
+                continue;
+            };
+            if seen.insert(dedupe_key(&record.title)) {
+                text.push_str(line.trim());
+                text.push('\n');
+                new += 1;
+            }
+        }
+        if new > 0 {
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.path)?
+                .write_all(text.as_bytes())?;
+        }
+        Ok(new)
+    }
+
+    /// Appends model readings (JSONL `{title, reading}`) for titles not yet read.
+    pub fn import_model_readings(&self, jsonl: &str) -> std::io::Result<usize> {
+        let known = self.model_readings();
+        let mut rows = Vec::new();
+        let mut titles = HashSet::new();
+        for line in jsonl.lines() {
+            if let Ok(row) = serde_json::from_str::<ModelRow>(line)
+                && !known.contains_key(&row.title)
+                && titles.insert(row.title.clone())
+            {
+                rows.push((row.title, row.reading));
+            }
+        }
+        self.append_model_readings(&rows)?;
+        Ok(rows.len())
+    }
+
     /// The model's stored readings, by title.
     pub fn model_readings(&self) -> std::collections::HashMap<String, Reading> {
         let path = self.path.with_file_name(MODEL_FILE);
@@ -271,6 +314,38 @@ mod tests {
             seen_at: "2026-11-27T05:00:00Z".parse().unwrap(),
             summary: None,
         }
+    }
+
+    #[test]
+    fn imports_skip_what_is_already_there() {
+        let dir = std::env::temp_dir().join(format!("gm-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let src = Recorder::open_backfill(&dir.join("src")).unwrap();
+        src.record(&[
+            story("Infosys wins $1.5 billion deal"),
+            story("TCS Q2 profit rises 8%"),
+        ])
+        .unwrap();
+        let lines = std::fs::read_to_string(dir.join("src").join(BACKFILL_FILE)).unwrap();
+        let dst = Recorder::open_backfill(&dir.join("dst")).unwrap();
+        assert_eq!(dst.import_records(&lines).unwrap(), 2);
+        assert_eq!(
+            dst.import_records(&lines).unwrap(),
+            0,
+            "a second upload adds nothing"
+        );
+        assert_eq!(dst.import_records("not json\n").unwrap(), 0);
+        let live = Recorder::open(&dir.join("dst")).unwrap();
+        assert_eq!(
+            live.read_all().unwrap().len(),
+            2,
+            "the backfill is read with the live file"
+        );
+        let model = serde_json::json!({"title": "TCS Q2 profit rises 8%", "reading": read_headline("TCS Q2 profit rises 8%")}).to_string();
+        assert_eq!(live.import_model_readings(&model).unwrap(), 1);
+        assert_eq!(live.import_model_readings(&model).unwrap(), 0);
+        assert_eq!(live.model_readings().len(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

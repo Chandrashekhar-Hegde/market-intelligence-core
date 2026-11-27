@@ -476,7 +476,8 @@ now, calibrate later, compare with a model reader once one is configured).
 - **Backfill** (`backfill_news` binary, run once from a workstation). Three years of Google News
   for each NIFTY 50 company, month by month (`"<name>" after:<month start> before:<next month>`),
   paced at one search every 3 s with a minute's pause on a refusal, and resumable. The headlines
-  are written in the recorder's format to `news_backfill.jsonl` and uploaded to the volume, so
+  are written in the recorder's format to `news_backfill.jsonl` and uploaded to the volume with
+  `scripts/upload_backfill.sh` (token-gated import route, idempotent), so
   the study has three years of events at once instead of 2–3 months of waiting.
   `backfill_news read` has the model read every recorded headline that names a company, into
   `model_readings.jsonl`.

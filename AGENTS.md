@@ -123,6 +123,7 @@ Production-like (one origin, gated): build the web app with `VITE_API_BASE_URL=`
 | Smoke a running API | `BASE_URL=http://127.0.0.1:8000 scripts/smoke_api.sh` |
 | Smoke production | `BASE_URL=https://gm-api-production-911a7e90.up.railway.app GM_ACCESS_TOKEN=$(railway variable list --service gm-api --json \| jq -r .GM_ACCESS_TOKEN) scripts/smoke_api.sh` |
 | Measure NSE stream lag (09:15–15:30 IST) | `LIVE_STREAM_SYMBOL=RELIANCE.NS cargo test -p gm-integrations -- --ignored live_stream --nocapture` |
+| Backfill news history, then load it into production | `cargo run --release -p gm-api --bin backfill_news -- <dir>`, then `backfill_news read <dir>` (needs `GM_LLM_*`), then `BASE_URL=… GM_ACCESS_TOKEN=… scripts/upload_backfill.sh <dir>` |
 | Regenerate analysis references | `uv venv .refenv && VIRTUAL_ENV=.refenv uv pip install numpy scipy statsmodels arch pandas && .refenv/bin/python scripts/gen_reference.py` |
 
 ## Workflow (how work lands)
