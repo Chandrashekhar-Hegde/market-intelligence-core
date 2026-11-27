@@ -22,6 +22,18 @@ to within 1–3%, because the two optimizers stop at slightly different points o
   is forced onto a 252-day calendar.
 - **Minimum length.** 60 returns. GARCH needs at least 250.
 
+- **Bad prints are removed before anything is computed** (`quality::bad_prints`). A bad print
+  is a run of up to 5 bars where the price jumps by at least a halving or doubling and comes back,
+  the round trip netting to under a quarter of the jump. That is beyond any exchange's daily
+  price band (NSE: 20%), so it's a vendor error, not a market move.
+  - **Found in Yahoo:** GOLDBEES on 19–20 Dec 2019 at 1/100 of its price; MON100 on 17–18 Jun
+    2021 at 1/10. Kept GOLDBEES's annual volatility reading 207% instead of 16%, and its worst
+    fall 99% instead of 32%.
+  - **Checked on all 55 series used (10 years):** only those two runs are removed. Real crashes
+    (Adani, Feb 2023; March 2020) are kept.
+  - **Not handled yet:** demergers Yahoo doesn't adjust for, such as Tata Motors on 14 Oct 2025
+    (−40%). These stay as quality outliers.
+
 ## Distribution
 
 | Quantity | Definition | Source |

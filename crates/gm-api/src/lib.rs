@@ -1062,12 +1062,22 @@ fn quality_report(
         .iter()
         .map(|a| a.date())
         .collect::<Vec<_>>();
-    gm_domain::quality::assess(
+    let mut report = gm_domain::quality::assess(
         &chart.bars,
         reference_days,
         &action_days,
         chart.fetched_at.date_naive(),
-    )
+    );
+    if !chart.bad_prints_removed.is_empty() {
+        report.warnings.push(format!(
+            "{} bad price{} from the data vendor removed (a price that jumps away and straight back): {}",
+            chart.bad_prints_removed.len(),
+            if chart.bad_prints_removed.len() == 1 { "" } else { "s" },
+            chart.bad_prints_removed.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")
+        ));
+        report.bad_prints_removed = chart.bad_prints_removed.clone();
+    }
+    report
 }
 
 #[derive(Debug, Deserialize)]

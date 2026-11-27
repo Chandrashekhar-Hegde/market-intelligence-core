@@ -73,6 +73,9 @@ pub struct ChartData {
     pub corporate_actions: Vec<CorporateAction>,
     /// True when today's still-forming bar was removed because the session was open at fetch time.
     pub dropped_partial_bar: bool,
+    /// Bad prints (a price that jumps away and straight back) removed before anyone uses the bars.
+    #[serde(default)]
+    pub bad_prints_removed: Vec<NaiveDate>,
     pub source: String,
     pub fetched_at: DateTime<Utc>,
 }
@@ -393,6 +396,8 @@ pub fn parse_chart(body: &str, now: DateTime<Utc>) -> Result<ChartData, Provider
         );
     }
     let mut bars = by_date.into_values().collect::<Vec<_>>();
+    let bad_prints_removed = gm_domain::quality::bad_prints(&bars);
+    bars.retain(|b| !bad_prints_removed.contains(&b.date));
 
     let session = regular_session(meta);
     let now_ts = now.timestamp();
@@ -434,6 +439,7 @@ pub fn parse_chart(body: &str, now: DateTime<Utc>) -> Result<ChartData, Provider
         bars,
         corporate_actions,
         dropped_partial_bar,
+        bad_prints_removed,
         source: SOURCE.to_string(),
         fetched_at: now,
     })
@@ -694,6 +700,35 @@ mod tests {
 
     fn after_close() -> DateTime<Utc> {
         DateTime::from_timestamp(1_800_000_000, 0).unwrap()
+    }
+
+    /// Recorded 2026-11-27: GOLDBEES sits at 1/100 of its price on 19–20 Dec 2019, and gold
+    /// really did jump 7% and fall 8% on 21–22 Jan 2026 (kept).
+    #[test]
+    fn bad_prints_are_removed_before_anyone_uses_the_bars() {
+        const GOLDBEES: &str = include_str!("../tests/fixtures/yahoo_chart_goldbees_10y.json");
+        let data = parse_chart(GOLDBEES, after_close()).unwrap();
+        let d = |m: u32, day: u32| NaiveDate::from_ymd_opt(2019, m, day).unwrap();
+        assert_eq!(data.bad_prints_removed, vec![d(12, 19), d(12, 20)]);
+        assert!(
+            data.bars
+                .iter()
+                .all(|b| !data.bad_prints_removed.contains(&b.date))
+        );
+        // No day left moves more than 15%: gold doesn't.
+        let worst = data
+            .bars
+            .windows(2)
+            .map(|w| (w[1].adjusted_close() / w[0].adjusted_close()).ln().abs())
+            .fold(0.0, f64::max);
+        assert!(worst < 0.15, "{worst}");
+        // Clean series are untouched.
+        assert!(
+            parse_chart(RELIANCE, after_close())
+                .unwrap()
+                .bad_prints_removed
+                .is_empty()
+        );
     }
 
     #[test]

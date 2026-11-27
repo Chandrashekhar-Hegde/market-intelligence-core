@@ -42,6 +42,9 @@ pub struct QualityReport {
     pub missing_days: Vec<NaiveDate>,
     pub is_stale: bool,
     pub outliers: Vec<ReturnOutlier>,
+    /// Bad prints removed from the series before anything was computed (see `bad_prints`).
+    #[serde(default)]
+    pub bad_prints_removed: Vec<NaiveDate>,
     pub warnings: Vec<String>,
 }
 
@@ -131,6 +134,7 @@ pub fn assess(
         missing_days,
         is_stale,
         outliers,
+        bad_prints_removed: Vec::new(),
         warnings,
     }
 }
@@ -171,6 +175,42 @@ fn return_outliers(bars: &[PriceBar], corporate_action_days: &[NaiveDate]) -> Ve
         .collect()
 }
 
+/// A bad print must move the price at least this much (log): a halving or doubling in one
+/// session, beyond the daily price band of any exchange we read (NSE: 20% at most).
+const BAD_PRINT_JUMP: f64 = std::f64::consts::LN_2;
+/// The longest run of bad prints looked for (vendors sometimes repeat a wrong price).
+const BAD_PRINT_MAX_RUN: usize = 5;
+
+/// Bad prints: bars where the price jumps away by at least a halving or doubling and comes back
+/// within `BAD_PRINT_MAX_RUN` sessions, the round trip netting to under a quarter of the jump.
+/// No market does that; vendors do (Yahoo: GOLDBEES on 19–20 Dec 2019 at 1/100 of its price,
+/// MON100 on 17 Jun 2021 at 1/10). Returns their dates. A run still open at the end of the
+/// series can't be confirmed and is kept.
+pub fn bad_prints(bars: &[PriceBar]) -> Vec<NaiveDate> {
+    let valid: Vec<&PriceBar> = bars.iter().filter(|b| b.adjusted_close() > 0.0).collect();
+    let prices: Vec<f64> = valid.iter().map(|b| b.adjusted_close()).collect();
+    let r = indicators::log_returns(&prices);
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < r.len() {
+        if r[i].abs() >= BAD_PRINT_JUMP {
+            // r[i] moves into bar i + 1; look for the move back out within the run limit.
+            let back = (i + 1..r.len().min(i + 1 + BAD_PRINT_MAX_RUN)).find(|&j| {
+                r[j].signum() != r[i].signum()
+                    && r[j].abs() >= BAD_PRINT_JUMP
+                    && (r[i..=j].iter().sum::<f64>()).abs() < 0.25 * r[i].abs()
+            });
+            if let Some(j) = back {
+                out.extend(valid[i + 1..=j].iter().map(|b| b.date));
+                i = j + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 fn median(values: &[f64]) -> Option<f64> {
     if values.is_empty() {
         return None;
@@ -192,7 +232,40 @@ fn median_abs_deviation(values: &[f64]) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
+    use chrono::Datelike;
+
     use super::*;
+
+    #[test]
+    fn bad_prints_are_spikes_that_revert_and_real_crashes_are_kept() {
+        let bar = |d: u32, p: f64| PriceBar {
+            symbol: "X".into(),
+            date: day(d),
+            open: p,
+            high: p,
+            low: p,
+            close: p,
+            adj_close: Some(p),
+            volume: 1,
+            source: "test".into(),
+        };
+        // Wiggles around 100, a two-day 1/100 print on days 10–11 (as GOLDBEES in Dec 2019), a real
+        // 40% crash on day 20 that stays down, and a spike on the last day (unconfirmable).
+        let mut bars: Vec<PriceBar> = (1..=28)
+            .map(|d| bar(d, 100.0 + if d % 2 == 0 { 0.5 } else { -0.5 }))
+            .collect();
+        bars[9] = bar(10, 1.0);
+        bars[10] = bar(11, 1.01);
+        // A real 9% jump and back (as gold on 21 Jan 2026) is a market move, not a print.
+        bars[14] = bar(15, 109.0);
+        for b in bars.iter_mut().skip(19) {
+            let p = b.close * 0.6;
+            *b = bar(b.date.day0() + 1, p);
+        }
+        bars[27] = bar(28, 900.0);
+        assert_eq!(bad_prints(&bars), vec![day(10), day(11)]);
+        assert!(bad_prints(&bars[..5]).is_empty());
+    }
 
     fn day(d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 1, d).unwrap()
