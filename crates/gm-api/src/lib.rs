@@ -104,6 +104,8 @@ struct AppState {
     llm: Option<gm_integrations::llm::LlmReader>,
     live_fits: Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<LiveFit>>>>,
     recorder: Option<Arc<recorder::Recorder>>,
+    /// NIFTY 50 panel priors for the trading rules (refreshed daily by the Today pass).
+    rule_priors: today::Priors,
     /// News weights fitted by the calibration run; None until enough has been recorded.
     news_weights: Arc<std::sync::RwLock<Option<gm_domain::analysis::news_reader::FittedWeights>>>,
     today: today::Cache,
@@ -343,6 +345,7 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
     let state = AppState {
         live_fits: Arc::default(),
         news_weights: Arc::default(),
+        rule_priors: Arc::default(),
         today: Arc::default(),
         registry: Arc::new(RuleRegistry::builtin()),
         store,
@@ -925,7 +928,8 @@ async fn analyze_instrument(
             .ok()
             .flatten()
         {
-            Some((signals, every_day)) => {
+            Some((mut signals, every_day)) => {
+                today::grade(&state, &meta.symbol, &mut signals);
                 // Today's news can drive or veto the call (owner decision, 27 Nov 2026), but
                 // only for a company: news found for "NIFTY 50" or "Bitcoin" is market
                 // commentary, which the reader isn't built for.
@@ -1333,7 +1337,7 @@ fn is_single_stock(instrument_type: Option<&str>, name: Option<&str>) -> bool {
 /// What the news vote is weighed with, for the page to say.
 fn weights_summary(state: &AppState) -> serde_json::Value {
     match state.news_weights.read().expect("weights lock").as_ref() {
-        Some(w) if !w.per_kind.is_empty() => serde_json::json!({
+        Some(w) if w.is_authoritative() => serde_json::json!({
             "fitted": true,
             "n_events": w.n_events,
             "first": w.first,
@@ -1359,7 +1363,7 @@ fn vote_on(
         .map(|(r, s)| (r, (now - s.seen_at).num_minutes() as f64 / 60.0))
         .collect();
     let fitted = state.news_weights.read().expect("weights lock").clone();
-    let vote = match fitted.filter(|w| !w.per_kind.is_empty()) {
+    let vote = match fitted.filter(|w| w.is_authoritative()) {
         Some(w) => gm_domain::analysis::news_reader::news_vote_fitted(
             &aged,
             &w,
@@ -1478,7 +1482,7 @@ async fn calibrate(
         news::{EventOutcome, MIN_EVENTS, event_study},
         news_reader::{NON_VOTING, fit_weights},
     };
-    use recorder::{event_date, window_return};
+    use recorder::{event_date, window_after, window_return};
     let (records, model) = tokio::task::spawn_blocking(move || {
         rec.read_all()
             .map(|records| (records, rec.model_readings()))
@@ -1583,9 +1587,15 @@ async fn calibrate(
         let c: Vec<EventOutcome> = company_at(h).into_iter().map(|(_, e)| e).collect();
         serde_json::json!({ "company": event_study(&c), "market": event_study(&market_at(h)) })
     };
-    let five: Vec<(String, i8, f64)> = company_at(5)
-        .into_iter()
-        .map(|(_, e)| (e.group, e.direction, e.abnormal))
+    // Weights are fitted on what was still to be earned after the news was out (from the event
+    // day's close), not on the same-day reaction nobody reading the headline could catch.
+    let five: Vec<(String, i8, f64)> = company
+        .iter()
+        .filter_map(|(symbol, kind, direction, _, day)| {
+            let own = window_after(bars.get(symbol)?, *day, 5)?;
+            let index = window_after(nifty?, *day, 5)?;
+            Some((kind.clone(), *direction, own - index))
+        })
         .collect();
     let days: Vec<chrono::NaiveDate> = company.iter().map(|e| e.4).collect();
     let weights = fit_weights(
@@ -1607,7 +1617,7 @@ async fn calibrate(
         "after_1_session": study(1),
         "after_5_sessions": study(5),
         "fitted_weights": &weights,
-        "note": "Moves are log returns: company news beyond NIFTY 50 over the same days, market news raw. A kind of company news votes only with 30+ events and a significant move in the direction it was read (fitted_weights.per_kind).",
+        "note": "after_* studies include the day the news came out (the reaction). Fitted weights use only the move still to come after that day's close, beyond NIFTY 50 over 5 sessions: a kind of company news votes only with 30+ events and a significant move in the direction it was read.",
     });
     Ok((json, weights))
 }

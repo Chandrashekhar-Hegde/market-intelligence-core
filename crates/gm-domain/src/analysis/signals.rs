@@ -55,6 +55,14 @@ pub struct SignalTest {
     pub earns_place: bool,
     /// Plain-language reason for the verdict.
     pub verdict: String,
+    /// Standard error of `effect` (Hansen–Hodrick).
+    #[serde(default)]
+    pub se: f64,
+    /// P(the timing edge beats a round trip's cost), from this instrument's estimate pulled
+    /// toward the NIFTY 50 panel's (empirical Bayes). None without a panel prior; then the
+    /// strict test (`earns_place`) decides.
+    #[serde(default)]
+    pub p_edge: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -653,7 +661,143 @@ pub fn backtest(positions: &[Option<i8>], close: &[f64], h: usize) -> Option<Sig
         mean_return_short: mean_when(-1.0),
         earns_place: false,
         verdict: String::new(),
+        se,
+        p_edge: None,
     })
+}
+
+// ---- graded rules: empirical Bayes across the NIFTY 50 -----------------------------------------
+
+/// A rule-and-horizon's effect across the panel: random-effects mean and the spread of true
+/// effects between instruments (DerSimonian & Laird 1986).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RulePrior {
+    pub mean: f64,
+    /// Variance of the mean itself.
+    pub mean_var: f64,
+    /// Between-instrument variance of true effects.
+    pub tau2: f64,
+    pub k: usize,
+}
+
+/// Owner decision (27 Nov 2026): a rule calls only when P(edge beats costs) ≥ 80 in 100.
+pub const CALL_PROB: f64 = 0.80;
+
+/// Average pairwise correlation of equally long, date-aligned return series, from the variance
+/// of their equal-weighted mean: var(mean) = σ̄²(1 + (k − 1)ρ̄)/k (equal variances assumed).
+pub fn average_correlation(series: &[Vec<f64>]) -> f64 {
+    let k = series.len();
+    let n = series.iter().map(Vec::len).min().unwrap_or(0);
+    if k < 2 || n < 30 {
+        return 0.0;
+    }
+    let var = |x: &[f64]| {
+        let m = x.iter().sum::<f64>() / x.len() as f64;
+        x.iter().map(|v| (v - m).powi(2)).sum::<f64>() / (x.len() - 1) as f64
+    };
+    let mean_var = series.iter().map(|s| var(&s[..n])).sum::<f64>() / k as f64;
+    let avg: Vec<f64> = (0..n)
+        .map(|t| series.iter().map(|s| s[t]).sum::<f64>() / k as f64)
+        .collect();
+    let rho = (k as f64 * var(&avg) / mean_var - 1.0) / (k as f64 - 1.0);
+    rho.clamp(0.0, 1.0)
+}
+
+/// Priors per (rule id, horizon) from many instruments' tests. `rho` is the average correlation
+/// between the instruments' returns: the tests share market days, so their estimates move
+/// together, and the panel mean is only as certain as k / (1 + (k − 1)ρ) independent ones
+/// (Kish's design effect). Ignoring it made one rule look certain on a 0.4% ± 1.5% estimate.
+pub fn panel_priors(panel: &[&Signals], rho: f64) -> Vec<((String, usize), RulePrior)> {
+    let mut by_key: std::collections::BTreeMap<(String, usize), Vec<(f64, f64)>> =
+        Default::default();
+    for signals in panel {
+        for s in &signals.signals {
+            for t in &s.tests {
+                if t.se > 0.0 && t.effect.is_finite() {
+                    by_key
+                        .entry((s.id.clone(), t.horizon_days))
+                        .or_default()
+                        .push((t.effect, t.se));
+                }
+            }
+        }
+    }
+    by_key
+        .into_iter()
+        .filter(|(_, v)| v.len() >= 5)
+        .map(|(key, v)| {
+            let w: Vec<f64> = v.iter().map(|(_, se)| 1.0 / (se * se)).collect();
+            let sw: f64 = w.iter().sum();
+            let fixed = v.iter().zip(&w).map(|((y, _), w)| w * y).sum::<f64>() / sw;
+            let q: f64 = v
+                .iter()
+                .zip(&w)
+                .map(|((y, _), w)| w * (y - fixed).powi(2))
+                .sum();
+            let c = sw - w.iter().map(|w| w * w).sum::<f64>() / sw;
+            let tau2 = ((q - (v.len() as f64 - 1.0)) / c).max(0.0);
+            let w_re: Vec<f64> = v.iter().map(|(_, se)| 1.0 / (se * se + tau2)).collect();
+            let s_re: f64 = w_re.iter().sum();
+            let mean = v.iter().zip(&w_re).map(|((y, _), w)| w * y).sum::<f64>() / s_re;
+            (
+                key,
+                RulePrior {
+                    mean,
+                    mean_var: (1.0 + (v.len() as f64 - 1.0) * rho.clamp(0.0, 1.0)) / s_re,
+                    tau2,
+                    k: v.len(),
+                },
+            )
+        })
+        .collect()
+}
+
+/// P(true effect > cost) after pulling `effect` (±`se`) toward the prior.
+pub fn edge_probability(effect: f64, se: f64, prior: &RulePrior, cost: f64) -> f64 {
+    use statrs::distribution::Normal;
+    let v0 = prior.tau2 + prior.mean_var;
+    let (m, v) = if se > 0.0 && v0 > 0.0 {
+        let prec = 1.0 / (se * se) + 1.0 / v0;
+        ((effect / (se * se) + prior.mean / v0) / prec, 1.0 / prec)
+    } else {
+        (prior.mean, v0)
+    };
+    if v <= 0.0 {
+        return if m > cost { 1.0 } else { 0.0 };
+    }
+    1.0 - Normal::new(m, v.sqrt()).map_or(0.5, |n| n.cdf(cost))
+}
+
+/// Grade every test against its panel prior. A test then counts when P(edge beats costs) ≥
+/// `CALL_PROB` with enough separate calls; the hierarchical model handles the many
+/// rule-and-horizon combinations (Gelman, Hill & Yajima 2012), so no Holm correction is needed.
+pub fn apply_priors(signals: &mut Signals, priors: &[((String, usize), RulePrior)]) {
+    for s in &mut signals.signals {
+        for t in &mut s.tests {
+            let Some((_, prior)) = priors
+                .iter()
+                .find(|((id, h), _)| *id == s.id && *h == t.horizon_days)
+            else {
+                continue;
+            };
+            let p = edge_probability(t.effect, t.se, prior, signals.round_trip_cost);
+            t.p_edge = Some(p);
+            let enough = t.n_independent >= MIN_INDEPENDENT;
+            t.earns_place = enough && p >= CALL_PROB;
+            t.verdict = format!(
+                "{} in 100 chance that following it beats trading costs over {}, judged with how it did on all NIFTY 50 stocks{}.",
+                (p * 100.0).round(),
+                horizon_words(t.horizon_days),
+                if !enough {
+                    format!(" (too few separate calls: {})", t.n_independent)
+                } else if p >= CALL_PROB {
+                    String::new()
+                } else {
+                    format!("; a call needs {}", (CALL_PROB * 100.0).round())
+                }
+            );
+        }
+    }
 }
 
 // ---- advice ---------------------------------------------------------------------------------
@@ -828,6 +972,114 @@ pub fn advise_with_news(signals: &Signals, every_day: bool, news: Option<&NewsIn
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn graded(effect: f64, se: f64) -> Signals {
+        let t = SignalTest {
+            horizon_days: 21,
+            n_obs: 2000,
+            n_independent: 60,
+            effect,
+            t_stat: effect / se,
+            p_value: 0.01,
+            p_holm: 0.01,
+            effect_first_half: effect,
+            effect_second_half: effect,
+            hit_rate: Some(0.55),
+            hit_n: 60,
+            hit_low: Some(0.45),
+            hit_high: Some(0.65),
+            mean_return_long: None,
+            mean_return_short: None,
+            earns_place: false,
+            verdict: String::new(),
+            se,
+            p_edge: None,
+        };
+        Signals {
+            first_date: NaiveDate::from_ymd_opt(2016, 11, 25).unwrap(),
+            last_date: NaiveDate::from_ymd_opt(2026, 11, 25).unwrap(),
+            n_days: 2500,
+            round_trip_cost: ROUND_TRIP_COST,
+            n_tests: 1,
+            signals: vec![Signal {
+                id: "trend_200d".into(),
+                name: "Long-term trend".into(),
+                rule: String::new(),
+                source: String::new(),
+                position_today: 1,
+                today: String::new(),
+                flip_level: None,
+                tests: vec![t],
+            }],
+        }
+    }
+
+    /// The panel says the rule does nothing anywhere: one stock's lucky t = 2.5 is pulled back
+    /// to nothing. Where stocks really differ (large τ²), its own strong estimate stands.
+    #[test]
+    fn panel_shrinkage_tempers_a_lucky_stock_and_grades_the_call() {
+        let flat: Vec<Signals> = (0..30)
+            .map(|i| graded(if i % 2 == 0 { 0.0005 } else { -0.0005 }, 0.004))
+            .collect();
+        let priors = panel_priors(&flat.iter().collect::<Vec<_>>(), 0.0);
+        let prior = priors[0].1;
+        assert_eq!(priors[0].0, ("trend_200d".to_string(), 21));
+        assert!(prior.mean.abs() < 0.001 && prior.tau2 < 1e-9, "{prior:?}");
+        let lucky = edge_probability(0.01, 0.004, &prior, ROUND_TRIP_COST);
+        assert!(lucky < 0.05, "{lucky}");
+        let varied = RulePrior {
+            mean: 0.0,
+            mean_var: 1e-6,
+            tau2: 0.01 * 0.01,
+            k: 30,
+        };
+        let own = edge_probability(0.01, 0.004, &varied, ROUND_TRIP_COST);
+        assert!(own > 0.9, "{own}");
+        // Grading decides the call: 80 in 100 or more counts.
+        let mut s = graded(0.01, 0.004);
+        apply_priors(&mut s, &[(("trend_200d".into(), 21), varied)]);
+        assert!(s.signals[0].tests[0].earns_place);
+        assert!(
+            s.signals[0].tests[0]
+                .verdict
+                .starts_with(&format!("{} in 100", (own * 100.0).round()))
+        );
+        let mut s = graded(0.01, 0.004);
+        apply_priors(&mut s, &priors);
+        assert!(!s.signals[0].tests[0].earns_place);
+        assert!(s.signals[0].tests[0].verdict.contains("a call needs 80"));
+    }
+
+    /// Correlated estimates: a panel mean from 50 stocks that move together is far less certain
+    /// than from 50 independent ones, so a weak own estimate doesn't become a sure call.
+    #[test]
+    fn correlated_panels_count_as_fewer_stocks() {
+        let panel: Vec<Signals> = (0..50).map(|_| graded(0.01, 0.014)).collect();
+        let refs: Vec<&Signals> = panel.iter().collect();
+        let independent = panel_priors(&refs, 0.0)[0].1;
+        let correlated = panel_priors(&refs, 0.3)[0].1;
+        assert!((correlated.mean_var / independent.mean_var - (1.0 + 49.0 * 0.3)).abs() < 1e-9);
+        let p_ind = edge_probability(0.004, 0.0147, &independent, ROUND_TRIP_COST);
+        let p_cor = edge_probability(0.004, 0.0147, &correlated, ROUND_TRIP_COST);
+        assert!(p_ind > 0.99 && p_cor < p_ind - 0.05, "{p_ind} vs {p_cor}");
+        // A common factor plus independent noise of equal size: ρ ≈ 0.5.
+        let common: Vec<f64> = (0..500)
+            .map(|t| ((t * 7919) % 1000) as f64 / 1000.0 - 0.5)
+            .collect();
+        let series: Vec<Vec<f64>> = (0..10)
+            .map(|i| {
+                common
+                    .iter()
+                    .enumerate()
+                    .map(|(t, c)| {
+                        c + ((t * (i + 3) * 104_729 + i * 31) % 1000) as f64 / 1000.0 - 0.5
+                    })
+                    .collect()
+            })
+            .collect();
+        let rho = average_correlation(&series);
+        assert!((rho - 0.5).abs() < 0.15, "{rho}");
+    }
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
     use rand_distr::{Distribution, Normal, StudentT};
@@ -1006,6 +1258,8 @@ mod tests {
                 mean_return_short: None,
                 earns_place: proven,
                 verdict: String::new(),
+                se: 0.002,
+                p_edge: None,
             };
             Signals {
                 first_date: NaiveDate::from_ymd_opt(2016, 11, 25).unwrap(),
