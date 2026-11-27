@@ -169,6 +169,7 @@ const MORE_DOWN: &[&str] = &[
     "weakens", "weaker", "weakness", "slips", "slide", "eases", "corrects", "retreats", "low",
     "softens", "softer",
 ];
+const RATE_CONTEXT: &[&str] = &["rate", "rates", "repo", "bps", "basis", "policy", "fomc"];
 /// Rate talk that is hedged or receding ("eases pressure on RBI to use rate hikes") has no
 /// direction we can read from keywords.
 const RATE_DOUBT: &[&str] = &[
@@ -247,6 +248,8 @@ pub fn read_macro(title: &str) -> MacroReading {
     let ws = words(title);
     let lower = title.to_lowercase();
     let doubt = RATE_DOUBT.iter().any(|d| lower.contains(d));
+    // A rate move needs a rate in the headline: "RBI raises MSME loan limit" is not a hike.
+    let about_rates = RATE_CONTEXT.iter().any(|w| ws.iter().any(|x| x == w));
     // The theme is the first subject that moved; failing that, the first one named.
     let (mut theme, mut named) = (None, None);
     let mut impacts: Vec<MacroImpact> = Vec::new();
@@ -258,7 +261,7 @@ pub fn read_macro(title: &str) -> MacroReading {
         });
         let Some((at, len)) = found else { continue };
         named.get_or_insert(rule.theme);
-        let d = if rule.words == Words::Rate && doubt {
+        let d = if rule.words == Words::Rate && (doubt || !about_rates) {
             0
         } else {
             subject_direction(&ws, at, len, rule.words)
@@ -402,6 +405,12 @@ mod tests {
         // No direction: theme only.
         reads(
             "RBI governor flags MSME credit needs, calls for stronger lending support",
+            "Rates",
+            &[],
+        );
+        // Production, 27 Nov 2026: read as a rate hike before rates had to be mentioned.
+        reads(
+            "RBI Raises Collateral-Free MSME Loan Limit to ₹20 Lakh: Governor",
             "Rates",
             &[],
         );
