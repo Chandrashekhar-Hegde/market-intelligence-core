@@ -457,13 +457,31 @@ now, calibrate later, compare with a model reader once one is configured).
   later. For companies it is taken beyond NIFTY 50 over the same days (the market-adjusted model,
   MacKinlay 1997). Market news uses the asset's raw return. US assets use the IST event day,
   an approximation.
-- **Study.** For each (kind or asset, direction): n, mean and standard error, and the share that
-  moved the way the reading said. A group needs **30 events** before its average move can
-  replace a judgement weight. On about 60 stocks that is expected to take 2–3 months.
-- **Comparing readers.** `?reader=llm` re-reads the recorded company headlines with the
-  configured model (`GM_LLM_*`, 20 per call) and runs the same study. Whichever reader's
-  readings are followed by moves in the stated direction more often, with enough events, should
-  read the news.
+- **Backfill** (`backfill_news` binary, run once from a workstation). Three years of Google News
+  for each NIFTY 50 company, month by month (`"<name>" after:<month start> before:<next month>`),
+  paced at one search every 3 s with a minute's pause on a refusal, and resumable. The headlines
+  are written in the recorder's format to `news_backfill.jsonl` and uploaded to the volume, so
+  the study has three years of events at once instead of 2–3 months of waiting.
+  `backfill_news read` has the model read every recorded headline that names a company, into
+  `model_readings.jsonl`.
+- **Study.** Uses five years of prices. For each (kind or asset, direction): n, mean and
+  standard error, and the share that moved the way the reading said.
+- **Fitted weights replace the judgement ones** (`news_reader::fit_weights`, refitted on every
+  recorder pass).
+  - For each kind of company news, the weight is the average 5-session move beyond NIFTY 50,
+    signed by the reading's direction. Readings are the model's where stored, else the built-in
+    reader's, which is how the live vote reads.
+  - A kind gets a weight only with at least 30 events and t ≥ 1.96; otherwise it doesn't vote.
+  - The fitted vote's score is the expected move beyond the market over the next week. A
+    news-driven call needs it to exceed a round trip's trading cost (0.25%), instead of the
+    arbitrary 0.9.
+  - The materiality weights are no longer used once a fit exists. The 48-hour half-life is still
+    judgement until measured.
+  - The advice card says which weights it used, and on how many events.
+- **Comparing readers.** `?reader=built-in` and `?reader=model` run the same study with only one
+  reader's readings. `model` uses only headlines it has read. `best`, the default, uses the
+  model's where stored. The hit rates and fitted effects of the two can be compared on the same
+  events.
 
 ## The model reader (Gemini, `gm-integrations/src/llm.rs`)
 

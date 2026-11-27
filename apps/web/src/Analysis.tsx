@@ -189,8 +189,10 @@ function AdviceCard({ analysis, livePrice }: { analysis: AnalyzeResponse; livePr
             ))}
           </ul>
           <p className="quiet-copy">
-            News is read headline by headline and weighed by how much that kind of news usually matters and how recent it
-            is. These weights are judgement, not yet tested on past data.
+            News is read headline by headline and weighed by how recent it is and{' '}
+            {analysis.news_weights?.fitted
+              ? `by how much that kind of news actually moved prices: fitted on ${analysis.news_weights.n_events?.toLocaleString('en-IN')} past events (${analysis.news_weights.first} to ${analysis.news_weights.last}). Only kinds of news with a reliable past effect count.`
+              : 'by how much that kind of news usually matters. These weights are still judgement: not enough past events have been measured yet.'}
           </p>
         </div>
       ) : null}

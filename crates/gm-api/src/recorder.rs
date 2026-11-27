@@ -41,6 +41,16 @@ pub struct Record {
     pub impacts: Vec<(String, i8)>,
 }
 
+pub const BACKFILL_FILE: &str = "news_backfill.jsonl";
+/// The model's company readings of recorded headlines, one `{title, reading}` per line.
+pub const MODEL_FILE: &str = "model_readings.jsonl";
+
+#[derive(Serialize, Deserialize)]
+struct ModelRow {
+    title: String,
+    reading: Reading,
+}
+
 pub struct Recorder {
     path: PathBuf,
     seen: Mutex<HashSet<String>>,
@@ -49,8 +59,17 @@ pub struct Recorder {
 impl Recorder {
     /// Opens (creating) `dir/news.jsonl` and remembers every title already in it.
     pub fn open(dir: &std::path::Path) -> std::io::Result<Self> {
+        Self::open_file(dir, "news.jsonl")
+    }
+
+    /// The historical backfill (`backfill_news` binary) writes here, beside the live file.
+    pub fn open_backfill(dir: &std::path::Path) -> std::io::Result<Self> {
+        Self::open_file(dir, BACKFILL_FILE)
+    }
+
+    fn open_file(dir: &std::path::Path, name: &str) -> std::io::Result<Self> {
         std::fs::create_dir_all(dir)?;
-        let path = dir.join("news.jsonl");
+        let path = dir.join(name);
         let mut seen = HashSet::new();
         if path.exists() {
             for line in BufReader::new(std::fs::File::open(&path)?).lines() {
@@ -109,16 +128,62 @@ impl Recorder {
         Ok(new)
     }
 
-    pub fn read_all(&self) -> std::io::Result<Vec<Record>> {
-        let _guard = self.seen.lock().expect("recorder lock");
-        if !self.path.exists() {
-            return Ok(Vec::new());
-        }
-        Ok(BufReader::new(std::fs::File::open(&self.path)?)
+    /// The model's stored readings, by title.
+    pub fn model_readings(&self) -> std::collections::HashMap<String, Reading> {
+        let path = self.path.with_file_name(MODEL_FILE);
+        let Ok(file) = std::fs::File::open(path) else {
+            return Default::default();
+        };
+        BufReader::new(file)
             .lines()
             .map_while(Result::ok)
-            .filter_map(|l| serde_json::from_str(&l).ok())
-            .collect())
+            .filter_map(|l| serde_json::from_str::<ModelRow>(&l).ok())
+            .map(|r| (r.title, r.reading))
+            .collect()
+    }
+
+    pub fn append_model_readings(&self, rows: &[(String, Reading)]) -> std::io::Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let _guard = self.seen.lock().expect("recorder lock");
+        let mut text = String::new();
+        for (title, reading) in rows {
+            text.push_str(
+                &serde_json::to_string(&ModelRow {
+                    title: title.clone(),
+                    reading: reading.clone(),
+                })
+                .expect("serialises"),
+            );
+            text.push('\n');
+        }
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.path.with_file_name(MODEL_FILE))?
+            .write_all(text.as_bytes())
+    }
+
+    /// Every record: the live file and, beside it, the historical backfill.
+    pub fn read_all(&self) -> std::io::Result<Vec<Record>> {
+        let _guard = self.seen.lock().expect("recorder lock");
+        let mut out = Vec::new();
+        let backfill = self.path.with_file_name(BACKFILL_FILE);
+        for path in [&self.path, &backfill] {
+            if path.exists() {
+                out.extend(
+                    BufReader::new(std::fs::File::open(path)?)
+                        .lines()
+                        .map_while(Result::ok)
+                        .filter_map(|l| serde_json::from_str::<Record>(&l).ok()),
+                );
+            }
+        }
+        // The live file and the backfill may share a headline: keep the first.
+        let mut seen = HashSet::new();
+        out.retain(|r| seen.insert(dedupe_key(&r.title)));
+        Ok(out)
     }
 }
 
