@@ -59,6 +59,7 @@ The owner asked for no unexplained hardcoded numbers (27 Nov 2026). Each constan
 | Constant | Value | Kind | Basis |
 |---|---|---|---|
 | `KEEP_ABOVE` | 95% | Judgement | Below a 5% change of size, "trim" isn't worth a trade (costs 0.25% round trip) |
+| `SHORT_TERM_EVIDENCE` | text | Fitted (research) | The short-term answer's evidence: `scripts/research/quant_study.py` and `news_next_day.py` on 10 years of NSE bhavcopy (28 Nov 2026) |
 | `FIRM`, `LEAN` | 80, 60 in 100 | Judgement (owner decision, 27 Nov 2026) | "Buy and hold" needs 80 in 100 of beating the FD over 3 years; 60 to 80 is a SIP |
 
 ## Trading rules (`signals.rs`)

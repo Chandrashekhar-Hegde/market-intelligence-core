@@ -686,6 +686,65 @@ costs about 0.11% all in (STT 0.025% on the sell, stamp 0.003%, exchange fees, �
 order, GST, spread), not the 0.06% the 0.10 day-trading study charged, so that study's "no edge"
 verdict only gets stronger.
 
+## Morning-to-close, 3-day and day trades: the maths tested (Phase 0.11 research)
+
+**Data.** NSE's own end-of-day files (bhavcopy, `scripts/research/fetch_bhavcopy.py`) for today's
+NIFTY 50, Jan 2016 – Nov 2026 (2,689 trading days): the official open (the pre-open auction price),
+high, low, close and the exchange's previous close, so open→close and close→close are split-safe.
+Costs: 0.11% for an intraday round trip, 0.25% for delivery.
+
+**Signals known at 09:15 IST** (`scripts/research/quant_study.py`): the opening gap (Lou, Polk &
+Skouras 2019), yesterday's return (Lehmann 1990), the Ornstein–Uhlenbeck s-score of the 60-day
+residual against the market (Avellaneda & Lee 2010), volatility against its usual level, yesterday's
+range, the S&P 500's last session, and a 2-state Gaussian hidden Markov model's "stormy" probability
+(Hamilton 1989; Baum–Welch, refit each year on earlier data only).
+
+**1. Do they sort the day's winners?** (Fama–MacBeth, slope per standard deviation, Newey–West t)
+
+| Signal | Open→close | Open→3 days |
+|---|---|---|
+| Opening gap | −0.128% (t −15.6) | −0.139% (t −9.3) |
+| Yesterday's return | −0.015% (t −2.2) | −0.036% (t −2.6) |
+| Yesterday's range | −0.042% (t −5.5) | −0.028% (t −1.5) |
+| Volatility ratio | −0.021% (t −3.2) | −0.060% (t −3.0) |
+| OU s-score | +0.001% (t +0.2) | −0.008% (t −0.6) |
+| S&P 500 last session (time series) | −0.037% (t −1.3) | +0.061% (t +0.7) |
+| HMM storm probability (time series) | +0.015% (t +0.5) | +0.007% (t +0.1) |
+
+Stocks that open lower recover by the close (and vice versa): a strong, real pattern. The OU
+s-score, the HMM regime and the US session say nothing about direction here.
+
+**2. Does it make money after costs?** A ridge model of all signals, refit each January on earlier
+years only (2019 – Nov 2026 out of sample):
+
+| Trade | Net a trade | t | Won | Sharpe |
+|---|---|---|---|---|
+| Buy all 50 at the open, sell at the close | −0.171% | −9.0 | 42% | −3.1 |
+| Buy the model's top 5 at the open (when above cost), sell at the close | +0.047% | +1.2 | 53% | +0.4 |
+| Top 5 long and bottom 5 short, intraday | +0.082% | +4.2 | 56% | +1.5 |
+| Buy the top 5 at the open, sell 3 days later | −0.033% | −0.4 | 49% | −0.1 |
+
+By year, the long-short trade made +0.12% to +0.23% in 2019–21 and +0.03% to +0.05% since 2022
+(−0.02% in 2026). The deflated Sharpe ratio (Bailey & López de Prado 2014), for the 21 variants
+tried, gives a 0.73 chance that the best one is real, short of the 0.95 a call needs. The edge has
+faded below costs, as published anomalies do.
+
+**3. Intraday momentum** (Gao, Han, Li & Zhou 2018), on 60 days of 5-minute bars for the NIFTY 50:
+the first half hour's return and the last half hour's correlate (+0.046), but following it earns
++0.012% gross a trade against a 0.11% cost.
+
+**4. News on the next day** (Lopez-Lira & Tang 2023; `scripts/research/news_next_day.py`):
+headlines from the 3-year backfill, each acted on at the next trading day's open, returns beyond
+the average NIFTY 50 stock (not NIFTYBEES, whose official open sits above its trading price: its
+open→close averages −0.41% a day against −0.04% for the average stock). Trading the reader's
+direction lost after costs for both readers. On the 2,360 events Gemini read, the next day's move
+beyond the market was +0.002% after good news and +0.001% after bad news. The LLM-news effect found
+in US small caps does not appear in NIFTY 50 large caps.
+
+**What the app says.** No short-term or day-trading call: the short-term answer quotes these numbers
+(`plain::SHORT_TERM_EVIDENCE`). The opening-gap reversal is the one signal to keep watching: the
+app's 1-minute archive will show whether it returns.
+
 ## Your mix (`analysis/mix.rs`, desktop "Your mix")
 
 Each picked holding gets the same share of the mix's risk (equal risk contribution, Maillard,
