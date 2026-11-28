@@ -758,6 +758,19 @@ single share costs more than its target is left out (dearest first) and the rest
 ₹10,000 and ₹10 lakh give different, buyable answers. With no proven edge between the holdings,
 this is the evidence-based default, not a forecast of which will do best.
 
+## The morning brief (`gm-api/src/brief.rs`)
+
+The owner asked for a daily feed answering: what to do now and next, what to invest in, what's
+flagged or going bad, whether to get out or in right now, and the 1-day / 3-day / day-trading
+picture. The facts are the app's own: "do now" is the tested trims and calls (largest swings
+first); "invest in" the non-single-stock instruments whose long-term answer is to buy; "going bad"
+a fall today of more than 2 usual daily swings; "flagged" holdings swinging 1.3× their usual level
+not already in "do now", and the news desk's leans; "get out / get in now" only tested calls
+(otherwise it says none qualifies, and why); the short-term section quotes the research above.
+A template writes the brief from these facts. Gemini may reword it, but its version is used only
+if every number in it appears in the facts (a guard against invented targets or forecasts, not
+proof of good prose); otherwise the template's is shown, with the reason.
+
 ## The model reader's quota
 
 Gemini's free tier allows 500 requests a day for `gemini-3.1-flash-lite`. On 28 Nov 2026 it ran
@@ -765,8 +778,8 @@ out by morning: every background caller (each NIFTY 50 stock's news, the desk, t
 its own request even for two headlines, and a local backfill read shared the key. Now one queue
 fills batches of 25 across callers (a test: 30 headlines from 10 callers take 2–3 requests, not
 10), a daily-limit refusal pauses the reader for 30 minutes, and the desk says why the built-in
-reader is reading ("over its free daily limit; it resets at 13:30 IST"). The backfill read must
-use a different key or wait for a quiet day.
+reader is reading ("over its free daily limit; it resets at 13:30 IST"). Since 28 Nov two free keys are configured (`GM_LLM_API_KEY=key1,key2`); a key refused for its
+daily limit hands over to the other.
 
 ## References
 

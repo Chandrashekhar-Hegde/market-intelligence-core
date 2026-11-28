@@ -89,6 +89,7 @@ impl Default for ApiConfig {
     }
 }
 
+mod brief;
 pub mod recorder;
 mod today;
 
@@ -111,6 +112,7 @@ struct AppState {
     /// News weights fitted by the calibration run; None until enough has been recorded.
     news_weights: Arc<std::sync::RwLock<Option<gm_domain::analysis::news_reader::FittedWeights>>>,
     today: today::Cache,
+    brief: brief::Cache,
     access_token: Option<Arc<str>>,
 }
 
@@ -349,6 +351,7 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
         news_weights: Arc::default(),
         rule_priors: Arc::default(),
         today: Arc::default(),
+        brief: Arc::default(),
         registry: Arc::new(RuleRegistry::builtin()),
         store,
         payment_provider: Arc::new(MockPaymentProvider::test_mode(
@@ -489,6 +492,7 @@ pub async fn build_app(config: ApiConfig) -> anyhow::Result<Router> {
         .route("/api/v1/calibration", get(calibration))
         .route("/api/v1/calibration/import", post(import_calibration))
         .route("/api/v1/today", get(today::today))
+        .route("/api/v1/brief", get(brief::brief))
         .route("/api/v1/stream", get(stream))
         .route("/api/v1/analyze", get(analyze_instrument))
         .route("/api/v1/projection", get(live_projection))
@@ -2674,6 +2678,13 @@ async fn openapi() -> Json<serde_json::Value> {
                     }
                 }
             },
+            "/api/v1/brief": {
+                "get": {
+                    "summary": "Morning brief: do now, invest in, flagged / going bad, get out or in now, and the 1-day / 3-day / day-trading picture",
+                    "description": "Facts from the Today scan and the news desk; written by a template, or worded by the configured model when every number it uses is in the facts. Cached 30 minutes.",
+                    "responses": { "200": { "description": "as_of, writer (\"template\" or the model), note, sections [{title, bullets}], facts" } }
+                }
+            },
             "/api/v1/today": {
                 "get": {
                     "summary": "Today's list: NIFTY 50, gold, silver, the rupee, US and AI names and the given watchlist, each with its call, chances and evidence (research signals, not registered advice)",
@@ -3939,6 +3950,61 @@ mod tests {
         // start alone before the others arrive), never 10 requests.
         let n = calls.load(Ordering::SeqCst);
         assert!((2..=3).contains(&n), "{n} requests");
+    }
+
+    /// Two keys: when the first is refused for its daily limit, the reader moves to the second
+    /// and stays there.
+    #[tokio::test]
+    async fn a_spent_key_hands_over_to_the_next() {
+        use axum::http::HeaderMap;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let seen_a = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&seen_a);
+        let chat = move |headers: HeaderMap| {
+            let counter = Arc::clone(&counter);
+            async move {
+                let auth = headers
+                    .get("authorization")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                if auth.ends_with("key-a") {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    return (
+                        StatusCode::TOO_MANY_REQUESTS,
+                        Json(
+                            serde_json::json!([{ "error": { "message": "Quota exceeded: requests per day limit" } }]),
+                        ),
+                    );
+                }
+                (
+                    StatusCode::OK,
+                    Json(serde_json::json!({ "choices": [{ "message": { "content": "fine" } }] })),
+                )
+            }
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/v1/chat/completions", post(chat)),
+            )
+            .await
+            .unwrap()
+        });
+        let reader = gm_integrations::llm::LlmReader::new(gm_integrations::llm::LlmConfig {
+            base_url: format!("http://{addr}/v1"),
+            model: "stub-model".into(),
+            api_key: Some("key-a, key-b".into()),
+            pace: std::time::Duration::ZERO,
+        });
+        assert_eq!(reader.complete("s", "u").await.unwrap(), "fine");
+        assert_eq!(reader.complete("s", "u").await.unwrap(), "fine");
+        assert_eq!(
+            seen_a.load(Ordering::SeqCst),
+            1,
+            "the spent key is asked once, then skipped"
+        );
     }
 
     async fn llm_news_app(fail: bool) -> Router {

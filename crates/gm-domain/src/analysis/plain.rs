@@ -189,7 +189,10 @@ pub fn plain(report: &AnalysisReport, advice: Option<&Advice>, fd_rate: f64, kin
             };
             let actual = three
                 .filter(|t| t.n_independent > 0)
-                .map(|t| format!(" Only {} separate 3-year periods actually happened, so treat it as rough.", t.n_independent))
+                .map(|t| match t.n_independent {
+                    1 => " Only 1 separate 3-year period actually happened, so treat it as rough.".to_string(),
+                    n => format!(" Only {n} separate 3-year periods actually happened, so treat it as rough."),
+                })
                 .unwrap_or_default();
             (
                 action,

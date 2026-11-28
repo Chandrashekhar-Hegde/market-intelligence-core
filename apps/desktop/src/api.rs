@@ -152,3 +152,21 @@ pub fn covariance(symbols: &[String]) -> Result<Vec<Vec<f64>>, String> {
     serde_json::from_value(v["comparison"]["covariance_annual"].clone())
         .map_err(|e| format!("covariance: {e}"))
 }
+
+#[derive(Clone, Deserialize)]
+pub struct BriefSection {
+    pub title: String,
+    pub bullets: Vec<String>,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct Brief {
+    pub writer: String,
+    pub note: Option<String>,
+    pub sections: Vec<BriefSection>,
+}
+
+/// The morning brief: facts from the app, worded by Gemini when every number checks out.
+pub fn brief() -> Result<Brief, String> {
+    serde_json::from_value(get("/api/v1/brief")?).map_err(|e| format!("brief: {e}"))
+}

@@ -180,7 +180,7 @@ Production-like (one origin, gated): build the web app with `VITE_API_BASE_URL=`
 - **Environment variables:** `GM_ACCESS_TOKEN` (the beta gate) and `RUST_LOG`. Optional:
   `GM_LLM_BASE_URL`, `GM_LLM_MODEL`, `GM_LLM_API_KEY` turn on a model that reads news headlines
   (any OpenAI-compatible endpoint; production uses Gemini `gemini-3.1-flash-lite` at
-  `https://generativelanguage.googleapis.com/v1beta/openai`, key in Railway only); without them the built-in reader is used. `GM_DATA_DIR`
+  `https://generativelanguage.googleapis.com/v1beta/openai`, keys in Railway only; `GM_LLM_API_KEY` may list several separated by commas, used in turn as each reaches its daily limit); without them the built-in reader is used. `GM_DATA_DIR`
   turns on the news recorder (Phase 0.8). In production it points at a Railway volume mounted at
   `/data`, with `RAILWAY_RUN_UID=0` so `docker-entrypoint.sh` can give the volume to the `gm`
   user before dropping root. The server itself never runs as root. The Dockerfile sets

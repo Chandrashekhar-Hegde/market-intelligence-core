@@ -131,7 +131,7 @@ pub struct TodayQuery {
     extra: Option<String>,
 }
 
-fn universe() -> Vec<(String, String)> {
+pub(crate) fn universe() -> Vec<(String, String)> {
     NIFTY50
         .iter()
         .map(|(s, _)| (s.to_string(), "NIFTY 50".to_string()))
@@ -343,7 +343,7 @@ async fn cached_entry(
     }
 }
 
-async fn scan(state: &AppState, list: Vec<(String, String)>) -> Vec<serde_json::Value> {
+pub(crate) async fn scan(state: &AppState, list: Vec<(String, String)>) -> Vec<serde_json::Value> {
     refresh_priors(state).await;
     let news = company_news(state).await;
     let news = &news;
@@ -367,6 +367,9 @@ pub fn spawn_warmer(state: AppState) {
                 secs = started.elapsed().as_secs(),
                 "today list refreshed"
             );
+            // The morning brief is built from this scan: write it now so nobody waits for it.
+            *state.brief.lock().expect("brief lock") = None;
+            let _ = crate::brief::brief(axum::extract::State(state.clone())).await;
             tokio::time::sleep(TTL.saturating_sub(Duration::from_secs(60))).await;
         }
     });

@@ -120,6 +120,15 @@ page can say how the news vote was weighed.
 shaped as in `/analyze`. The 10-year daily fit is cached per symbol until the next close. A
 price more than about 50% away from the last close is a 400.
 
+`GET /api/v1/brief` (Phase 0.11) is the morning brief: `sections` titled "Do now", "Invest in
+(3+ years)", "Flagged / going bad", "Get out now / get in now" and "1 day · 3 days · day trading",
+each a list of `bullets`; `writer` is `template` or the model that worded it; `facts` are the
+numbers it was written from (the Today scan and the news desk). A model's wording is used only if
+every number in it appears in the facts. Cached for 30 minutes and rebuilt by the Today warmer.
+
+`GM_LLM_API_KEY` may list several keys separated by commas: when one is refused for its daily
+limit, the reader moves to the next.
+
 `GET /api/v1/analyze?symbol=&range=10y&benchmark=auto&seed=42&paths=2000&fd=0.07` analyses any symbol (default `10y` since 27 Nov 2026; the app offers 5 or 10 years):
 
 - `plain` (Phase 0.11) is the analysis in plain words, from `gm_domain::analysis::plain` and shared

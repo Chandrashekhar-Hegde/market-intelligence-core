@@ -1,517 +1,626 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 
 export type HealthResponse = {
-  status: string
-  service: string
-}
+  status: string;
+  service: string;
+};
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000').replace(
-  /\/$/,
-  '',
-)
+const apiBaseUrl = (
+  import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000"
+).replace(/\/$/, "");
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       ...init?.headers,
     },
     ...init,
-  })
+  });
 
   if (!response.ok) {
-    const body = await response.text()
-    throw new Error(`${response.status} ${response.statusText}: ${body}`)
+    const body = await response.text();
+    throw new Error(`${response.status} ${response.statusText}: ${body}`);
   }
 
-  return (await response.json()) as T
+  return (await response.json()) as T;
 }
 
 export function fetchHealth(): Promise<HealthResponse> {
-  return request<HealthResponse>('/health')
+  return request<HealthResponse>("/health");
 }
 
 export function getApiBaseUrl(): string {
-  return apiBaseUrl
+  return apiBaseUrl;
 }
 
 // ---- market data (/api/v1) -------------------------------------------------------------
 
 export type SearchHit = {
-  symbol: string
-  name: string
+  symbol: string;
+  name: string;
   /** NSE, BSE, NASDAQ, Tokyo, … */
-  exchange: string
+  exchange: string;
   /** India, USA, UK, Global (crypto and FX), … */
-  country: string
-  quote_type: string
-}
+  country: string;
+  quote_type: string;
+};
 
 export type SearchResponse = {
-  results: SearchHit[]
+  results: SearchHit[];
   /** Where the matches were found, before the filters: drives the filter chips. */
-  markets: { country: string; exchange: string; count: number }[]
-}
+  markets: { country: string; exchange: string; count: number }[];
+};
 
 export type InstrumentMeta = {
-  symbol: string
-  name: string | null
-  currency: string | null
-  exchange: string | null
-  instrument_type: string | null
-  timezone: string | null
-  last_price: number | null
-  last_trade_at: string | null
+  symbol: string;
+  name: string | null;
+  currency: string | null;
+  exchange: string | null;
+  instrument_type: string | null;
+  timezone: string | null;
+  last_price: number | null;
+  last_trade_at: string | null;
   /** Change vs the previous session's close (Yahoo's figures). */
-  change: number | null
-  change_pct: number | null
-  day_volume: number | null
-  market_open: boolean
+  change: number | null;
+  change_pct: number | null;
+  day_volume: number | null;
+  market_open: boolean;
   /** TradingView's name for the listing, when known (server-side table). */
-  tradingview_symbol: string | null
-}
+  tradingview_symbol: string | null;
+};
 
 export type PriceBar = {
-  symbol: string
-  date: string
-  open: number
-  high: number
-  low: number
-  close: number
-  adj_close: number | null
-  volume: number
-  source: string
-}
+  symbol: string;
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  adj_close: number | null;
+  volume: number;
+  source: string;
+};
 
 export type CorporateAction =
-  | { kind: 'dividend'; date: string; amount: number }
-  | { kind: 'split'; date: string; numerator: number; denominator: number }
+  | { kind: "dividend"; date: string; amount: number }
+  | { kind: "split"; date: string; numerator: number; denominator: number };
 
 export type ReturnOutlier = {
-  date: string
-  log_return: number
-  robust_z: number
-  near_corporate_action: boolean
-}
+  date: string;
+  log_return: number;
+  robust_z: number;
+  near_corporate_action: boolean;
+};
 
 export type QualityReport = {
-  passed: boolean
-  n_bars: number
-  first_date: string | null
-  last_date: string | null
-  ohlc_violations: string[]
-  non_positive_prices: string[]
-  zero_volume_days: number
-  missing_days: string[]
-  is_stale: boolean
-  outliers: ReturnOutlier[]
-  warnings: string[]
-}
+  passed: boolean;
+  n_bars: number;
+  first_date: string | null;
+  last_date: string | null;
+  ohlc_violations: string[];
+  non_positive_prices: string[];
+  zero_volume_days: number;
+  missing_days: string[];
+  is_stale: boolean;
+  outliers: ReturnOutlier[];
+  warnings: string[];
+};
 
 export type ChartData = {
-  meta: InstrumentMeta
-  bars: PriceBar[]
-  corporate_actions: CorporateAction[]
-  dropped_partial_bar: boolean
-  source: string
-  fetched_at: string
-}
+  meta: InstrumentMeta;
+  bars: PriceBar[];
+  corporate_actions: CorporateAction[];
+  dropped_partial_bar: boolean;
+  source: string;
+  fetched_at: string;
+};
 
 export type BarsResponse = {
-  chart: ChartData
-  quality: QualityReport
+  chart: ChartData;
+  quality: QualityReport;
   /** Home-market index whose trading days were the calendar for gap checks, if any. */
-  calendar_reference: string | null
-}
+  calendar_reference: string | null;
+};
 
 export type QuoteResponse = {
-  quote: InstrumentMeta
-  source: string
-  fetched_at: string
-  delayed: boolean
-}
+  quote: InstrumentMeta;
+  source: string;
+  fetched_at: string;
+  delayed: boolean;
+};
 
 export type Tick = {
-  symbol: string
-  price: number
-  change: number
-  change_pct: number
-  day_high: number | null
-  day_low: number | null
-  day_volume: number | null
-  currency: string | null
-  exchange: string | null
-  tick_time: string
-  source: string
-}
+  symbol: string;
+  price: number;
+  change: number;
+  change_pct: number;
+  day_high: number | null;
+  day_low: number | null;
+  day_volume: number | null;
+  currency: string | null;
+  exchange: string | null;
+  tick_time: string;
+  source: string;
+};
 
-export const BAR_RANGES = ['1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'max'] as const
-export type BarRange = (typeof BAR_RANGES)[number]
+export const BAR_RANGES = [
+  "1mo",
+  "3mo",
+  "6mo",
+  "1y",
+  "2y",
+  "5y",
+  "10y",
+  "max",
+] as const;
+export type BarRange = (typeof BAR_RANGES)[number];
 
-export type IntradayPoint = { t: number; open: number; high: number; low: number; close: number; volume: number }
+export type IntradayPoint = {
+  t: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
 
 export type IntradayData = {
-  meta: InstrumentMeta
-  interval: '1m' | '5m'
-  previous_close: number | null
-  session_start: number | null
-  session_end: number | null
-  points: IntradayPoint[]
-  source: string
-  fetched_at: string
-}
+  meta: InstrumentMeta;
+  interval: "1m" | "5m";
+  previous_close: number | null;
+  session_start: number | null;
+  session_end: number | null;
+  points: IntradayPoint[];
+  source: string;
+  fetched_at: string;
+};
 
-export type IntradayRange = '1d' | '5d'
+export type IntradayRange = "1d" | "5d";
 /** What the chart's range picker offers: today and this week intraday, then daily history. */
-export const CHART_RANGES = ['1d', '5d', '1mo', '6mo', '1y', '5y', 'max'] as const
-export type ChartRange = (typeof CHART_RANGES)[number]
-export const isIntraday = (range: ChartRange): range is IntradayRange => range === '1d' || range === '5d'
+export const CHART_RANGES = [
+  "1d",
+  "5d",
+  "1mo",
+  "6mo",
+  "1y",
+  "5y",
+  "max",
+] as const;
+export type ChartRange = (typeof CHART_RANGES)[number];
+export const isIntraday = (range: ChartRange): range is IntradayRange =>
+  range === "1d" || range === "5d";
 
-export function fetchIntraday(symbol: string, range: IntradayRange): Promise<{ chart: IntradayData }> {
-  return request<{ chart: IntradayData }>(`/api/v1/intraday?symbol=${encodeURIComponent(symbol)}&range=${range}`)
+export function fetchIntraday(
+  symbol: string,
+  range: IntradayRange,
+): Promise<{ chart: IntradayData }> {
+  return request<{ chart: IntradayData }>(
+    `/api/v1/intraday?symbol=${encodeURIComponent(symbol)}&range=${range}`,
+  );
 }
 
-export function searchInstruments(query: string, country = 'all', exchange = 'all'): Promise<SearchResponse> {
-  const params = new URLSearchParams({ q: query, country, exchange })
-  return request<SearchResponse>(`/api/v1/instruments/search?${params.toString()}`)
+export function searchInstruments(
+  query: string,
+  country = "all",
+  exchange = "all",
+): Promise<SearchResponse> {
+  const params = new URLSearchParams({ q: query, country, exchange });
+  return request<SearchResponse>(
+    `/api/v1/instruments/search?${params.toString()}`,
+  );
 }
 
-export function fetchBars(symbol: string, range: BarRange): Promise<BarsResponse> {
+export function fetchBars(
+  symbol: string,
+  range: BarRange,
+): Promise<BarsResponse> {
   return request<BarsResponse>(
     `/api/v1/bars?symbol=${encodeURIComponent(symbol)}&range=${range}`,
-  )
+  );
 }
 
 export function fetchQuote(symbol: string): Promise<QuoteResponse> {
-  return request<QuoteResponse>(`/api/v1/quote?symbol=${encodeURIComponent(symbol)}`)
+  return request<QuoteResponse>(
+    `/api/v1/quote?symbol=${encodeURIComponent(symbol)}`,
+  );
 }
 
 export function streamUrl(symbols: string[]): string {
-  return `${apiBaseUrl}/api/v1/stream?symbols=${encodeURIComponent(symbols.join(','))}`
+  return `${apiBaseUrl}/api/v1/stream?symbols=${encodeURIComponent(symbols.join(","))}`;
 }
 
 /** Turn `request()`'s "404 Not Found: {...}" errors into something a reader can act on. */
 export function describeApiError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
-  if (message.startsWith('404')) return 'Unknown symbol. Search for it by name instead.'
-  if (message.startsWith('401')) return 'Access token missing or expired. Reload to sign in.'
-  if (message.startsWith('503')) return 'Market data provider is unavailable right now. Try again shortly.'
-  if (message.startsWith('400')) {
-    const detail = message.match(/"error":"([^"]+)"/)?.[1]
-    return detail ? `Invalid request: ${detail}` : 'Invalid request.'
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.startsWith("404"))
+    return "Unknown symbol. Search for it by name instead.";
+  if (message.startsWith("401"))
+    return "Access token missing or expired. Reload to sign in.";
+  if (message.startsWith("503"))
+    return "Market data provider is unavailable right now. Try again shortly.";
+  if (message.startsWith("400")) {
+    const detail = message.match(/"error":"([^"]+)"/)?.[1];
+    return detail ? `Invalid request: ${detail}` : "Invalid request.";
   }
-  return message
+  return message;
 }
 
 // ---- analysis (/api/v1/analyze) ----------------------------------------------------------
 
-export type TestResult = { statistic: number; p_value: number; reject_5pct: boolean }
+export type TestResult = {
+  statistic: number;
+  p_value: number;
+  reject_5pct: boolean;
+};
 
 export type Projection = {
-  model: 'gbm' | 'garch_t' | 'bootstrap'
-  n_paths: number
-  seed: number
-  fan: { day: number; price: [number, number, number, number, number] }[]
+  model: "gbm" | "garch_t" | "bootstrap";
+  n_paths: number;
+  seed: number;
+  fan: { day: number; price: [number, number, number, number, number] }[];
   /** The first simulated price paths, one price per day, for drawing. */
-  sample_paths: number[][]
+  sample_paths: number[][];
   /** The simulated path closest to the median day by day: a typical path to highlight. */
-  typical_path: number[]
+  typical_path: number[];
   /** Mean block length of the stationary bootstrap, in days (bootstrap only). */
-  block_length: number | null
+  block_length: number | null;
   horizons: {
-    horizon_days: number
-    return_quantiles: [number, number, number, number, number]
-    prob_gain: number
-    prob_loss_over_10pct: number
-    prob_drawdown_over_10pct: number
-  }[]
-}
+    horizon_days: number;
+    return_quantiles: [number, number, number, number, number];
+    prob_gain: number;
+    prob_loss_over_10pct: number;
+    prob_drawdown_over_10pct: number;
+  }[];
+};
 
 export type AnalysisReport = {
-  symbol: string
-  first_date: string
-  last_date: string
-  n_returns: number
-  last_price: number
-  periods_per_year: number
+  symbol: string;
+  first_date: string;
+  last_date: string;
+  n_returns: number;
+  last_price: number;
+  periods_per_year: number;
   distribution: {
-    mean_annual: number
-    mean_annual_se: number
-    vol_annual: number
-    skewness: number
-    excess_kurtosis: number
-    jarque_bera: TestResult
-    hill_tail_index: number | null
-    worst_day: number
-    best_day: number
-  }
+    mean_annual: number;
+    mean_annual_se: number;
+    vol_annual: number;
+    skewness: number;
+    excess_kurtosis: number;
+    jarque_bera: TestResult;
+    hill_tail_index: number | null;
+    worst_day: number;
+    best_day: number;
+  };
   predictability: {
-    lags: number
-    ljung_box_returns: TestResult
-    ljung_box_squared: TestResult
-    variance_ratios: { q: number; ratio: number; test: TestResult }[]
-    adf: { statistic: number; critical_values: [number, number, number]; reject_unit_root_5pct: boolean }
-  }
+    lags: number;
+    ljung_box_returns: TestResult;
+    ljung_box_squared: TestResult;
+    variance_ratios: { q: number; ratio: number; test: TestResult }[];
+    adf: {
+      statistic: number;
+      critical_values: [number, number, number];
+      reject_unit_root_5pct: boolean;
+    };
+  };
   volatility: {
-    ewma_annual: number
+    ewma_annual: number;
     garch: null | {
-      alpha: number
-      beta: number
-      nu: number
-      persistence: number
-      half_life_days: number
-      long_run_vol_annual: number
-      current_vol_annual: number
-      term_structure: { horizon_days: number; vol_annual: number }[]
-    }
-  }
-  projections: Projection[]
+      alpha: number;
+      beta: number;
+      nu: number;
+      persistence: number;
+      half_life_days: number;
+      long_run_vol_annual: number;
+      current_vol_annual: number;
+      term_structure: { horizon_days: number; vol_annual: number }[];
+    };
+  };
+  projections: Projection[];
   risk: {
-    var_es: { method: 'historical' | 'student_t' | 'garch_t'; confidence: number; var: number; es: number }[]
-    max_drawdown: { max: number; peak_date: string; trough_date: string; recovery_date: string | null; duration_days: number; current: number }
-    sharpe: number
-    sharpe_se: number
-    sortino: number
-  }
+    var_es: {
+      method: "historical" | "student_t" | "garch_t";
+      confidence: number;
+      var: number;
+      es: number;
+    }[];
+    max_drawdown: {
+      max: number;
+      peak_date: string;
+      trough_date: string;
+      recovery_date: string | null;
+      duration_days: number;
+      current: number;
+    };
+    sharpe: number;
+    sharpe_se: number;
+    sortino: number;
+  };
   benchmark: null | {
-    symbol: string
-    n_common_days: number
-    beta: number
-    beta_se: number
-    alpha_annual: number
-    alpha_annual_se: number
-    r_squared: number
-    correlation: number
-    idiosyncratic_vol_annual: number
-  }
-  validation: Validation | null
+    symbol: string;
+    n_common_days: number;
+    beta: number;
+    beta_se: number;
+    alpha_annual: number;
+    alpha_annual_se: number;
+    r_squared: number;
+    correlation: number;
+    idiosyncratic_vol_annual: number;
+  };
+  validation: Validation | null;
   /** The app's holder sizing replayed on this history, against simply holding. */
-  track_record: TrackRecord | null
+  track_record: TrackRecord | null;
   /** 1, 3 and 5-year outcome distributions to compare with a fixed deposit. */
-  long_run: LongRun[] | null
+  long_run: LongRun[] | null;
   /** The projection validation rates best, shown first, and why. */
-  lead_model: Projection['model']
-  lead_reason: string
-  findings: string[]
-}
+  lead_model: Projection["model"];
+  lead_reason: string;
+  findings: string[];
+};
 
-export type Perf = { growth: number; vol: number; sharpe: number; worst_fall: number }
+export type Perf = {
+  growth: number;
+  vol: number;
+  sharpe: number;
+  worst_fall: number;
+};
 
 export type TrackRecord = {
-  first: string
-  last: string
-  cash_rate: number
-  app: Perf
-  hold: Perf
-  average_exposure: number
-  episodes: { start: string; end: string; app: number; hold: number; exposure_at_start: number }[]
-}
+  first: string;
+  last: string;
+  cash_rate: number;
+  app: Perf;
+  hold: Perf;
+  average_exposure: number;
+  episodes: {
+    start: string;
+    end: string;
+    app: number;
+    hold: number;
+    exposure_at_start: number;
+  }[];
+};
 
 /** Total log return over `years` at percentiles 0…100: resampled, and from actual past windows. */
 export type LongRun = {
-  years: number
-  resampled: number[]
-  historical: number[]
-  n_windows: number
-  n_independent: number
-  worst: number | null
-  block_length: number
+  years: number;
+  resampled: number[];
+  historical: number[];
+  n_windows: number;
+  n_independent: number;
+  worst: number | null;
+  block_length: number;
   /** Annual growth assumed for the resampled futures, its uncertainty, and where it came from. */
-  drift_annual: number
-  drift_se_annual: number
-  drift_from: string
-}
+  drift_annual: number;
+  drift_se_annual: number;
+  drift_from: string;
+};
 
 /** Was the history-based chance of a gain honest? Scored walk-forward against a coin flip. */
 export type ChanceCheck = {
-  horizon_days: number
-  n: number
-  mean_forecast: number
-  realised: number
-  brier: number
-  skill_vs_coin: number
-  vs_coin: TestResult
-}
+  horizon_days: number;
+  n: number;
+  mean_forecast: number;
+  realised: number;
+  brier: number;
+  skill_vs_coin: number;
+  vs_coin: TestResult;
+};
 
 export type Validation = {
-  n_forecasts: number
-  first_forecast_index: number
-  baseline: string
+  n_forecasts: number;
+  first_forecast_index: number;
+  baseline: string;
   models: {
-    model: 'historical_sim' | 'ewma_normal' | 'garch_t'
-    mean_pinball: number
-    vs_baseline: TestResult | null
-    coverage_90: number
+    model: "historical_sim" | "ewma_normal" | "garch_t";
+    mean_pinball: number;
+    vs_baseline: TestResult | null;
+    coverage_90: number;
     var_backtests: {
-      level: number
-      expected_rate: number
-      exceptions: number
-      rate: number
-      kupiec: TestResult
-      christoffersen: TestResult
-      pass: boolean
-    }[]
-    direction: { n: number; hits: number; accuracy: number; binomial: TestResult } | null
-    verdict: string
-  }[]
-  chance_of_gain: ChanceCheck[]
-}
+      level: number;
+      expected_rate: number;
+      exceptions: number;
+      rate: number;
+      kupiec: TestResult;
+      christoffersen: TestResult;
+      pass: boolean;
+    }[];
+    direction: {
+      n: number;
+      hits: number;
+      accuracy: number;
+      binomial: TestResult;
+    } | null;
+    verdict: string;
+  }[];
+  chance_of_gain: ChanceCheck[];
+};
 
 export type SignalTest = {
-  horizon_days: number
-  n_obs: number
-  n_independent: number
-  effect: number
-  t_stat: number
-  p_value: number
-  p_holm: number
-  effect_first_half: number
-  effect_second_half: number
-  hit_rate: number | null
-  hit_n: number
-  hit_low: number | null
-  hit_high: number | null
-  mean_return_long: number | null
-  mean_return_short: number | null
-  earns_place: boolean
-  verdict: string
+  horizon_days: number;
+  n_obs: number;
+  n_independent: number;
+  effect: number;
+  t_stat: number;
+  p_value: number;
+  p_holm: number;
+  effect_first_half: number;
+  effect_second_half: number;
+  hit_rate: number | null;
+  hit_n: number;
+  hit_low: number | null;
+  hit_high: number | null;
+  mean_return_long: number | null;
+  mean_return_short: number | null;
+  earns_place: boolean;
+  verdict: string;
   /** P(edge beats costs), judged with the NIFTY 50 panel; null without a panel. */
-  p_edge?: number | null
-}
+  p_edge?: number | null;
+};
 
 export type Signal = {
-  id: string
-  name: string
-  rule: string
-  source: string
-  position_today: -1 | 0 | 1
-  today: string
-  flip_level: number | null
-  tests: SignalTest[]
-}
+  id: string;
+  name: string;
+  rule: string;
+  source: string;
+  position_today: -1 | 0 | 1;
+  today: string;
+  flip_level: number | null;
+  tests: SignalTest[];
+};
 
 export type Signals = {
-  first_date: string
-  last_date: string
-  n_days: number
-  round_trip_cost: number
-  n_tests: number
-  signals: Signal[]
-}
+  first_date: string;
+  last_date: string;
+  n_days: number;
+  round_trip_cost: number;
+  n_tests: number;
+  signals: Signal[];
+};
 
 export type Advice = {
-  stance: 'buy' | 'sell' | 'hold'
-  basis: 'proven' | 'conflict' | 'proven_but_quiet' | 'no_evidence' | 'news_driven' | 'news_conflict'
-  headline: string
-  drivers: string[]
-  horizon_days: number | null
-  review_date: string | null
-  confidence: { hit_rate: number; low: number; high: number; n: number } | null
-  flip_level: number | null
-  reasons: string[]
+  stance: "buy" | "sell" | "hold";
+  basis:
+    | "proven"
+    | "conflict"
+    | "proven_but_quiet"
+    | "no_evidence"
+    | "news_driven"
+    | "news_conflict";
+  headline: string;
+  drivers: string[];
+  horizon_days: number | null;
+  review_date: string | null;
+  confidence: { hit_rate: number; low: number; high: number; n: number } | null;
+  flip_level: number | null;
+  reasons: string[];
   /** Headlines behind a news-driven or news-conflicted call, strongest first. */
-  news_headlines: string[]
-}
+  news_headlines: string[];
+};
 
 export type NewsReading = {
-  kind: string
+  kind: string;
   /** +1 good for the company, −1 bad, 0 unclear. */
-  direction: -1 | 0 | 1
+  direction: -1 | 0 | 1;
   /** 1 low, 2 medium, 3 high. */
-  materiality: 1 | 2 | 3
-  reason: string
-  reader: string
-}
+  materiality: 1 | 2 | 3;
+  reason: string;
+  reader: string;
+};
 
-export type NewsVote = { score: number; stance: -1 | 0 | 1; n_stories: number; drivers: number[] }
+export type NewsVote = {
+  score: number;
+  stance: -1 | 0 | 1;
+  n_stories: number;
+  drivers: number[];
+};
 
 /** The analysis in plain words, from gm_domain::analysis::plain (shared with the desktop app). */
 export type Plain = {
-  action: 'buy' | 'sell' | 'trim' | 'keep' | 'sip' | 'index_instead' | 'fd' | 'watch'
-  headline: string
-  answers: { question: string; verdict: string; why: string }[]
-  ranges: { horizon_days: number; label: string; returns: number[]; held: number; n_tested: number; n_stretches: number }[]
-  direction: string | null
-  how: string | null
-  track_record: string | null
-}
+  action:
+    "buy" | "sell" | "trim" | "keep" | "sip" | "index_instead" | "fd" | "watch";
+  headline: string;
+  answers: { question: string; verdict: string; why: string }[];
+  ranges: {
+    horizon_days: number;
+    label: string;
+    returns: number[];
+    held: number;
+    n_tested: number;
+    n_stretches: number;
+  }[];
+  direction: string | null;
+  how: string | null;
+  track_record: string | null;
+};
 
 export type AnalyzeResponse = {
-  report: AnalysisReport
-  plain?: Plain
-  signals: Signals | null
-  advice: Advice | null
-  signals_note: string | null
+  report: AnalysisReport;
+  plain?: Plain;
+  signals: Signals | null;
+  advice: Advice | null;
+  signals_note: string | null;
   /** Today's news, read and weighed; null when no news source answered. */
-  news_vote: NewsVote | null
+  news_vote: NewsVote | null;
   /** How the news vote is weighed: fitted on recorded events, or judgement. */
-  news_weights?: { fitted: boolean; n_events?: number; first?: string; last?: string; voting_kinds?: Record<string, number> }
+  news_weights?: {
+    fitted: boolean;
+    n_events?: number;
+    first?: string;
+    last?: string;
+    voting_kinds?: Record<string, number>;
+  };
   data: {
-    symbol: string
-    name: string | null
-    currency: string | null
-    exchange: string | null
-    instrument_type: string | null
-    tradingview_symbol: string | null
-    range: string
-    source: string
-    fetched_at: string
-    quality: QualityReport
-  }
+    symbol: string;
+    name: string | null;
+    currency: string | null;
+    exchange: string | null;
+    instrument_type: string | null;
+    tradingview_symbol: string | null;
+    range: string;
+    source: string;
+    fetched_at: string;
+    quality: QualityReport;
+  };
   benchmark: null | {
-    symbol: string
-    name: string | null
-    selection: 'auto' | 'requested'
-    used: boolean
-    currency: string | null
-    note: string | null
-  }
-}
+    symbol: string;
+    name: string | null;
+    selection: "auto" | "requested";
+    used: boolean;
+    currency: string | null;
+    note: string | null;
+  };
+};
 
-export type AnalysisRange = '5y' | '10y'
+export type AnalysisRange = "5y" | "10y";
 
-export function fetchAnalysis(symbol: string, range: AnalysisRange = '10y'): Promise<AnalyzeResponse> {
-  return request<AnalyzeResponse>(`/api/v1/analyze?symbol=${encodeURIComponent(symbol)}&range=${range}`)
+export function fetchAnalysis(
+  symbol: string,
+  range: AnalysisRange = "10y",
+): Promise<AnalyzeResponse> {
+  return request<AnalyzeResponse>(
+    `/api/v1/analyze?symbol=${encodeURIComponent(symbol)}&range=${range}`,
+  );
 }
 
 /** One cached analysis per symbol, shared by every panel that needs it. */
-export function useAnalysis(symbol: string, range: AnalysisRange = '10y') {
+export function useAnalysis(symbol: string, range: AnalysisRange = "10y") {
   return useQuery<AnalyzeResponse>({
-    queryKey: ['analysis', symbol, range],
+    queryKey: ["analysis", symbol, range],
     queryFn: () => fetchAnalysis(symbol, range),
     staleTime: 15 * 60_000,
     retry: (count, error) => count < 1 && !/^4\d\d/.test(error.message),
-  })
+  });
 }
 
 export type LiveProjection = {
-  symbol: string
-  price: number
-  last_close: number
-  last_date: string
-  computed_at: string
-  projections: Projection[]
-}
+  symbol: string;
+  price: number;
+  last_close: number;
+  last_date: string;
+  computed_at: string;
+  projections: Projection[];
+};
 
 /** `value`, changing at most once every `ms` (the latest value wins at the end of each wait). */
 export function useThrottled<T>(value: T, ms: number): T {
-  const [shown, setShown] = useState(value)
-  const last = useRef(0)
+  const [shown, setShown] = useState(value);
+  const last = useRef(0);
   useEffect(() => {
     // Nothing yet (or gone): pass it straight through, so the first real value isn't held up.
     if (value === null || value === undefined) {
-      setShown(value)
-      return undefined
+      setShown(value);
+      return undefined;
     }
-    const wait = Math.max(0, last.current + ms - Date.now())
+    const wait = Math.max(0, last.current + ms - Date.now());
     const timer = setTimeout(() => {
-      last.current = Date.now()
-      setShown(value)
-    }, wait)
-    return () => clearTimeout(timer)
-  }, [value, ms])
-  return shown
+      last.current = Date.now();
+      setShown(value);
+    }, wait);
+    return () => clearTimeout(timer);
+  }, [value, ms]);
+  return shown;
 }
 
 /**
@@ -519,216 +628,270 @@ export function useThrottled<T>(value: T, ms: number): T {
  * screen while the next one is computed.
  */
 export function useLiveProjection(symbol: string, livePrice: number | null) {
-  const price = useThrottled(livePrice, 5_000)
+  const price = useThrottled(livePrice, 5_000);
   return useQuery<LiveProjection>({
-    queryKey: ['projection', symbol, price],
-    queryFn: () => request<LiveProjection>(`/api/v1/projection?symbol=${encodeURIComponent(symbol)}&price=${price}`),
+    queryKey: ["projection", symbol, price],
+    queryFn: () =>
+      request<LiveProjection>(
+        `/api/v1/projection?symbol=${encodeURIComponent(symbol)}&price=${price}`,
+      ),
     enabled: price !== null && price > 0,
     placeholderData: keepPreviousData,
     staleTime: Infinity,
     retry: false,
-  })
+  });
 }
 
 // ---- today's list (/api/v1/today) --------------------------------------------------------
 
 export type TodayItem = {
-  symbol: string
-  group: string
-  error?: string
-  name?: string | null
-  currency?: string | null
-  instrument_type?: string | null
-  last_price?: number
-  change_pct?: number | null
-  last_date?: string
-  return_1y?: number | null
-  vol_annual?: number
-  lead_model?: Projection['model']
-  prob_gain_1m?: number | null
-  prob_gain_3m?: number | null
-  prob_loss_10pct_3m?: number | null
-  range_3m?: [number, number] | null
-  chance_check_3m?: ChanceCheck | null
-  advice?: Advice | null
-  news_vote?: NewsVote | null
-  long_run?: LongRun[]
-  single_stock?: boolean
-  vol_ratio?: number | null
-  es95?: number | null
-}
+  symbol: string;
+  group: string;
+  error?: string;
+  name?: string | null;
+  currency?: string | null;
+  instrument_type?: string | null;
+  last_price?: number;
+  change_pct?: number | null;
+  last_date?: string;
+  return_1y?: number | null;
+  vol_annual?: number;
+  lead_model?: Projection["model"];
+  prob_gain_1m?: number | null;
+  prob_gain_3m?: number | null;
+  prob_loss_10pct_3m?: number | null;
+  range_3m?: [number, number] | null;
+  chance_check_3m?: ChanceCheck | null;
+  advice?: Advice | null;
+  news_vote?: NewsVote | null;
+  long_run?: LongRun[];
+  single_stock?: boolean;
+  vol_ratio?: number | null;
+  es95?: number | null;
+};
 
-export type TodayResponse = { as_of: string; items: TodayItem[]; notice: string }
+export type TodayResponse = {
+  as_of: string;
+  items: TodayItem[];
+  notice: string;
+};
 
 export function useToday(extra: string[]) {
   return useQuery<TodayResponse>({
-    queryKey: ['today', extra],
-    queryFn: () => request<TodayResponse>(`/api/v1/today?extra=${encodeURIComponent(extra.join(','))}`),
+    queryKey: ["today", extra],
+    queryFn: () =>
+      request<TodayResponse>(
+        `/api/v1/today?extra=${encodeURIComponent(extra.join(","))}`,
+      ),
     staleTime: 10 * 60_000,
     retry: false,
-  })
+  });
 }
 
 // ---- market news desk (/api/v1/desk) ----------------------------------------------------
 
-export type MacroImpact = { asset: string; direction: number; reason: string }
+export type MacroImpact = { asset: string; direction: number; reason: string };
 
 export type DeskResponse = {
-  sources: NewsSource[]
+  sources: NewsSource[];
   stories: {
-    title: string
-    url: string
-    publisher: string
-    source: string
-    seen_at: string
-    theme: string
-    impacts: MacroImpact[]
-  }[]
-  leans: { asset: string; label: string; symbol: string; score: number; lean: number; drivers: number[] }[]
-  reader: string
-  as_of: string
+    title: string;
+    url: string;
+    publisher: string;
+    source: string;
+    seen_at: string;
+    theme: string;
+    impacts: MacroImpact[];
+  }[];
+  leans: {
+    asset: string;
+    label: string;
+    symbol: string;
+    score: number;
+    lean: number;
+    drivers: number[];
+  }[];
+  reader: string;
+  as_of: string;
+};
+
+// ---- morning brief (/api/v1/brief) -------------------------------------------------------
+
+export type BriefResponse = {
+  as_of: string;
+  /** "template", or the model that worded it from the app's numbers. */
+  writer: string;
+  note: string | null;
+  sections: { title: string; bullets: string[] }[];
+};
+
+export function useBrief() {
+  return useQuery<BriefResponse>({
+    queryKey: ["brief"],
+    queryFn: () => request<BriefResponse>("/api/v1/brief"),
+    staleTime: 10 * 60_000,
+    refetchInterval: 30 * 60_000,
+    retry: false,
+  });
 }
 
 export function useDesk() {
   return useQuery<DeskResponse>({
-    queryKey: ['desk'],
-    queryFn: () => request<DeskResponse>('/api/v1/desk'),
+    queryKey: ["desk"],
+    queryFn: () => request<DeskResponse>("/api/v1/desk"),
     staleTime: 5 * 60_000,
     refetchInterval: 10 * 60_000,
     retry: false,
-  })
+  });
 }
 
 // ---- news (/api/v1/news) ----------------------------------------------------------------
 
 export type NewsImpact = {
-  instrument_move: number
-  market_move: number | null
-  abnormal_move: number
-  sessions_elapsed: number
-  z: number
-  one_in: number
-}
+  instrument_move: number;
+  market_move: number | null;
+  abnormal_move: number;
+  sessions_elapsed: number;
+  z: number;
+  one_in: number;
+};
 
-export type NewsSource = { name: string; ok: boolean; count: number; error: string | null }
+export type NewsSource = {
+  name: string;
+  ok: boolean;
+  count: number;
+  error: string | null;
+};
 
 export type NewsResponse = {
-  symbol: string
+  symbol: string;
   /** The company name searched for. */
-  query: string
+  query: string;
   articles: {
-    article: { title: string; url: string; publisher: string; source: string; seen_at: string; summary: string | null }
-    reading: NewsReading
-    impact: NewsImpact | null
-  }[]
-  vote: NewsVote
+    article: {
+      title: string;
+      url: string;
+      publisher: string;
+      source: string;
+      seen_at: string;
+      summary: string | null;
+    };
+    reading: NewsReading;
+    impact: NewsImpact | null;
+  }[];
+  vote: NewsVote;
   /** "built-in" or the model that read the headlines. */
-  reader: string
+  reader: string;
   /** Every source tried, and what it returned. */
-  sources: NewsSource[]
-  benchmark: string | null
-  beta: number | null
-  fetched_at: string
-}
+  sources: NewsSource[];
+  benchmark: string | null;
+  beta: number | null;
+  fetched_at: string;
+};
 
 export function fetchNews(symbol: string): Promise<NewsResponse> {
-  return request<NewsResponse>(`/api/v1/news?symbol=${encodeURIComponent(symbol)}`)
+  return request<NewsResponse>(
+    `/api/v1/news?symbol=${encodeURIComponent(symbol)}`,
+  );
 }
 
 // ---- comparison (/api/v1/compare) --------------------------------------------------------
 
 export type Comparison = {
-  symbols: string[]
-  first_date: string
-  last_date: string
-  n_common_days: number
-  n_weekly: number
-  correlation_daily: number[][]
-  spearman_daily: number[][]
-  correlation_weekly: number[][]
-  covariance_shrinkage: number
-  covariance_annual: number[][]
-  pca: { explained: number[]; first_loadings: number[] }
+  symbols: string[];
+  first_date: string;
+  last_date: string;
+  n_common_days: number;
+  n_weekly: number;
+  correlation_daily: number[][];
+  spearman_daily: number[][];
+  correlation_weekly: number[][];
+  covariance_shrinkage: number;
+  covariance_annual: number[][];
+  pca: { explained: number[]; first_loadings: number[] };
   pairs: {
-    a: string
-    b: string
-    correlation_daily: number
-    correlation_weekly: number
+    a: string;
+    b: string;
+    correlation_daily: number;
+    correlation_weekly: number;
     cointegration: {
-      dependent: string
-      regressor: string
-      hedge_ratio: number
-      statistic: number | null
-      lags: number
-      critical_values: [number, number, number]
-      cointegrated_5pct: boolean
-      half_life_days: number | null
-      spread_z_now: number
-    }
-  }[]
-  rolling_correlation: { a: string; b: string; points: [string, number][] }[]
+      dependent: string;
+      regressor: string;
+      hedge_ratio: number;
+      statistic: number | null;
+      lags: number;
+      critical_values: [number, number, number];
+      cointegrated_5pct: boolean;
+      half_life_days: number | null;
+      spread_z_now: number;
+    };
+  }[];
+  rolling_correlation: { a: string; b: string; points: [string, number][] }[];
   performance: {
-    symbol: string
-    total_return: number
-    annual_return: number
-    annual_vol: number
-    sharpe: number
-    max_drawdown: number
-  }[]
-  rebased: { date: string; values: number[] }[]
-  findings: string[]
-}
+    symbol: string;
+    total_return: number;
+    annual_return: number;
+    annual_vol: number;
+    sharpe: number;
+    max_drawdown: number;
+  }[];
+  rebased: { date: string; values: number[] }[];
+  findings: string[];
+};
 
 export type CompareResponse = {
-  comparison: Comparison
+  comparison: Comparison;
   instruments: {
-    symbol: string
-    name: string | null
-    currency: string | null
-    exchange: string | null
-    timezone: string | null
-    source: string
-    fetched_at: string
-  }[]
-  range: string
-  notes: string[]
-}
+    symbol: string;
+    name: string | null;
+    currency: string | null;
+    exchange: string | null;
+    timezone: string | null;
+    source: string;
+    fetched_at: string;
+  }[];
+  range: string;
+  notes: string[];
+};
 
-export function fetchComparison(symbols: string[], range = '5y'): Promise<CompareResponse> {
+export function fetchComparison(
+  symbols: string[],
+  range = "5y",
+): Promise<CompareResponse> {
   return request<CompareResponse>(
-    `/api/v1/compare?symbols=${encodeURIComponent(symbols.join(','))}&range=${range}`,
-  )
+    `/api/v1/compare?symbols=${encodeURIComponent(symbols.join(","))}&range=${range}`,
+  );
 }
 
 /** The current time, refreshed every `everyMs`. */
 export function useNow(everyMs: number): number {
-  const [now, setNow] = useState(() => Date.now())
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), everyMs)
-    return () => window.clearInterval(id)
-  }, [everyMs])
-  return now
+    const id = window.setInterval(() => setNow(Date.now()), everyMs);
+    return () => window.clearInterval(id);
+  }, [everyMs]);
+  return now;
 }
 
 /** The deposit rate to compare with (a year, as a fraction), remembered per browser. */
-export const DEFAULT_FD_RATE = 0.07
+export const DEFAULT_FD_RATE = 0.07;
 
 export function useFdRate(): [number, (rate: number) => void] {
   const [rate, setRate] = useState<number>(() => {
     try {
-      const saved = Number(window.localStorage.getItem('fd-rate'))
-      return saved > 0 && saved < 0.5 ? saved : DEFAULT_FD_RATE
+      const saved = Number(window.localStorage.getItem("fd-rate"));
+      return saved > 0 && saved < 0.5 ? saved : DEFAULT_FD_RATE;
     } catch {
-      return DEFAULT_FD_RATE
+      return DEFAULT_FD_RATE;
     }
-  })
+  });
   const update = (next: number) => {
-    setRate(next)
+    setRate(next);
     try {
-      window.localStorage.setItem('fd-rate', String(next))
+      window.localStorage.setItem("fd-rate", String(next));
     } catch {
       // Not remembered in private windows; the page still works.
     }
-  }
-  return [rate, update]
+  };
+  return [rate, update];
 }

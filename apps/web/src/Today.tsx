@@ -5,6 +5,7 @@ import { useState } from "react";
 import {
   type TodayItem,
   describeApiError,
+  useBrief,
   useDesk,
   useFdRate,
   useNow,
@@ -407,6 +408,49 @@ function AiTheme({ items }: { items: TodayItem[] }) {
   );
 }
 
+/** The morning brief: written from the app's numbers, worded by Gemini when every number checks out. */
+function Brief() {
+  const brief = useBrief();
+  if (!brief.data) {
+    return (
+      <section className="panel chart-panel" aria-labelledby="brief-heading">
+        <h3 id="brief-heading">Morning brief</h3>
+        <p className="quiet-copy">
+          {brief.error ? "No brief right now." : "Writing the morning brief…"}
+        </p>
+      </section>
+    );
+  }
+  const { writer, note, sections } = brief.data;
+  return (
+    <section
+      className="panel chart-panel"
+      aria-labelledby="brief-heading"
+      data-testid="brief"
+    >
+      <div className="section-heading">
+        <h3 id="brief-heading">Morning brief</h3>
+        <span className="status-chip tone-neutral">
+          {writer === "template"
+            ? "Written from the app's numbers"
+            : `Worded by ${writer} from the app's numbers`}
+        </span>
+      </div>
+      {note ? <p className="quiet-copy">{note}</p> : null}
+      {sections.map((s) => (
+        <div key={s.title}>
+          <h4 className="advice-subhead">{s.title}</h4>
+          <ul className="plain-list">
+            {s.bullets.map((b) => (
+              <li key={b}>{b}</li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 function Mix({ items }: { items: TodayItem[] }) {
   const usable = items.filter((i) => !i.error && (i.vol_annual ?? 0) > 0);
   const [picked, setPicked] = useState<string[]>([
@@ -513,6 +557,7 @@ export function Today() {
           {notice}
         </p>
       </section>
+      <Brief />
       <BestMoves items={items} />
       <CallsSection items={items} />
       <ScanTable items={items} />
