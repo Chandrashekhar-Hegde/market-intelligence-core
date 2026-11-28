@@ -13,7 +13,8 @@ pub struct Open(pub String);
 
 pub struct TodayView {
     items: Option<Result<Vec<api::TodayItem>, String>>,
-    _task: Task<()>,
+    brief: Option<Result<api::Brief, String>>,
+    _tasks: [Task<()>; 2],
 }
 
 impl EventEmitter<Open> for TodayView {}
@@ -37,9 +38,85 @@ impl TodayView {
             })
             .ok();
         });
+        let brief = cx.spawn(async move |this, cx| {
+            let brief = cx.background_executor().spawn(async { api::brief() }).await;
+            this.update(cx, |v, cx| {
+                v.brief = Some(brief);
+                cx.notify();
+            })
+            .ok();
+        });
         Self {
             items: None,
-            _task: task,
+            brief: None,
+            _tasks: [task, brief],
+        }
+    }
+}
+
+impl TodayView {
+    fn brief_card(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
+        let t = cx.theme();
+        let (muted, border, blue) = (t.muted_foreground, t.border, t.blue);
+        let card = v_flex()
+            .mt_4()
+            .p_4()
+            .gap_2()
+            .rounded_md()
+            .border_1()
+            .border_color(border);
+        match &self.brief {
+            None => card.child(div().text_color(muted).child("Writing the morning brief…")),
+            Some(Err(e)) => card.child(
+                div()
+                    .text_color(muted)
+                    .child(SharedString::from(format!("No brief: {e}"))),
+            ),
+            Some(Ok(b)) => {
+                let by = if b.writer == "template" {
+                    "Written from the app's numbers".to_string()
+                } else {
+                    format!("Worded by {} from the app's numbers", b.writer)
+                };
+                let mut card = card.child(
+                    h_flex()
+                        .gap_3()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_lg()
+                                .font_weight(FontWeight::BOLD)
+                                .child("Morning brief"),
+                        )
+                        .child(
+                            div()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(blue)
+                                .text_color(gpui_kit::white())
+                                .text_xs()
+                                .child(by),
+                        ),
+                );
+                if let Some(note) = &b.note {
+                    card = card.child(div().text_xs().text_color(muted).child(note.clone()));
+                }
+                card.children(b.sections.iter().map(|s| {
+                    v_flex()
+                        .mt_1()
+                        .child(
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(s.title.clone()),
+                        )
+                        .children(
+                            s.bullets
+                                .iter()
+                                .map(|b| div().text_sm().child(format!("• {b}"))),
+                        )
+                }))
+            }
         }
     }
 }
@@ -70,7 +147,9 @@ impl Render for TodayView {
             }
             Some(Ok(items)) => items.clone(),
         };
-        crate::ready(window, cx, "today");
+        if self.brief.is_some() {
+            crate::ready(window, cx, "today");
+        }
         let ok: Vec<&api::TodayItem> = items.iter().filter(|i| i.error.is_none()).collect();
         let pick = |wanted: &[Action]| {
             ok.iter()
@@ -95,7 +174,10 @@ impl Render for TodayView {
             ("New money for 3+ years".into(), pick(&[Action::Sip])),
         ];
         sections.retain(|(_, rows)| !rows.is_empty());
-        let mut list = v_flex().max_w(px(1100.)).child(header);
+        let mut list = v_flex()
+            .max_w(px(1100.))
+            .child(header)
+            .child(self.brief_card(cx));
         if !index_only.is_empty() {
             list = list.child(div().mt_4().p_3().rounded_md().bg(cx.theme().muted).child(format!(
                 "{} single stocks are calm and say the same thing: for new money, their market's index fund (NIFTY 50 or S&P 500) has the same expected growth with less risk; if you own them, keep them.",

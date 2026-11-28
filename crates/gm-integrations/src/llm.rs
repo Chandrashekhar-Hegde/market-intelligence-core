@@ -71,6 +71,8 @@ pub struct LlmReader {
     /// in full batches, so many small callers don't each spend a request of a daily quota.
     queue: Arc<Mutex<std::collections::VecDeque<(bool, String)>>>,
     worker: Arc<std::sync::atomic::AtomicBool>,
+    /// Which of the comma-separated keys is in use (see `keys`).
+    key_index: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[derive(Deserialize)]
@@ -224,6 +226,7 @@ impl LlmReader {
             last_error: Arc::default(),
             queue: Arc::default(),
             worker: Arc::default(),
+            key_index: Arc::default(),
         }
     }
 
@@ -244,6 +247,27 @@ impl LlmReader {
             .map(|(i, t)| format!("{}. {t}", i + 1))
             .collect::<Vec<_>>()
             .join("\n");
+        self.complete(system, &numbered).await
+    }
+
+    /// The keys in `api_key`, which may list several separated by commas: when one is refused
+    /// for its daily limit, the next is used (owner, 28 Nov 2026: two free Gemini keys).
+    fn keys(&self) -> Vec<&str> {
+        self.config
+            .api_key
+            .as_deref()
+            .map(|k| {
+                k.split(',')
+                    .map(str::trim)
+                    .filter(|k| !k.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// One chat completion: `system` instructions, `user` message; returns the reply text.
+    pub async fn complete(&self, system: &str, user: &str) -> Result<String, ProviderError> {
+        use std::sync::atomic::Ordering;
         let url = format!(
             "{}/chat/completions",
             self.config.base_url.trim_end_matches('/')
@@ -253,17 +277,17 @@ impl LlmReader {
             "temperature": 0,
             "messages": [
                 { "role": "system", "content": system },
-                { "role": "user", "content": numbered },
+                { "role": "user", "content": user },
             ],
         });
-        let mut last_error = String::new();
-        for attempt in 0..2 {
-            if attempt > 0 {
-                tokio::time::sleep(Duration::from_secs(4)).await;
-            }
+        let keys = self.keys();
+        let mut retried = false;
+        let mut switched = 0;
+        loop {
             let mut request = self.http.post(&url).json(&body);
-            if let Some(key) = &self.config.api_key {
-                request = request.bearer_auth(key);
+            if !keys.is_empty() {
+                let i = self.key_index.load(Ordering::SeqCst) % keys.len();
+                request = request.bearer_auth(keys[i]);
             }
             let response = request
                 .send()
@@ -285,12 +309,20 @@ impl LlmReader {
                     .ok_or_else(|| ProviderError::Unavailable("llm reply has no choices".into()));
             }
             // Gemini wraps errors in an array; others send an object. Keep the message either way.
-            last_error = format!("llm status {status}: {}", error_message(&text));
-            if !(status.as_u16() == 429 || status.as_u16() == 503) {
-                break;
+            let last_error = format!("llm status {status}: {}", error_message(&text));
+            let daily = status.as_u16() == 429 && last_error.contains("per day");
+            if daily && switched + 1 < keys.len() {
+                // This key is spent for the day: move everyone to the next one.
+                self.key_index.fetch_add(1, Ordering::SeqCst);
+                switched += 1;
+                continue;
             }
+            if retried || daily || !(status.as_u16() == 429 || status.as_u16() == 503) {
+                return Err(ProviderError::Unavailable(last_error));
+            }
+            retried = true;
+            tokio::time::sleep(Duration::from_secs(4)).await;
         }
-        Err(ProviderError::Unavailable(last_error))
     }
 
     /// Company readings for `titles`, in order. Cached titles are not sent again.

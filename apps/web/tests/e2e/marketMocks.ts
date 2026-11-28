@@ -177,6 +177,16 @@ export async function mockMarketData(page: Page, { liveTicks = false } = {}) {
   })
   await page.route('**/api/v1/desk**', (route) => route.fulfill({ json: deskResponse() }))
   await page.route('**/api/v1/today**', (route) => route.fulfill({ json: todayResponse() }))
+  await page.route('**/api/v1/brief**', (route) =>
+    route.fulfill({
+      json: {
+        as_of: '2026-11-28T08:00:00Z',
+        writer: 'template',
+        note: null,
+        sections: [{ title: 'Do now', bullets: ['Nothing to change today.'] }],
+      },
+    }),
+  )
   await page.route('**/api/v1/compare**', (route) => {
     const symbols = (new URL(route.request().url()).searchParams.get('symbols') ?? '').split(',')
     return route.fulfill({ json: comparison(symbols) })

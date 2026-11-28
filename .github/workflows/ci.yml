@@ -50,3 +50,24 @@ jobs:
         working-directory: apps/web
       - name: Docker build
         run: docker build -t market-intelligence-core:ci .
+
+  # The native desktop app (GPUI) is its own workspace and toolchain (apps/desktop/rust-toolchain.toml);
+  # it is built where GPUI's Metal backend lives. Free for public repositories.
+  desktop:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v5
+      - name: Toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop
+      - name: Format
+        run: cargo fmt -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test

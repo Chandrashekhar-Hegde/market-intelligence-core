@@ -34,7 +34,7 @@ else
 fi
 
 # The desktop app (GPUI) is its own workspace with its own toolchain (rust-toolchain.toml).
-# GPUI needs a display stack; CI doesn't build it yet, so this runs where one exists (macOS).
+# GPUI needs a display stack: this runs on macOS here, and CI runs it on a macOS runner.
 if [ "$(uname)" = Darwin ]; then
   step "Desktop app (GPUI): format, clippy, tests"
   (cd apps/desktop && cargo fmt -- --check && cargo clippy --all-targets -- -D warnings && cargo test)

@@ -241,6 +241,17 @@ assert len(items) >= 60 and len(failed) <= 5, (len(items), failed)
 print(f"  today: {len(items)} instruments, {len(failed)} unavailable, calls: {', '.join(calls) or 'none'}")
 PY
 
+  # Morning brief: five sections, written by the template or worded by the model.
+  curl -fsS --max-time 180 "$BASE_URL/api/v1/brief" -o /tmp/gm_brief.json
+  python3 - /tmp/gm_brief.json <<'PY'
+import json, sys
+b = json.load(open(sys.argv[1]))
+titles = [s["title"] for s in b["sections"]]
+assert titles == ["Do now", "Invest in (3+ years)", "Flagged / going bad", "Get out now / get in now", "1 day · 3 days · day trading"], titles
+assert all(s["bullets"] for s in b["sections"]), b["sections"]
+print(f"  brief: written by {b['writer']}{' (' + b['note'] + ')' if b.get('note') else ''}; do now: {b['sections'][0]['bullets'][0][:80]}")
+PY
+
   # Calibration run: reports whether it is recording, and if so what it holds.
   curl -fsS "$BASE_URL/api/v1/calibration" -o /tmp/gm_calibration.json
   python3 - /tmp/gm_calibration.json <<'PY'
