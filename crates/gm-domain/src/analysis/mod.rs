@@ -10,6 +10,7 @@ pub mod multi;
 pub mod news;
 pub mod news_reader;
 pub mod numeric;
+pub mod plain;
 pub mod predictability;
 pub mod risk;
 pub mod signals;

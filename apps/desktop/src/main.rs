@@ -1,139 +1,205 @@
-//! Spike: one window with NIFTY 50's candles and its analysis, from the same API the web app uses.
-use gpui_kit::component::{ActiveTheme, chart::CandlestickChart, h_flex, v_flex};
-use gpui_kit::{
-    AppContext as _, Context, FontWeight, IntoElement, ParentElement as _, Render, SharedString,
-    Styled as _, Window, WindowOptions, div, px,
+//! Market Intelligence, native: Today's actions, one instrument in plain words, the news desk.
+//! Talks to the same API as the web app; every word on screen comes from `gm_domain`.
+mod api;
+mod fmt;
+mod instrument;
+mod news;
+mod today;
+
+use gpui_kit::component::{
+    ActiveTheme, Selectable as _,
+    button::{Button, ButtonVariants as _},
+    h_flex, v_flex,
 };
-use serde::Deserialize;
+use gpui_kit::{
+    AppContext as _, Bounds, Context, Entity, FontWeight, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Window, WindowBounds,
+    WindowOptions, div, px, size,
+};
 
-const DEFAULT_API: &str = "https://gm-api-production-911a7e90.up.railway.app";
+use gm_domain::analysis::plain::Action;
 
-#[derive(Clone, Deserialize)]
-struct Bar {
-    date: String,
-    open: f64,
-    high: f64,
-    low: f64,
-    close: f64,
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Screen {
+    Today,
+    Instrument,
+    News,
 }
 
-struct Loaded {
-    symbol: String,
-    bars: Vec<Bar>,
-    findings: Vec<String>,
+struct Shell {
+    screen: Screen,
+    today: Entity<today::TodayView>,
+    instrument: Entity<instrument::InstrumentView>,
+    news: Entity<news::NewsView>,
 }
 
-fn get(path: &str) -> Result<serde_json::Value, String> {
-    let base = std::env::var("GM_API_URL").unwrap_or_else(|_| DEFAULT_API.into());
-    let mut req = ureq::get(format!("{base}{path}"));
-    if let Ok(token) = std::env::var("GM_ACCESS_TOKEN") {
-        req = req.header("Authorization", format!("Bearer {token}"));
-    }
-    req.call()
-        .map_err(|e| e.to_string())?
-        .body_mut()
-        .read_json()
-        .map_err(|e| e.to_string())
-}
-
-fn load(symbol: &str) -> Result<Loaded, String> {
-    let s = symbol.replace('^', "%5E");
-    let bars = get(&format!("/api/v1/bars?symbol={s}&range={}", std::env::var("GM_RANGE").unwrap_or_else(|_| "1y".into())))?;
-    let bars: Vec<Bar> = serde_json::from_value(bars["chart"]["bars"].clone()).map_err(|e| e.to_string())?;
-    let analysis = get(&format!("/api/v1/analyze?symbol={s}&range=10y"))?;
-    let findings = serde_json::from_value(analysis["report"]["findings"].clone()).unwrap_or_default();
-    Ok(Loaded { symbol: symbol.into(), bars, findings })
-}
-
-struct Spike {
-    state: Option<Result<Loaded, String>>,
-}
-
-impl Spike {
-    fn new(cx: &mut Context<Self>) -> Self {
-        cx.spawn(async move |this, cx| {
-            let loaded = cx.background_executor().spawn(async { load("^NSEI") }).await;
-            this.update(cx, |view, cx| {
-                view.state = Some(loaded);
-                cx.notify();
-            })
-            .ok();
+impl Shell {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let today = cx.new(today::TodayView::new);
+        let instrument = cx.new(|cx| instrument::InstrumentView::new(window, cx));
+        let news = cx.new(news::NewsView::new);
+        cx.subscribe(&today, |this, _, open: &today::Open, cx| {
+            this.screen = Screen::Instrument;
+            let symbol = open.0.clone();
+            this.instrument.update(cx, |view, cx| view.load(symbol, cx));
+            cx.notify();
         })
         .detach();
-        Self { state: None }
-    }
-}
-
-impl Render for Spike {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = match &self.state {
-            None => div().child("Loading NIFTY 50…").into_any_element(),
-            Some(Err(e)) => div().child(SharedString::from(format!("Could not load: {e}"))).into_any_element(),
-            Some(Ok(data)) => {
-                #[cfg(feature = "screenshot")]
-                screenshot_once(window);
-                let last = data.bars.last().map(|b| b.close).unwrap_or_default();
-                v_flex()
-                    .gap_3()
-                    .size_full()
-                    .child(
-                        h_flex()
-                            .gap_3()
-                            .child(div().text_xl().font_weight(FontWeight::BOLD).child(data.symbol.clone()))
-                            .child(div().text_xl().child(format!("{last:.2}"))),
-                    )
-                    .child(
-                        div().h(px(360.)).child(
-                            CandlestickChart::new(data.bars.clone())
-                                .x(|b| b.date.clone())
-                                .open(|b| b.open)
-                                .high(|b| b.high)
-                                .low(|b| b.low)
-                                .close(|b| b.close)
-                                .tick_margin((data.bars.len() / 6).max(1))
-                                .tooltip_value(|_, _, v| format!("{v:.2}").into())
-                                .appear(false)
-                        ),
-                    )
-                    .child(div().font_weight(FontWeight::BOLD).child("What the data says"))
-                    .children(data.findings.iter().take(6).map(|f| div().text_sm().child(f.clone())))
-                    .into_any_element()
-            }
+        let screen = match std::env::var("GM_DESKTOP_SCREEN").as_deref() {
+            Ok("instrument") => Screen::Instrument,
+            Ok("news") => Screen::News,
+            _ => Screen::Today,
         };
-        let _ = window;
-        div()
-            .size_full()
-            .p_4()
-            .bg(cx.theme().background)
-            .text_color(cx.theme().foreground)
-            .child(body)
+        Self {
+            screen,
+            today,
+            instrument,
+            news,
+        }
+    }
+
+    fn nav(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        screen: Screen,
+        cx: &mut Context<Self>,
+    ) -> Button {
+        Button::new(id)
+            .label(label)
+            .ghost()
+            .selected(self.screen == screen)
+            .w_full()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.screen = screen;
+                cx.notify();
+            }))
     }
 }
 
+impl Render for Shell {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let (bg, fg, sidebar, border) = (
+            theme.background,
+            theme.foreground,
+            theme.sidebar,
+            theme.sidebar_border,
+        );
+        h_flex()
+            .size_full()
+            .bg(bg)
+            .text_color(fg)
+            .child(
+                v_flex()
+                    .w(px(190.))
+                    .h_full()
+                    .p_3()
+                    .gap_1()
+                    .bg(sidebar)
+                    .border_r_1()
+                    .border_color(border)
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Internal"),
+                    )
+                    .child(
+                        div()
+                            .font_weight(FontWeight::BOLD)
+                            .mb_3()
+                            .child("Market Intelligence"),
+                    )
+                    .child(self.nav("nav-today", "Today", Screen::Today, cx))
+                    .child(self.nav("nav-instrument", "Instrument", Screen::Instrument, cx))
+                    .child(self.nav("nav-news", "News desk", Screen::News, cx)),
+            )
+            .child(
+                div()
+                    .id("content")
+                    .flex_1()
+                    .h_full()
+                    .overflow_y_scroll()
+                    .p_6()
+                    .child(match self.screen {
+                        Screen::Today => self.today.clone().into_any_element(),
+                        Screen::Instrument => self.instrument.clone().into_any_element(),
+                        Screen::News => self.news.clone().into_any_element(),
+                    }),
+            )
+    }
+}
+
+/// A coloured label for an action.
+pub fn action_chip(action: Action, cx: &gpui_kit::App) -> gpui_kit::Div {
+    let t = cx.theme();
+    let (bg, label) = match action {
+        Action::Buy => (t.green, "Buy"),
+        Action::Sip => (t.green, "SIP"),
+        Action::Keep => (t.green, "Keep"),
+        Action::Sell => (t.red, "Sell"),
+        Action::Trim => (t.yellow, "Trim"),
+        Action::IndexInstead => (t.blue, "Index fund"),
+        Action::Fd => (t.muted_foreground, "FD as good"),
+        Action::Watch => (t.muted_foreground, "Watch"),
+    };
+    div()
+        .px_2()
+        .py_0p5()
+        .rounded_md()
+        .bg(bg)
+        .text_color(gpui_kit::white())
+        .text_xs()
+        .font_weight(FontWeight::BOLD)
+        .child(label)
+}
+
+/// Screenshot mode: once the chosen screen has its data, render that frame to a PNG and quit.
 #[cfg(feature = "screenshot")]
-fn screenshot_once(window: &mut Window) {
+pub fn ready(window: &mut Window, screen: &str) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static DONE: AtomicBool = AtomicBool::new(false);
-    let Ok(path) = std::env::var("GM_DESKTOP_SCREENSHOT") else { return };
-    if DONE.swap(true, Ordering::SeqCst) {
+    let wanted = std::env::var("GM_DESKTOP_SCREEN").unwrap_or_else(|_| "today".into());
+    let Ok(path) = std::env::var("GM_DESKTOP_SCREENSHOT") else {
+        return;
+    };
+    if wanted != screen || DONE.swap(true, Ordering::SeqCst) {
         return;
     }
-    // Two frames on: the chart's draw-in animation has settled by then.
-    window.on_next_frame(move |window, _| {
-        window.on_next_frame(move |window, cx| {
-            match window.render_to_image() {
-                Ok(img) => img.save(&path).map_or_else(|e| eprintln!("save: {e}"), |_| eprintln!("saved {path}")),
-                Err(e) => eprintln!("render_to_image: {e}"),
-            }
-            cx.quit();
-        });
+    // The frame with the data is drawn by the time the next frame is due; charts are drawn
+    // without their entry animation, so it is the final picture.
+    window.on_next_frame(move |window, cx| {
+        match window.render_to_image() {
+            Ok(img) => img
+                .save(&path)
+                .map_or_else(|e| eprintln!("save: {e}"), |_| eprintln!("saved {path}")),
+            Err(e) => eprintln!("render_to_image: {e}"),
+        }
+        cx.quit();
     });
 }
 
+#[cfg(not(feature = "screenshot"))]
+pub fn ready(_: &mut Window, _: &str) {}
+
 fn main() {
-    gpui_kit::application().with_assets(gpui_kit::assets::Assets).run(|cx| {
-        gpui_kit::init(cx);
-        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(Spike::new))
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        .run(|cx| {
+            gpui_kit::init(cx);
+            let height = std::env::var("GM_DESKTOP_HEIGHT")
+                .ok()
+                .and_then(|h| h.parse().ok())
+                .unwrap_or(900.0);
+            let bounds = Bounds::centered(None, size(px(1360.), px(height)), cx);
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            };
+            gpui_kit::open_window(options, cx, |window, cx| {
+                cx.new(|cx| Shell::new(window, cx))
+            })
             .expect("failed to open window");
-    });
+        });
 }

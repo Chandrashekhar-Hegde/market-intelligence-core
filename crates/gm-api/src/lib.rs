@@ -836,6 +836,23 @@ struct AnalyzeQuery {
     benchmark: Option<String>,
     seed: Option<u64>,
     paths: Option<usize>,
+    /// Fixed-deposit rate a year the long-term answer compares with (default `DEPOSIT_RATE`).
+    fd: Option<f64>,
+}
+
+/// How the plain-words module should treat an instrument.
+fn plain_kind(
+    instrument_type: Option<&str>,
+    name: Option<&str>,
+) -> gm_domain::analysis::plain::Kind {
+    use gm_domain::analysis::plain::Kind;
+    if instrument_type == Some("CURRENCY") {
+        Kind::Currency
+    } else if is_single_stock(instrument_type, name) {
+        Kind::SingleStock
+    } else {
+        Kind::Other
+    }
 }
 
 /// Full single-instrument analysis for any symbol Yahoo knows: distribution, predictability,
@@ -995,8 +1012,19 @@ async fn analyze_instrument(
         )),
         _ => None,
     };
+    let fd = query
+        .fd
+        .filter(|r| (0.0..0.5).contains(r))
+        .unwrap_or(gm_domain::analysis::DEPOSIT_RATE);
+    let plain = gm_domain::analysis::plain::plain(
+        &report,
+        advice.as_ref(),
+        fd,
+        plain_kind(meta.instrument_type.as_deref(), meta.name.as_deref()),
+    );
     Ok(Json(serde_json::json!({
         "report": report,
+        "plain": plain,
         "signals": signals,
         "advice": advice,
         "signals_note": signals_note,
@@ -2717,7 +2745,8 @@ async fn openapi() -> Json<serde_json::Value> {
                         { "name": "range", "in": "query", "required": false, "schema": { "type": "string", "default": "5y" } },
                         { "name": "benchmark", "in": "query", "required": false, "description": "auto (home-market index, S&P 500 for US, MSCI ACWI otherwise), none, or a symbol", "schema": { "type": "string", "default": "auto" } },
                         { "name": "seed", "in": "query", "required": false, "schema": { "type": "integer", "default": 42 } },
-                        { "name": "paths", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 100, "maximum": 20000, "default": 2000 } }
+                        { "name": "paths", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 100, "maximum": 20000, "default": 2000 } },
+                        { "name": "fd", "in": "query", "required": false, "description": "Fixed-deposit rate a year that plain.answers compares with", "schema": { "type": "number", "minimum": 0, "maximum": 0.5, "default": 0.07 } }
                     ],
                     "responses": {
                         "200": { "description": "report (distribution, predictability, volatility, projections, risk, benchmark exposure, findings), data provenance and quality, benchmark choice" },
@@ -4213,6 +4242,13 @@ mod tests {
         assert!(report["distribution"]["vol_annual"].as_f64().unwrap() > 0.0);
         assert!(report["predictability"]["ljung_box_returns"]["p_value"].is_number());
         assert!(!report["findings"].as_array().unwrap().is_empty());
+        // Plain words: three answers and an action, never a bare "Hold".
+        assert_eq!(
+            body["plain"]["answers"].as_array().unwrap().len(),
+            3,
+            "{body}"
+        );
+        assert_ne!(body["plain"]["headline"], "Hold");
         // 247 returns is below GARCH's 250 minimum: EWMA and GBM only, said plainly.
         assert!(report["volatility"]["garch"].is_null());
         assert!(

@@ -23,6 +23,9 @@ The owner asked for no unexplained hardcoded numbers (27 Nov 2026). Each constan
 | `OHLC_TOLERANCE` | 1e-6 | Engineering | Vendors round prices to the tick |
 | `BAD_PRINT_JUMP` | ln 2 | Market fact | A halving or doubling in a day is beyond every exchange band read (NSE: 20%) |
 | `BAD_PRINT_MAX_RUN` | 5 | Fitted | The longest vendor bad-print runs seen in Yahoo data: 2 days (GOLDBEES 2019, MON100 2021); 5 leaves room |
+| `SPLIT_RATIOS` | 1:2, 1:3, 1:4, 1:5, 1:10 splits, 1:2 bonus, reverse | Market fact | The share-split and bonus ratios Indian and US companies use |
+| `SPLIT_TOLERANCE` | 0.03 (log) | Judgement | A normal day's move on top of the split ratio |
+| `SPLIT_MIN_JUMP` | 0.37 (log) | Market fact | Beyond NSE's 20% daily band; a 1:2 bonus (2/3) still qualifies |
 
 ## Distribution, volatility, risk, forecasts
 | Constant | Value | Kind | Basis |
@@ -49,6 +52,14 @@ The owner asked for no unexplained hardcoded numbers (27 Nov 2026). Each constan
 | `GARCH_REFIT_EVERY` | 63 | Convention | "Refit quarterly, filter daily" practice |
 | `HISTORICAL_WINDOW` | 500 | Convention | Two-year historical-simulation window |
 | `QUANTILES` (validation) | 1, 5, 25, 50, 75, 95, 99% | Convention | Pinball grid; 1% and 5% double as VaR levels |
+
+| `RANGE_PERCENTILES` | 5, 25, 50, 75, 95 | Convention | The usual 90% interval plus the middle half. The 5–95 band built from past stretches held 90 in 100 at 1 week, 89 at 1 month and 86 at 3 months on the NIFTY 50 (walk-forward, `scripts/research/range_check.py`) |
+
+## Plain words (`plain.rs`)
+| Constant | Value | Kind | Basis |
+|---|---|---|---|
+| `KEEP_ABOVE` | 95% | Judgement | Below a 5% change of size, "trim" isn't worth a trade (costs 0.25% round trip) |
+| `FIRM`, `LEAN` | 80, 60 in 100 | Judgement (owner decision, 27 Nov 2026) | "Buy and hold" needs 80 in 100 of beating the FD over 3 years; 60 to 80 is a SIP |
 
 ## Trading rules (`signals.rs`)
 | Constant | Value | Kind | Basis |

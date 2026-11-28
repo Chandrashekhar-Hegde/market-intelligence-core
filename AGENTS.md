@@ -62,6 +62,8 @@ crates/
                       access gate, CORS, legacy fixture routes (/events, /payments/*; /decide answers 410)
   gm-persistence/     Postgres (optional; nothing in the market path needs it yet)
   gm-worker/          migration CLI
+apps/desktop/         native desktop app (Rust, GPUI via gpui-kit 0.11); its own workspace and
+                      toolchain (Rust 1.100.1, rust-toolchain.toml); reads the same API
 apps/web/             React + Vite + TanStack Query + lightweight-charts
   src/Markets.tsx     home view: search, live quote, candles, quality, TradingView widget
   src/Analysis.tsx    analysis panels (findings, fan, risk, volatility, validation, tests, beta)
@@ -124,6 +126,8 @@ Production-like (one origin, gated): build the web app with `VITE_API_BASE_URL=`
 | Smoke production | `BASE_URL=https://gm-api-production-911a7e90.up.railway.app GM_ACCESS_TOKEN=$(railway variable list --service gm-api --json \| jq -r .GM_ACCESS_TOKEN) scripts/smoke_api.sh` |
 | Measure NSE stream lag (09:15–15:30 IST) | `LIVE_STREAM_SYMBOL=RELIANCE.NS cargo test -p gm-integrations -- --ignored live_stream --nocapture` |
 | Backfill news history, then load it into production | `cargo run --release -p gm-api --bin backfill_news -- <dir>`, then `backfill_news read <dir>` (needs `GM_LLM_*`), then `BASE_URL=… GM_ACCESS_TOKEN=… scripts/upload_backfill.sh <dir>` |
+| Desktop app against production | `cd apps/desktop && GM_ACCESS_TOKEN=$(railway variable list --service gm-api --json \| jq -r .GM_ACCESS_TOKEN) cargo run --release` (`GM_API_URL` for a local API) |
+| Desktop screenshot (no screen-recording permission needed) | `cargo run --release --features screenshot` with `GM_DESKTOP_SCREEN=today\|instrument\|news`, `GM_DESKTOP_SYMBOL`, `GM_DESKTOP_SCREENSHOT=out.png` |
 | Regenerate analysis references | `uv venv .refenv && VIRTUAL_ENV=.refenv uv pip install numpy scipy statsmodels arch pandas && .refenv/bin/python scripts/gen_reference.py` |
 
 ## Workflow (how work lands)

@@ -117,6 +117,17 @@ export function AnalysisPanels({
 
 const STANCE_LABEL = { buy: 'Buy', sell: 'Sell / stay out', hold: 'Hold' } as const
 const STANCE_TONE = { buy: 'green', sell: 'red', hold: 'neutral' } as const
+/** Reuses the stance colours: green to add, red to cut, neutral otherwise. */
+const ACTION_TONE: Record<NonNullable<AnalyzeResponse['plain']>['action'], 'buy' | 'sell' | 'hold'> = {
+  buy: 'buy',
+  sip: 'buy',
+  keep: 'buy',
+  sell: 'sell',
+  trim: 'sell',
+  index_instead: 'hold',
+  fd: 'hold',
+  watch: 'hold',
+}
 const BASIS_CHIP: Record<Advice['basis'], string> = {
   proven: 'Backed by a proven rule',
   conflict: 'Rules disagree',
@@ -151,7 +162,7 @@ function bestChance(signal: Signal): number | null {
 
 /** Buy / Sell / Hold, only from rules that have worked on this instrument, with the evidence. */
 function AdviceCard({ analysis, livePrice }: { analysis: AnalyzeResponse; livePrice: number | null }) {
-  const { advice, signals, signals_note: note, data } = analysis
+  const { advice, signals, signals_note: note, data, plain } = analysis
   const [maxLoss, setMaxLoss] = useState(500)
   const [fdRate, setFdRate] = useFdRate()
   const lossId = useId()
@@ -175,16 +186,22 @@ function AdviceCard({ analysis, livePrice }: { analysis: AnalyzeResponse; livePr
         <div>
           <p className="eyebrow">What to do · tested on {signals.n_days.toLocaleString('en-IN')} trading days</p>
           <h3 id="advice-heading">
-            <span className={`stance stance-${advice.stance}`} data-testid="stance">
-              {STANCE_LABEL[advice.stance]}
-            </span>
+            {plain ? (
+              <span className={`stance stance-${ACTION_TONE[plain.action]}`} data-testid="stance">
+                {plain.headline}
+              </span>
+            ) : (
+              <span className={`stance stance-${advice.stance}`} data-testid="stance">
+                {STANCE_LABEL[advice.stance]}
+              </span>
+            )}
           </h3>
         </div>
         <span className={`status-chip tone-${STANCE_TONE[advice.stance]}`}>
           {BASIS_CHIP[advice.basis]}
         </span>
       </div>
-      <p className="advice-headline">{advice.headline}</p>
+      {plain ? null : <p className="advice-headline">{advice.headline}</p>}
       {advice.news_headlines.length > 0 ? (
         <div className="news-behind" data-testid="news-behind">
           <p>
@@ -206,18 +223,31 @@ function AdviceCard({ analysis, livePrice }: { analysis: AnalyzeResponse; livePr
         </div>
       ) : null}
       <dl className="guidance" data-testid="guidance">
-        <div>
-          <dt>Investing for 3+ years</dt>
-          <dd data-testid="answer-long">{longTermAnswer(analysis, fdRate) ?? guidance.buyer}</dd>
-        </div>
-        <div>
-          <dt>If you already own it</dt>
-          <dd data-testid="answer-owner">{ownerAnswer(analysis, maxLoss)}</dd>
-        </div>
-        <div>
-          <dt>Trading in the next days or weeks</dt>
-          <dd data-testid="answer-trader">{traderAnswer(analysis)}</dd>
-        </div>
+        {plain ? (
+          plain.answers.map((a, i) => (
+            <div key={a.question}>
+              <dt>{a.question}</dt>
+              <dd data-testid={['answer-long', 'answer-owner', 'answer-trader'][i]}>
+                <strong>{a.verdict}.</strong> {a.why}
+              </dd>
+            </div>
+          ))
+        ) : (
+          <>
+            <div>
+              <dt>Investing for 3+ years</dt>
+              <dd data-testid="answer-long">{longTermAnswer(analysis, fdRate) ?? guidance.buyer}</dd>
+            </div>
+            <div>
+              <dt>If you already own it</dt>
+              <dd data-testid="answer-owner">{ownerAnswer(analysis, maxLoss)}</dd>
+            </div>
+            <div>
+              <dt>Trading in the next days or weeks</dt>
+              <dd data-testid="answer-trader">{traderAnswer(analysis)}</dd>
+            </div>
+          </>
+        )}
       </dl>
       {trackRecordWords(analysis) ? (
         <div className="track-record" data-testid="track-record">
