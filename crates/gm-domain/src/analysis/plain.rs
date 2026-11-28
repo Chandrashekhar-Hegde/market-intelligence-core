@@ -131,6 +131,10 @@ pub fn keep_share(report: &AnalysisReport) -> Option<(f64, f64)> {
     (now > 0.0 && usual > 0.0).then(|| ((usual / now).min(1.0), now / usual))
 }
 
+/// What 10 years of NSE's own prices say about short trades (scripts/research/quant_study.py and
+/// news_next_day.py, 28 Nov 2026). Kept in one place so every short-term answer says the same.
+pub const SHORT_TERM_EVIDENCE: &str = "No tested rule beat trading costs here, from 1 day to 3 months. Across the NIFTY 50 over 10 years, buying at the open and selling at the close lost 0.17% a trade after costs; the best signal (buying stocks that opened lower) paid in 2019-21 but has faded below costs since 2022; and news, read by Gemini or the built-in reader, predicted nothing about the next day.";
+
 /// Above this share of the usual amount, "trim" would be a rounding error: say "keep".
 const KEEP_ABOVE: f64 = 0.95;
 /// The owner's bar for a firm long-term statement, and the softer SIP tier (27 Nov 2026).
@@ -229,11 +233,21 @@ pub fn plain(report: &AnalysisReport, advice: Option<&Advice>, fd_rate: f64, kin
             question: "Trading in the next days".into(),
             verdict: format!(
                 "{} for {}",
-                if a.stance == Stance::Buy { "Buy" } else { "Sell / stay out" },
-                a.horizon_days.map_or("the rule's period".into(), horizon_label)
+                if a.stance == Stance::Buy {
+                    "Buy"
+                } else {
+                    "Sell / stay out"
+                },
+                a.horizon_days
+                    .map_or("the rule's period".into(), horizon_label)
             ),
             why: match &a.confidence {
-                Some(c) => format!("{} Right {} over {} past calls.", a.headline, in_100(c.hit_rate), c.n),
+                Some(c) => format!(
+                    "{} Right {} over {} past calls.",
+                    a.headline,
+                    in_100(c.hit_rate),
+                    c.n
+                ),
                 None => a.headline.clone(),
             },
         },
@@ -245,7 +259,7 @@ pub fn plain(report: &AnalysisReport, advice: Option<&Advice>, fd_rate: f64, kin
         _ => Answer {
             question: "Trading in the next days".into(),
             verdict: "Don't trade it short term".into(),
-            why: "No tested rule beat the 0.25% trading cost here, from 1 day to 3 months; up or down over days is close to a coin toss.".into(),
+            why: SHORT_TERM_EVIDENCE.into(),
         },
     };
 
