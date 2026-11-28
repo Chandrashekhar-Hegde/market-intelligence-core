@@ -5,6 +5,7 @@
 pub mod distribution;
 pub mod long_run;
 pub mod macro_news;
+pub mod mix;
 pub mod montecarlo;
 pub mod multi;
 pub mod news;

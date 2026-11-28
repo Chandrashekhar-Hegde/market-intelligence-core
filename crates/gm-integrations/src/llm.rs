@@ -64,6 +64,13 @@ pub struct LlmReader {
     market_cache: Arc<Mutex<HashMap<String, MarketReading>>>,
     /// Titles queued or being read in the background, so none is sent twice.
     pending: Arc<Mutex<std::collections::HashSet<(bool, String)>>>,
+    /// Why the last background batch failed, cleared by the next success: the app says so
+    /// instead of silently showing the built-in reader.
+    last_error: Arc<Mutex<Option<String>>>,
+    /// Titles waiting for the model (market reading or company reading), drained by one worker
+    /// in full batches, so many small callers don't each spend a request of a daily quota.
+    queue: Arc<Mutex<std::collections::VecDeque<(bool, String)>>>,
+    worker: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Deserialize)]
@@ -214,11 +221,19 @@ impl LlmReader {
             cache: Arc::default(),
             market_cache: Arc::default(),
             pending: Arc::default(),
+            last_error: Arc::default(),
+            queue: Arc::default(),
+            worker: Arc::default(),
         }
     }
 
     pub fn model(&self) -> &str {
         &self.config.model
+    }
+
+    /// Why the model isn't reading right now, in plain words; None when the last batch worked.
+    pub fn trouble(&self) -> Option<String> {
+        self.last_error.lock().expect("error lock").clone()
     }
 
     /// One chat completion. Free tiers answer 429 or 503 under load: one retry after a pause.
@@ -328,48 +343,96 @@ impl LlmReader {
     /// Reads the titles not yet read in the background, paced, so no request waits for the
     /// model. `market` picks the market prompt. Failures are logged; the built-in reader covers.
     pub fn read_in_background(&self, titles: &[String], market: bool) {
-        let fresh: Vec<String> = {
+        use std::sync::atomic::Ordering;
+        {
             let done_company = self.cache.lock().expect("cache lock");
             let done_market = self.market_cache.lock().expect("cache lock");
             let mut pending = self.pending.lock().expect("pending lock");
-            titles
-                .iter()
-                .filter(|t| {
-                    let done = if market {
-                        done_market.contains_key(*t)
-                    } else {
-                        done_company.contains_key(*t)
-                    };
-                    !done && pending.insert((market, (*t).clone()))
-                })
-                .cloned()
-                .collect()
-        };
-        if fresh.is_empty() {
-            return;
+            let mut queue = self.queue.lock().expect("queue lock");
+            for t in titles {
+                let done = if market {
+                    done_market.contains_key(t)
+                } else {
+                    done_company.contains_key(t)
+                };
+                if !done && pending.insert((market, t.clone())) {
+                    queue.push_back((market, t.clone()));
+                }
+            }
+            if queue.is_empty() {
+                return;
+            }
+        }
+        if self.worker.swap(true, Ordering::SeqCst) {
+            return; // the worker running already will get to them
         }
         let reader = self.clone();
         tokio::spawn(async move {
-            for chunk in fresh.chunks(BATCH) {
+            loop {
+                // Up to BATCH titles of one kind (market or company) from the front of the queue.
+                let next: Option<(bool, Vec<String>)> = {
+                    let mut queue = reader.queue.lock().expect("queue lock");
+                    queue.front().map(|(m, _)| *m).map(|market| {
+                        let mut chunk = Vec::new();
+                        queue.retain(|(m, t)| {
+                            let take = *m == market && chunk.len() < BATCH;
+                            if take {
+                                chunk.push(t.clone());
+                            }
+                            !take
+                        });
+                        (market, chunk)
+                    })
+                };
+                let Some((market, chunk)) = next else {
+                    reader.worker.store(false, Ordering::SeqCst);
+                    // A caller may have queued titles after the queue was seen empty.
+                    let more = !reader.queue.lock().expect("queue lock").is_empty();
+                    if more && !reader.worker.swap(true, Ordering::SeqCst) {
+                        continue;
+                    }
+                    break;
+                };
+                let chunk = chunk.as_slice();
                 let result = if market {
                     reader.read_market(chunk).await.map(|_| ())
                 } else {
                     reader.read(chunk).await.map(|_| ())
                 };
-                if let Err(error) = result {
+                let trouble = result.as_ref().err().map(|error| {
+                    let text = error.to_string();
+                    if text.contains("429") && text.contains("per day") {
+                        DAILY_LIMIT.to_string()
+                    } else if text.contains("429") {
+                        "busy (rate limited); retrying shortly".to_string()
+                    } else {
+                        "unavailable just now".to_string()
+                    }
+                });
+                if let Err(error) = &result {
                     tracing::warn!(%error, market, "llm reader: batch failed; built-in reader covers it");
                 }
+                let wait = match trouble.as_deref() {
+                    Some(DAILY_LIMIT) => DAILY_LIMIT_BACKOFF,
+                    _ => reader.config.pace,
+                };
+                *reader.last_error.lock().expect("error lock") = trouble;
                 {
                     let mut pending = reader.pending.lock().expect("pending lock");
                     for t in chunk {
                         pending.remove(&(market, t.clone()));
                     }
                 }
-                tokio::time::sleep(reader.config.pace).await;
+                tokio::time::sleep(wait).await;
             }
         });
     }
 }
+
+const DAILY_LIMIT: &str = "over its free daily limit; it resets at 13:30 IST";
+/// After a "requests per day" refusal, wait this long before asking again rather than spending
+/// every retry on a closed quota.
+const DAILY_LIMIT_BACKOFF: Duration = Duration::from_secs(30 * 60);
 
 fn missing<T>(titles: &[String], cache: &Mutex<HashMap<String, T>>) -> Vec<String> {
     let cache = cache.lock().expect("cache lock");

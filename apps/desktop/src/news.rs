@@ -58,12 +58,12 @@ impl Render for NewsView {
             }
             Some(Ok(d)) => d.clone(),
         };
-        crate::ready(window, "news");
-        let reader = if desk.reader.starts_with("built-in") {
-            "Read by the built-in reader".to_string()
-        } else {
-            format!("Read by {}", desk.reader)
-        };
+        crate::ready(window, cx, "news");
+        // "built-in (gemini-… over its free daily limit; …)" says why the model isn't reading.
+        let reader = format!(
+            "Read by {}",
+            desk.reader.replacen("built-in", "the built-in reader", 1)
+        );
         let leaning: Vec<_> = desk.leans.iter().filter(|l| l.lean != 0).collect();
         v_flex()
             .max_w(px(1100.))

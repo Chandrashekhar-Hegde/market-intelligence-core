@@ -100,6 +100,11 @@ The owner asked for no unexplained hardcoded numbers (27 Nov 2026). Each constan
 | `MIN_COMMON_DAYS` | 120 | Convention | About six months in common before correlations are shown |
 | `ROLLING_WINDOW` | 63 | Product | Three-month rolling correlation |
 
+## Mix (`mix.rs`)
+| Constant | Value | Kind | Basis |
+|---|---|---|---|
+| `ERC_ITERATIONS` | 500 | Numerical | Fixed-point equal-risk iteration (Chaves, Hsu, Li & Shakernia 2012) converges in tens; a test checks contributions equal within 1% |
+
 ## Legacy and numerical
 | Constant | Value | Kind | Basis |
 |---|---|---|---|
@@ -109,6 +114,8 @@ The owner asked for no unexplained hardcoded numbers (27 Nov 2026). Each constan
 ## Outside the domain crate
 | Number | Value | Kind | Where and basis |
 |---|---|---|---|
+| `DAILY_LIMIT_BACKOFF` (`llm.rs`) | 30 min | Judgement | After a "requests per day" refusal, ask again twice an hour instead of on every batch |
+| `BATCH` (`llm.rs`) | 25 headlines | Judgement | One request reads up to 25; the background queue fills batches across callers |
 | Fixed-deposit default | 7% | Market fact | Web `DEFAULT_FD_RATE`: a typical big-bank 1–3 year FD (Nov 2026); each user can change it |
 | LRS limit, TCS | $250,000 a year; 20% above ₹10 lakh (from 1 Apr 2026) | Market fact | Today page; from secondary sources (Business Today, INDmoney), check the latest notification |
 | Long-run tiers | 80, 60, 45 in 100 | Judgement | Wording of the long-run answer: 80 is the owner's bar for a firm statement |
