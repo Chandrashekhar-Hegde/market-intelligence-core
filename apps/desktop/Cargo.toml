@@ -1,0 +1,21 @@
+[package]
+name = "gm-desktop"
+description = "Native desktop app (GPUI) for the market-intelligence API."
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Its own workspace: the GUI stack (GPUI, Metal/Wayland) stays out of the server's build, lockfile and audit.
+[workspace]
+
+[dependencies]
+gpui-kit = "0.11"
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "3", features = ["json"] }
+
+[features]
+# `--features screenshot` + GM_DESKTOP_SCREENSHOT=out.png renders the first full frame to a PNG
+# (GPUI's Metal render_to_image) and quits: visual checks without screen-recording permission.
+screenshot = ["gpui-kit/test-support"]
