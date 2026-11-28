@@ -195,14 +195,14 @@ impl Render for InstrumentView {
             ))),
             Load::Failed(e) => {
                 eprintln!("instrument failed: {e}");
-                crate::ready(window, "instrument");
+                crate::ready(window, cx, "instrument");
                 div()
                     .mt_6()
                     .text_color(cx.theme().danger)
                     .child(SharedString::from(e.clone()))
             }
             Load::Ready(i) => {
-                crate::ready(window, "instrument");
+                crate::ready(window, cx, "instrument");
                 let p = &i.plain;
                 let change = i
                     .change_pct

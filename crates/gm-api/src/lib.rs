@@ -1824,7 +1824,11 @@ async fn desk(State(state): State<AppState>) -> Json<serde_json::Value> {
                 llm.model(),
                 stories.len()
             ),
-            _ => "built-in".to_string(),
+            Some(llm) => match llm.trouble() {
+                Some(why) => format!("built-in ({} {why})", llm.model()),
+                None => "built-in".to_string(),
+            },
+            None => "built-in".to_string(),
         },
         "as_of": now,
     }))
@@ -3877,6 +3881,64 @@ mod tests {
             .unwrap()
         });
         format!("http://{addr}/v1")
+    }
+
+    /// Many small background requests share full batches: a daily request quota is spent per
+    /// call, not per headline (Gemini's free tier: 500 a day).
+    #[tokio::test]
+    async fn background_reading_merges_small_requests_into_full_batches() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let chat = move |Json(request): Json<serde_json::Value>| {
+            let counter = Arc::clone(&counter);
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                let n = request["messages"][1]["content"]
+                    .as_str()
+                    .unwrap_or("")
+                    .lines()
+                    .count();
+                let readings: Vec<_> = (0..n)
+                    .map(|_| serde_json::json!({ "kind": "legal", "direction": -1, "materiality": 3, "reason": "stub" }))
+                    .collect();
+                let content = serde_json::to_string(&readings).unwrap();
+                Json(serde_json::json!({ "choices": [{ "message": { "content": content } }] }))
+            }
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/v1/chat/completions", post(chat)),
+            )
+            .await
+            .unwrap()
+        });
+        let reader = gm_integrations::llm::LlmReader::new(gm_integrations::llm::LlmConfig {
+            base_url: format!("http://{addr}/v1"),
+            model: "stub-model".into(),
+            api_key: Some("k".into()),
+            pace: std::time::Duration::ZERO,
+        });
+        let titles: Vec<String> = (0..30)
+            .map(|i| format!("Company {i} wins an order"))
+            .collect();
+        for chunk in titles.chunks(3) {
+            reader.read_in_background(chunk, false);
+        }
+        for _ in 0..100 {
+            if reader.cached(&titles).iter().all(Option::is_some) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(reader.cached(&titles).iter().all(Option::is_some));
+        // 30 headlines from 10 callers: one batch of 25 and one of 5 (the first caller's 3 may
+        // start alone before the others arrive), never 10 requests.
+        let n = calls.load(Ordering::SeqCst);
+        assert!((2..=3).contains(&n), "{n} requests");
     }
 
     async fn llm_news_app(fail: bool) -> Router {

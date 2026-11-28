@@ -70,7 +70,7 @@ impl Render for TodayView {
             }
             Some(Ok(items)) => items.clone(),
         };
-        crate::ready(window, "today");
+        crate::ready(window, cx, "today");
         let ok: Vec<&api::TodayItem> = items.iter().filter(|i| i.error.is_none()).collect();
         let pick = |wanted: &[Action]| {
             ok.iter()

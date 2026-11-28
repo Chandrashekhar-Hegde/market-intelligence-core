@@ -686,6 +686,29 @@ costs about 0.11% all in (STT 0.025% on the sell, stamp 0.003%, exchange fees, �
 order, GST, spread), not the 0.06% the 0.10 day-trading study charged, so that study's "no edge"
 verdict only gets stronger.
 
+## Your mix (`analysis/mix.rs`, desktop "Your mix")
+
+Each picked holding gets the same share of the mix's risk (equal risk contribution, Maillard,
+Roncalli & Teïletche 2010), using the Ledoit–Wolf-shrunk covariance of 5 years of daily returns
+from `/api/v1/compare`, so two holdings that move together count as less than two independent
+ones. Solved by the damped fixed-point iteration w_i ∝ 1/(Σw)_i (Chaves, Hsu, Li & Shakernia
+2012); a test checks every contribution is within 1% of equal. The amount is then spent in whole
+shares at today's price (dollar listings at today's USD/INR): each target floored to whole shares,
+the leftover spent one share at a time on the holding furthest below its target. A holding whose
+single share costs more than its target is left out (dearest first) and the rest re-balanced, so
+₹10,000 and ₹10 lakh give different, buyable answers. With no proven edge between the holdings,
+this is the evidence-based default, not a forecast of which will do best.
+
+## The model reader's quota
+
+Gemini's free tier allows 500 requests a day for `gemini-3.1-flash-lite`. On 28 Nov 2026 it ran
+out by morning: every background caller (each NIFTY 50 stock's news, the desk, the recorder) sent
+its own request even for two headlines, and a local backfill read shared the key. Now one queue
+fills batches of 25 across callers (a test: 30 headlines from 10 callers take 2–3 requests, not
+10), a daily-limit refusal pauses the reader for 30 minutes, and the desk says why the built-in
+reader is reading ("over its free daily limit; it resets at 13:30 IST"). The backfill read must
+use a different key or wait for a quiet day.
+
 ## References
 
 Bollerslev (1986) J. Econometrics 31; Bollerslev (1987) REStat 69; Dickey & Fuller (1979) JASA 74;

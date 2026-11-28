@@ -98,6 +98,8 @@ pub struct TodayItem {
     pub symbol: String,
     pub group: String,
     pub name: Option<String>,
+    pub currency: Option<String>,
+    pub instrument_type: Option<String>,
     pub last_price: Option<f64>,
     pub change_pct: Option<f64>,
     pub vol_ratio: Option<f64>,
@@ -141,4 +143,12 @@ pub struct Desk {
 
 pub fn desk() -> Result<Desk, String> {
     serde_json::from_value(get("/api/v1/desk")?).map_err(|e| format!("desk: {e}"))
+}
+
+/// Annual covariance of the picked symbols' returns (Ledoit–Wolf shrunk, 5 years), in their order.
+pub fn covariance(symbols: &[String]) -> Result<Vec<Vec<f64>>, String> {
+    let list = symbols.iter().map(|s| enc(s)).collect::<Vec<_>>().join(",");
+    let v = get(&format!("/api/v1/compare?symbols={list}&range=5y"))?;
+    serde_json::from_value(v["comparison"]["covariance_annual"].clone())
+        .map_err(|e| format!("covariance: {e}"))
 }
