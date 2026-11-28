@@ -12,3 +12,4 @@ apps/web/test-results/
 apps/web/playwright-report/
 # Python venv for scripts/gen_reference.py
 .refenv/
+/apps/desktop/target/

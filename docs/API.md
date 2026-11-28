@@ -110,6 +110,8 @@ backfilled headlines in the recorder's format, or model readings `{title, readin
 already present are skipped. `scripts/upload_backfill.sh <data-dir>` sends a workstation backfill
 in chunks. Like every route, it needs the beta token.
 
+Bars carry `chart.splits_inferred`: splits or bonus issues Yahoo hadn't adjusted for, applied before anything is computed (`[date, ratio]`).
+
 `/api/v1/analyze` adds `news_weights` (`{fitted, n_events, first, last, voting_kinds}`), so the
 page can say how the news vote was weighed.
 
@@ -118,7 +120,17 @@ page can say how the news vote was weighed.
 shaped as in `/analyze`. The 10-year daily fit is cached per symbol until the next close. A
 price more than about 50% away from the last close is a 400.
 
-`GET /api/v1/analyze?symbol=&range=10y&benchmark=auto&seed=42&paths=2000` analyses any symbol (default `10y` since 27 Nov 2026; the app offers 5 or 10 years):
+`GET /api/v1/analyze?symbol=&range=10y&benchmark=auto&seed=42&paths=2000&fd=0.07` analyses any symbol (default `10y` since 27 Nov 2026; the app offers 5 or 10 years):
+
+- `plain` (Phase 0.11) is the analysis in plain words, from `gm_domain::analysis::plain` and shared
+  with the desktop app: `action` (`buy`, `sell`, `trim`, `keep`, `sip`, `index_instead`, `fd`,
+  `watch`), `headline` (one line; never a bare "Hold"), `answers` (buying for 3+ years against an
+  FD at `fd`, default 7%; if you own it; trading in the next days), `ranges` (1 week, 1 month and
+  3 months: 5/25/50/75/95th percentiles of the instrument's own past stretches, with `held`, how
+  often that range held on past dates), `direction`, `how` and `track_record`.
+  `/api/v1/today` items carry the same `action`, `headline` and `answers` (FD at 7%).
+- `report.validation.chance_of_gain[]` gains `range_held`, `direction_right`, `range_now` and
+  `n_stretches`.
 
 - `report` holds `distribution`, `predictability`, `volatility` (EWMA and GARCH-t),
   `projections` (Monte Carlo fans for `gbm`, `garch_t` and `bootstrap`, each with 30

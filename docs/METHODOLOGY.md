@@ -646,6 +646,46 @@ shares.
 | No proven rule is active, strong news | Buy or Sell (`news_driven`) with a 5-session review, labelled "no track record yet", headlines shown |
 | Weak or no news | The rules' advice unchanged |
 
+## Plain words and the tested range (`analysis/plain.rs`, Phase 0.11)
+
+**Why.** The owner (28 Nov 2026): "everywhere it says Hold", the Monte Carlo fan is unreadable,
+and "have you tested the predictions?". Tested on the NIFTY 50 and the index over 10 years, walk
+forward from day 500 with non-overlapping windows (19,253 one-week, 4,545 one-month and 1,513
+three-month forecasts; `scripts/research/range_check.py`):
+
+| | 1 week | 1 month | 3 months |
+|---|---|---|---|
+| 5–95% range of the stock's own past stretches: held | 90.2% | 88.9% | 86.2% |
+| Same range rescaled by today's volatility: held | 85.8% | 84.0% | 81.4% |
+| Normal curve with EWMA volatility (close to the old fan): held | 88.5% | 87.5% | 84.6% |
+| Up/down guess ("up if most past stretches rose"): right | 53.0% | 56.3% | 59.7% |
+| Always saying "up": right | 53.9% | 57.3% | 61.6% |
+
+So the range is honest and the direction is not predictable from price history. The app shows
+the simplest, best-calibrated range (past stretches) with each instrument's own record
+(`range_held`), and says the direction can't be told unless guessing beat "always up" by 5 points.
+
+**Actions.** One per instrument, from the first that applies: a tested call (a rule that earned its
+place, active today); "trim to N% of your usual amount" when today's swing is above usual, using
+exactly the rule the track record replays (hold min(1, usual ÷ today's volatility), never above
+100%; "keep" above 95%); otherwise the long-term answer: a single stock → its market's index fund
+(its own long-run growth can't be told apart from the index's, τ̂ = 0, so it only adds risk); other
+instruments → "buy and hold" at 80+ in 100 of beating the FD over 3 years, a SIP at 60–80, "an FD
+has done as well" below; currencies are not investments.
+
+**Unrecorded splits** (`quality::unrecorded_splits`). A one-day jump that lands within 3% (log) on
+a usual split ratio (1:2, 1:3, 1:4, 1:5, 1:10, a 1:2 bonus, or the reverse) and stays is a split
+the vendor hasn't adjusted for; earlier bars are put on the new level. Found: TECHM.NS halved on
+19 Nov 2026 with no split recorded (its volatility read 6.7× normal, so the app said "trim to
+15%"); TRENT.NS dropped to 2/3 on 1 Jan 2026 although its 3:2 split is recorded for June. Over 10
+years of the other 49 NIFTY 50 series the rule flags nothing else.
+
+**Costs, corrected.** A delivery round trip costs about 0.25% (STT 0.1% each side, stamp duty
+0.015% of the buy, exchange and SEBI fees, GST, DP charge, spread), as used. An intraday round trip
+costs about 0.11% all in (STT 0.025% on the sell, stamp 0.003%, exchange fees, ₹20 brokerage per
+order, GST, spread), not the 0.06% the 0.10 day-trading study charged, so that study's "no edge"
+verdict only gets stronger.
+
 ## References
 
 Bollerslev (1986) J. Econometrics 31; Bollerslev (1987) REStat 69; Dickey & Fuller (1979) JASA 74;

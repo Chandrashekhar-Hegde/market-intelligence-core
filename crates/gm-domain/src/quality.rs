@@ -211,6 +211,59 @@ pub fn bad_prints(bars: &[PriceBar]) -> Vec<NaiveDate> {
     out
 }
 
+/// Price ratios (new ÷ old) of the usual splits and bonus issues: 1:2, 1:3, 1:4, 1:5, 1:10
+/// splits, a 1:2 bonus (2/3), and the reverse consolidations.
+const SPLIT_RATIOS: [f64; 10] = [
+    0.5,
+    1.0 / 3.0,
+    0.25,
+    0.2,
+    0.1,
+    2.0 / 3.0,
+    2.0,
+    3.0,
+    5.0,
+    10.0,
+];
+/// How close (log) a day's jump must be to a split ratio: a normal day's move on top.
+const SPLIT_TOLERANCE: f64 = 0.03;
+/// Smaller jumps are left alone: beyond NSE's 20% band, and 2/3 (a 1:2 bonus) still qualifies.
+const SPLIT_MIN_JUMP: f64 = 0.37;
+
+/// Splits and bonus issues the vendor hasn't adjusted for: a jump that lands on a usual split
+/// ratio and stays (run after `bad_prints`, which removes jumps that come back). Yahoo:
+/// TECHM.NS halved on 19 Nov 2026 with no split recorded, and its volatility read 6.7× normal.
+/// Returns (first bar at the new price level, price ratio new ÷ old).
+pub fn unrecorded_splits(bars: &[PriceBar]) -> Vec<(NaiveDate, f64)> {
+    let valid: Vec<&PriceBar> = bars.iter().filter(|b| b.adjusted_close() > 0.0).collect();
+    valid
+        .windows(2)
+        .filter_map(|w| {
+            let r = (w[1].adjusted_close() / w[0].adjusted_close()).ln();
+            if r.abs() < SPLIT_MIN_JUMP {
+                return None;
+            }
+            SPLIT_RATIOS
+                .iter()
+                .find(|k| (r - k.ln()).abs() < SPLIT_TOLERANCE)
+                .map(|k| (w[1].date, *k))
+        })
+        .collect()
+}
+
+/// Puts every bar before each split on the new price level, as a vendor's split adjustment does.
+pub fn apply_splits(bars: &mut [PriceBar], splits: &[(NaiveDate, f64)]) {
+    for (date, ratio) in splits {
+        for b in bars.iter_mut().filter(|b| b.date < *date) {
+            b.open *= ratio;
+            b.high *= ratio;
+            b.low *= ratio;
+            b.close *= ratio;
+            b.adj_close = b.adj_close.map(|a| a * ratio);
+        }
+    }
+}
+
 fn median(values: &[f64]) -> Option<f64> {
     if values.is_empty() {
         return None;
@@ -228,6 +281,46 @@ fn median(values: &[f64]) -> Option<f64> {
 fn median_abs_deviation(values: &[f64]) -> Option<f64> {
     let m = median(values)?;
     median(&values.iter().map(|v| (v - m).abs()).collect::<Vec<_>>())
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+
+    fn bars(closes: &[f64]) -> Vec<PriceBar> {
+        let start = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+        closes
+            .iter()
+            .enumerate()
+            .map(|(i, c)| PriceBar {
+                symbol: "X".into(),
+                date: start + chrono::Days::new(i as u64),
+                open: *c,
+                high: *c,
+                low: *c,
+                close: *c,
+                adj_close: Some(*c),
+                volume: 1,
+                source: "t".into(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_unrecorded_halving_is_a_split_and_a_crash_is_not() {
+        // TECHM.NS, 17-20 Nov 2026: 1762, 1750, then 861.5 and 873.1 (no split on record).
+        let mut b = bars(&[1762.0, 1750.0, 861.5, 873.1]);
+        let found = unrecorded_splits(&b);
+        assert_eq!(found, vec![(b[2].date, 0.5)]);
+        apply_splits(&mut b, &found);
+        assert!((b[1].adjusted_close() - 875.0).abs() < 1e-9 && b[2].close == 861.5);
+        // A 30% crash, and a 10% day, are real moves.
+        assert!(unrecorded_splits(&bars(&[100.0, 70.0, 69.0])).is_empty());
+        assert!(unrecorded_splits(&bars(&[100.0, 90.0])).is_empty());
+        // A 1:2 bonus (price × 2/3) and a 1:10 split.
+        assert_eq!(unrecorded_splits(&bars(&[300.0, 201.0]))[0].1, 2.0 / 3.0);
+        assert_eq!(unrecorded_splits(&bars(&[5000.0, 496.0]))[0].1, 0.1);
+    }
 }
 
 #[cfg(test)]

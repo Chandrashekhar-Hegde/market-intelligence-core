@@ -76,6 +76,10 @@ pub struct ChartData {
     /// Bad prints (a price that jumps away and straight back) removed before anyone uses the bars.
     #[serde(default)]
     pub bad_prints_removed: Vec<NaiveDate>,
+    /// Splits or bonus issues the vendor hadn't adjusted for, applied here: (first bar at the
+    /// new level, price ratio new ÷ old).
+    #[serde(default)]
+    pub splits_inferred: Vec<(NaiveDate, f64)>,
     pub source: String,
     pub fetched_at: DateTime<Utc>,
 }
@@ -398,6 +402,8 @@ pub fn parse_chart(body: &str, now: DateTime<Utc>) -> Result<ChartData, Provider
     let mut bars = by_date.into_values().collect::<Vec<_>>();
     let bad_prints_removed = gm_domain::quality::bad_prints(&bars);
     bars.retain(|b| !bad_prints_removed.contains(&b.date));
+    let splits_inferred = gm_domain::quality::unrecorded_splits(&bars);
+    gm_domain::quality::apply_splits(&mut bars, &splits_inferred);
 
     let session = regular_session(meta);
     let now_ts = now.timestamp();
@@ -440,6 +446,7 @@ pub fn parse_chart(body: &str, now: DateTime<Utc>) -> Result<ChartData, Provider
         corporate_actions,
         dropped_partial_bar,
         bad_prints_removed,
+        splits_inferred,
         source: SOURCE.to_string(),
         fetched_at: now,
     })

@@ -426,8 +426,20 @@ export type NewsReading = {
 
 export type NewsVote = { score: number; stance: -1 | 0 | 1; n_stories: number; drivers: number[] }
 
+/** The analysis in plain words, from gm_domain::analysis::plain (shared with the desktop app). */
+export type Plain = {
+  action: 'buy' | 'sell' | 'trim' | 'keep' | 'sip' | 'index_instead' | 'fd' | 'watch'
+  headline: string
+  answers: { question: string; verdict: string; why: string }[]
+  ranges: { horizon_days: number; label: string; returns: number[]; held: number; n_tested: number; n_stretches: number }[]
+  direction: string | null
+  how: string | null
+  track_record: string | null
+}
+
 export type AnalyzeResponse = {
   report: AnalysisReport
+  plain?: Plain
   signals: Signals | null
   advice: Advice | null
   signals_note: string | null

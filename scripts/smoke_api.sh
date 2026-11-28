@@ -316,6 +316,11 @@ assert [l["years"] for l in lr] == [1, 3, 5] and all(len(l["resampled"]) == 101 
 # A single stock's long-run growth is its market's; indices and crypto use their own.
 expected_from = {"AAPL": "^GSPC", "7203.T": "^N225"}.get(symbol, "own history")
 assert lr[1]["drift_from"] == expected_from, (symbol, lr[1]["drift_from"])
+# The range from past stretches has been tested on past dates; plain words never say a bare "Hold".
+assert all(0.6 < c["range_held"] <= 1.0 and c["range_now"][0] < c["range_now"][4] for c in v["chance_of_gain"]), v["chance_of_gain"]
+pl = payload["plain"]
+assert len(pl["answers"]) == 3 and pl["headline"].strip().lower() != "hold" and len(pl["ranges"]) == 3, pl
+print(f"  {symbol}: {pl['headline']}")
 c = v["chance_of_gain"][-1]
 print(f"  {symbol}: leads {report['lead_model']}; 3-month gain said {c['mean_forecast']:.0%}, rose {c['realised']:.0%} over {c['n']} checks, skill vs coin {c['skill_vs_coin']:+.2f} (p={c['vs_coin']['p_value']:.2f})")
 if bench:

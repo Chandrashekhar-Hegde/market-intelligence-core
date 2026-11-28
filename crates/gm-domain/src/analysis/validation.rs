@@ -50,6 +50,27 @@ pub struct ChanceCheck {
     pub skill_vs_coin: f64,
     /// Diebold–Mariano on (brier − coin) per window. Negative = better than a coin flip.
     pub vs_coin: TestResult,
+    /// Share of the scored windows whose outcome fell inside the 5th–95th percentile of all
+    /// earlier windows: has the "9 in 10" range held out of sample?
+    pub range_held: f64,
+    /// Share of the scored windows where "up if the chance is above 50%" was right. Compare with
+    /// `realised`, which is what always saying "up" scores.
+    pub direction_right: f64,
+    /// Percentiles `RANGE_PERCENTILES` of every `horizon_days` stretch in the history, as simple
+    /// returns: the range shown today.
+    pub range_now: [f64; 5],
+    /// How many stretches `range_now` is built from.
+    pub n_stretches: usize,
+}
+
+/// The range shown: 5th, 25th, 50th, 75th and 95th percentiles (a "9 in 10" outer band and a
+/// middle half; the usual 90% interval convention).
+pub const RANGE_PERCENTILES: [f64; 5] = [0.05, 0.25, 0.5, 0.75, 0.95];
+
+/// The `p` quantile of sorted data, nearest-rank.
+fn sorted_quantile(sorted: &[f64], p: f64) -> f64 {
+    let i = ((p * sorted.len() as f64) as usize).min(sorted.len() - 1);
+    sorted[i]
 }
 
 /// None when there are fewer than 10 windows to score.
@@ -62,16 +83,24 @@ pub fn chance_check(returns: &[f64], horizon: usize) -> Option<ChanceCheck> {
     let gain = |start: usize| cum[start + horizon] > cum[start];
     let (mut gains_before, mut windows_before, mut next_window) = (0usize, 0usize, 0usize);
     let (mut forecasts, mut outcomes) = (Vec::new(), Vec::new());
+    let window = |start: usize| cum[start + horizon] - cum[start];
+    let (mut earlier, mut held) = (Vec::new(), 0usize);
     let mut t = WARMUP;
     while t + horizon <= returns.len() {
         // Every window that ended before t, counted incrementally.
         while next_window + horizon <= t {
             gains_before += usize::from(gain(next_window));
             windows_before += 1;
+            earlier.push(window(next_window));
             next_window += 1;
         }
         forecasts.push(gains_before as f64 / windows_before.max(1) as f64);
         outcomes.push(f64::from(u8::from(gain(t))));
+        let mut sorted = earlier.clone();
+        sorted.sort_by(f64::total_cmp);
+        let y = window(t);
+        held +=
+            usize::from(sorted_quantile(&sorted, 0.05) <= y && y <= sorted_quantile(&sorted, 0.95));
         t += horizon;
     }
     if forecasts.len() < 10 {
@@ -89,8 +118,21 @@ pub fn chance_check(returns: &[f64], horizon: usize) -> Option<ChanceCheck> {
         .map(|(f, o)| sq(*f, *o))
         .sum::<f64>()
         / forecasts.len() as f64;
+    let direction_right = forecasts
+        .iter()
+        .zip(&outcomes)
+        .filter(|(f, o)| (**f > 0.5) == (**o > 0.5))
+        .count() as f64
+        / forecasts.len() as f64;
+    let mut all: Vec<f64> = (0..=returns.len() - horizon).map(window).collect();
+    all.sort_by(f64::total_cmp);
+    let range_now = RANGE_PERCENTILES.map(|p| sorted_quantile(&all, p).exp_m1());
     Some(ChanceCheck {
         horizon_days: horizon,
+        range_held: held as f64 / forecasts.len() as f64,
+        direction_right,
+        range_now,
+        n_stretches: all.len(),
         n: forecasts.len(),
         mean_forecast: numeric::mean(&forecasts),
         realised: numeric::mean(&outcomes),
@@ -485,6 +527,28 @@ mod tests {
         );
         assert_eq!(up.n, (3000 - WARMUP) / 5);
         assert!(chance_check(&noise[..WARMUP + 40], 5).is_none());
+    }
+
+    /// On i.i.d. returns the past-stretches range must hold about 90 times in 100, and with a
+    /// drift "guess up" is right about as often as the market actually rose.
+    #[test]
+    fn range_from_past_stretches_holds_nine_in_ten() {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(11);
+        let noise: Vec<f64> = (0..6000)
+            .map(|_| 0.01 * Distribution::<f64>::sample(&rand_distr::StandardNormal, &mut rng))
+            .collect();
+        let flat = chance_check(&noise, 5).unwrap();
+        assert!((flat.range_held - 0.90).abs() < 0.03, "{flat:?}");
+        // Percentiles of 5-day sums of N(0, 0.01²): ±1.645·√5·1% ≈ ±3.7%.
+        assert!(
+            (flat.range_now[4] - 0.037).abs() < 0.004 && flat.range_now[2].abs() < 0.002,
+            "{flat:?}"
+        );
+        assert!(flat.range_now.windows(2).all(|w| w[0] <= w[1]));
+        assert_eq!(flat.n_stretches, 6000 - 5 + 1);
+        let drifting: Vec<f64> = noise.iter().map(|x| x + 0.002).collect();
+        let up = chance_check(&drifting, 5).unwrap();
+        assert!((up.direction_right - up.realised).abs() < 0.03, "{up:?}");
     }
 
     #[test]

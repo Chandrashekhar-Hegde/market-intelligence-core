@@ -283,10 +283,19 @@ async fn entry(
         .iter()
         .find(|v| v.method == "historical" && (v.confidence - 0.95).abs() < 1e-9)
         .map(|v| v.es);
+    let plain = gm_domain::analysis::plain::plain(
+        &report,
+        advice.as_ref(),
+        gm_domain::analysis::DEPOSIT_RATE,
+        crate::plain_kind(meta.instrument_type.as_deref(), meta.name.as_deref()),
+    );
     Ok(serde_json::json!({
         "symbol": meta.symbol,
         "name": meta.name,
         "group": group,
+        "action": plain.action,
+        "headline": plain.headline,
+        "answers": plain.answers,
         "currency": meta.currency,
         "instrument_type": meta.instrument_type,
         "last_price": meta.last_price.unwrap_or(report.last_price),
